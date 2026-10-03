@@ -1208,7 +1208,7 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
             disabled={!podeLancar || enviando || (tipo === 'bill' && !dre) || (usarMensal
               ? selPagtos.size === 0 || saldoMensal < -0.01
               : (!(tipo === 'purchase' && pago) && (parcelas.length === 0 || soma <= 0)))}
-            title={!podeLancar ? 'Apenas administradores e gerentes' : undefined}
+            title={!podeLancar ? 'Apenas administradores e supervisores' : undefined}
             className="px-4 py-2 text-sm font-semibold text-white bg-amber-500 rounded-lg hover:bg-amber-600 disabled:opacity-40 cursor-pointer">
             {enviando ? 'Lançando…' : usarMensal ? `Lançar e vincular ${selPagtos.size} pagamento(s)` : tipo === 'purchase' ? (pago ? 'Lançar compra paga' : `Lançar compra · ${parcelas.length} parcela(s)`) : `Lançar despesa · ${parcelas.length} parcela(s)`}
           </button>}

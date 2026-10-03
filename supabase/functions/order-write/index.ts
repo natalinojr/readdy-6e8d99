@@ -504,7 +504,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     if (action === "create_promotion_rule" || action === "update_promotion_rule" || action === "delete_promotion_rule") {
       const { data: roleRow, error: roleErr } = await admin.from("user_tenants").select("role").eq("user_id", jwtUserId).eq("tenant_id", tenantId).maybeSingle();
       if (roleErr) { return new Response(JSON.stringify({ error: "Falha ao verificar o perfil do usuário" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
-      if (!isManagerRole(roleRow?.role)) { return new Response(JSON.stringify({ error: "Sem permissão: promoções são só para administrador ou gerente da loja." }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+      if (!isManagerRole(roleRow?.role)) { return new Response(JSON.stringify({ error: "Sem permissão: promoções são só para administrador ou supervisor da loja." }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
     }
 
     if (action === "create_promotion_rule") {
@@ -795,7 +795,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       else { finalDestinationName = destination_name ?? null; finalTableNumber = null; }
       const resolvedTableSessionId = isValidUuid(table_session_id) ? table_session_id : null;
       // ── Cortesia: monta notes estruturado ──
-      const cortesiaNotes = isCortesia ? (orderNotes ?? `Cortesia autorizada por: ${cortesiaAuthorizedBy ?? 'Gerente'}`) : orderNotes;
+      const cortesiaNotes = isCortesia ? (orderNotes ?? `Cortesia autorizada por: ${cortesiaAuthorizedBy ?? 'Supervisor'}`) : orderNotes;
       const orderResult = await withRetry(async () => { const { data, error } = await admin.rpc("fn_create_order_bypass", { order_data: { tenant_id: tenantId, session_id, number: orderNumber, status: initialOrderStatus, origin_type: mappedOrigin, destination_type: mappedDest, destination_name: finalDestinationName, destination_phone: cleanDestPhone, delivery_address: delivery_address ?? null, delivery_fee: delivery_fee ?? 0, delivery_platform: deliveryPlatform ?? null, discount_amount: discount_amount ?? 0, service_fee_amount: service_fee_amount ?? 0, subtotal: subtotal ?? 0, total_amount: total_amount ?? 0, is_training: is_training ?? false, is_draft: holdUntilPaid, origin_user_id: effectiveUserId, customer_id: customerId ?? null, table_number: finalTableNumber, customer_cpf: customer_cpf ?? null, customer_email: customer_email ?? null, table_session_id: resolvedTableSessionId, notes: cortesiaNotes, client_request_id: effectiveClientRequestId } }); if (error) throw error; return data; }, 3, "create_order:fn_create_order_bypass", { session_id, tenant_id: tenantId, origin: mappedOrigin, client_request_id: effectiveClientRequestId });
       const orderId: string = orderResult?.id;
       if (!orderId) { return new Response(JSON.stringify({ error: "Order created but no ID returned" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }

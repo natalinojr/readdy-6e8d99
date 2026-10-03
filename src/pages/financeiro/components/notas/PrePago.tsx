@@ -198,7 +198,7 @@ export function PrePagoConferir({ doc, tenantId, podeLancar, onAtivo, onLancado,
           )}
           <div className="flex justify-end">
             <button onClick={lancar} disabled={!podeLancar || enviando || total <= 0}
-              title={!podeLancar ? 'Apenas administradores e gerentes' : undefined}
+              title={!podeLancar ? 'Apenas administradores e supervisores' : undefined}
               className="px-4 py-2 text-sm font-semibold text-white bg-violet-600 rounded-lg hover:bg-violet-700 disabled:opacity-40 cursor-pointer">
               {enviando ? 'Lançando…' : `Lançar do crédito · ${brl(total)}`}
             </button>

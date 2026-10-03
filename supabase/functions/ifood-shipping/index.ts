@@ -1083,7 +1083,7 @@ Deno.serve(async (req) => {
       }
       const op = String(body.op ?? '');
       if (funil && op === 'cancel' && !isManager && !/caix|cashier/i.test(String(role ?? ''))) {
-        return errResp('Cancelar pedido do iFood (tem multa e pesa na loja): só gerente, admin ou caixa.', 403);
+        return errResp('Cancelar pedido do iFood (tem multa e pesa na loja): só supervisor, admin ou caixa.', 403);
       }
       // Funil com aceite manual: libera o pedido na cozinha do ERPOS e confirma no iFood.
       if (op === 'accept') {
@@ -1168,7 +1168,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'merchant_pause_create' || action === 'merchant_pause_delete' || action === 'merchant_hours_save') {
-      if (!isManager) return errResp('Só admin ou gerente altera a loja no iFood.', 403);
+      if (!isManager) return errResp('Só admin ou supervisor altera a loja no iFood.', 403);
       const c = await merchantCtx();
       const base = `/merchant/v1.0/merchants/${c.merchantId}`;
       if (action === 'merchant_pause_create') {
@@ -1245,7 +1245,7 @@ Deno.serve(async (req) => {
     // POST é leitura → repete com backoff em 429/5xx como os GET. `homologacao` = corpo do exemplo da doc
     // (o payload devolvido é o que o wizard de homologação do Devportal pede).
     if (action === 'analytics_kpis') {
-      if (!isManager && !isContabilidadeRole(role)) return errResp('Só admin, gerente ou contabilidade vê os indicadores do iFood.', 403);
+      if (!isManager && !isContabilidadeRole(role)) return errResp('Só admin, supervisor ou contabilidade vê os indicadores do iFood.', 403);
       const c = await merchantCtx();
       const per = periodoKpis(body.de, body.ate);
       if ('erro' in per) return errResp(per.erro as string);
@@ -1291,7 +1291,7 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'review_answer') {
-      if (!isManager) return errResp('Só admin ou gerente responde avaliações.', 403);
+      if (!isManager) return errResp('Só admin ou supervisor responde avaliações.', 403);
       const c = await merchantCtx();
       const id = String(body.review_id ?? '').trim();
       const text = String(body.text ?? '').trim();
@@ -1304,7 +1304,7 @@ Deno.serve(async (req) => {
     }
 
     // ── Configuração (admin/gerente) ──
-    if (!isManager) return errResp('Apenas admin/gerente', 403);
+    if (!isManager) return errResp('Apenas admin/supervisor', 403);
 
     const temAtivas = async () => {
       const { count } = await admin.from('ifood_shipping_orders').select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId).in('status', ACTIVE);

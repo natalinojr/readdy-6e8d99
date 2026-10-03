@@ -708,7 +708,7 @@ Deno.serve(async (req) => {
       // Antes qualquer membro da loja (ex.: operador de caixa) criava/excluía compra e conta a pagar
       // pela API. A chave interna (acima) segue igual.
       if (!isFinanceiroRole(membership.role)) {
-        return new Response(JSON.stringify({ error: 'Sem permissão: compras são só para administrador ou gerente da loja.' }), { status: 403, headers: corsHeaders });
+        return new Response(JSON.stringify({ error: 'Sem permissão: compras são só para administrador ou supervisor da loja.' }), { status: 403, headers: corsHeaders });
       }
     }
 

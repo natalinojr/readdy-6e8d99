@@ -156,7 +156,7 @@ export default function DescontoAutorizacaoModal({
                 </label>
                 {autorizadores.length === 0 ? (
                   <div className="px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-lg text-xs text-zinc-400 italic">
-                    Nenhum gerente/admin ativo
+                    Nenhum supervisor/admin ativo
                   </div>
                 ) : (
                   <div className="space-y-1.5">
@@ -178,7 +178,7 @@ export default function DescontoAutorizacaoModal({
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-semibold text-zinc-800 truncate">{u.nome}</p>
                           <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${perfilCor[u.perfil] ?? 'text-zinc-600 bg-zinc-50 border-zinc-200'}`}>
-                            {u.perfil === 'admin' ? 'Administrador' : u.perfil === 'supervisao' ? 'Supervisão' : 'Gerente'}
+                            {u.perfil === 'admin' ? 'Administrador' : u.perfil === 'supervisao' ? 'Líder' : 'Supervisor'}
                           </span>
                         </div>
                         {selectedUserId === u.id && (
@@ -265,7 +265,7 @@ export default function DescontoAutorizacaoModal({
                         </div>
                         {u.nome.split(' ')[0]}
                         <span className={`text-[8px] font-bold px-1 rounded ${u.perfil === 'admin' ? 'text-red-600' : u.perfil === 'supervisao' ? 'text-fuchsia-600' : 'text-violet-600'}`}>
-                          {u.perfil === 'admin' ? 'ADM' : u.perfil === 'supervisao' ? 'SUP' : 'GER'}
+                          {u.perfil === 'admin' ? 'ADM' : u.perfil === 'supervisao' ? 'LÍD' : 'SUP'}
                         </span>
                       </span>
                     ))}
@@ -289,7 +289,7 @@ export default function DescontoAutorizacaoModal({
                 </div>
 
                 <p className="text-[10px] text-zinc-400 text-center">
-                  O gerente/admin poderá Aprovar ou Recusar pela central de notificações.
+                  O supervisor/admin poderá Aprovar ou Recusar pela central de notificações.
                   Você receberá uma confirmação aqui.
                 </p>
               </div>

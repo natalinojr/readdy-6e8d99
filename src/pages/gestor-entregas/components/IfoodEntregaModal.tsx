@@ -174,7 +174,7 @@ export default function IfoodEntregaModal({ tenantId, orderId, telefone, onClose
 
           {!carregando && prep && !prep.ready && (!ship || novo) && (
             <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800">
-              O iFood Entrega ainda não está ligado nesta loja. Um gerente configura em <b>iFood Entrega</b>, no topo do Gestor de Entregas.
+              O iFood Entrega ainda não está ligado nesta loja. Um supervisor configura em <b>iFood Entrega</b>, no topo do Gestor de Entregas.
             </div>
           )}
 

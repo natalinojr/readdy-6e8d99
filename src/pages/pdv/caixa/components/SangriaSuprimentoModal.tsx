@@ -126,7 +126,7 @@ export default function SangriaSuprimentoModal({
   };
   const naoSaiu = async (pv: SangriaPrevista) => {
     if (!user?.tenantId || resolvendo) return;
-    if (!(await confirmar({ titulo: `O dinheiro da compra ${pv.supplier ?? ''} (${fmt(pv.amount)}) NÃO saiu deste caixa?`, mensagem: 'O gerente vai ser avisado para conferir.', confirmarLabel: 'Não saiu', perigo: true }))) return;
+    if (!(await confirmar({ titulo: `O dinheiro da compra ${pv.supplier ?? ''} (${fmt(pv.amount)}) NÃO saiu deste caixa?`, mensagem: 'O supervisor vai ser avisado para conferir.', confirmarLabel: 'Não saiu', perigo: true }))) return;
     setResolvendo(pv.id);
     await invokeWithAuth('order-write', { body: { action: 'sangria_prevista_nao_saiu', tenant_id: user.tenantId, previsao_id: pv.id, motivo: 'informado no PDV' } });
     setResolvendo(null);

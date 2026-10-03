@@ -27,8 +27,8 @@ const SEMPRE: Array<{ icone: string; titulo: string; quando: string }> = [
   { icone: 'ri-qr-code-line', titulo: 'Pix pago pelo Inter dá baixa na conta na hora', quando: 'na hora' },
   { icone: 'ri-price-tag-3-line', titulo: 'Classifica os itens das notas como você classificou da última vez', quando: 'quando a nota chega' },
   { icone: 'ri-close-circle-line', titulo: 'Fecha as pendências que se resolveram (boleto chegou, nota lançada, pagamento feito)', quando: 'a cada 30 min' },
-  { icone: 'ri-sun-line', titulo: 'Resumo da manhã para o dono e bom dia para gerente e supervisão', quando: '7h30 e 8h30' },
-  { icone: 'ri-notification-3-line', titulo: 'Avisa no celular do supervisor quando o caixa pede aprovação', quando: 'na hora' },
+  { icone: 'ri-sun-line', titulo: 'Resumo da manhã para o dono e bom dia para supervisor e líder', quando: '7h30 e 8h30' },
+  { icone: 'ri-notification-3-line', titulo: 'Avisa no celular do líder e do supervisor quando o caixa pede aprovação', quando: 'na hora' },
 ];
 
 const dataHora = (iso: string) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
@@ -101,7 +101,7 @@ export default function PilotoPage() {
 
       {semAcesso && (
         <p className="rounded-2xl border border-zinc-200 bg-white px-4 py-4 text-[13px] text-zinc-600">
-          Esta tela é para administrador ou gerente da loja. <button onClick={() => navigate('/hoje')} className="font-bold text-amber-600 underline cursor-pointer">Voltar para a Hoje</button>
+          Esta tela é para administrador ou supervisor da loja. <button onClick={() => navigate('/hoje')} className="font-bold text-amber-600 underline cursor-pointer">Voltar para a Hoje</button>
         </p>
       )}
       {!papeis && erroLojas && <p className="rounded-xl bg-red-50 border border-red-100 px-3 py-2 text-sm text-red-700">Não consegui ler as suas lojas: {erroLojas}</p>}
@@ -244,7 +244,7 @@ function LinhaRegra({ icone, titulo, sub, ligada, pode, ocupado, onTrocar }: { i
         <p className="text-[11px] text-zinc-400">{sub}</p>
       </div>
       <button role="switch" aria-checked={ligada} aria-label={ligada ? 'Desligar' : 'Ligar'} onClick={onTrocar} disabled={!pode || ocupado}
-        title={pode ? undefined : 'Só administrador ou gerente da loja'}
+        title={pode ? undefined : 'Só administrador ou supervisor da loja'}
         className={`relative flex-shrink-0 w-11 h-6 rounded-full transition-colors disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed ${ligada ? 'bg-violet-600' : 'bg-zinc-300'}`}>
         <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${ligada ? 'left-[22px]' : 'left-0.5'}`} />
       </button>

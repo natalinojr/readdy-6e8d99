@@ -111,7 +111,7 @@ export default function CancelOrderModal({
                 {precisaAutorizacao && (
                   <span className="block mt-1 text-amber-800 font-bold">
                     <i className="ri-shield-keyhole-line mr-0.5" />
-                    Requer autorização de gerente ou administrador.
+                    Requer autorização de supervisor ou administrador.
                   </span>
                 )}
               </p>
@@ -208,7 +208,7 @@ export default function CancelOrderModal({
       {passo === 'autorizacao' && tenantId && (
         <AutorizacaoGerenteModal
           titulo="Autorizar Cancelamento"
-          descricao="Informe as credenciais da supervisão, de um gerente ou administrador para cancelar este pedido."
+          descricao="Informe as credenciais de um líder, supervisor ou administrador para cancelar este pedido."
           niveisPermitidos={['supervisao', 'gerente', 'admin']}
           tenantId={tenantId}
           onAutorizado={handleAutorizado}

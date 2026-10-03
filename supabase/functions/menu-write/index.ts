@@ -514,7 +514,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!isValidUuid(item_id)) return errResp('item_id inválido', 400);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(String(desde ?? ''))) return errResp('Informe a data (AAAA-MM-DD)', 400);
       const { data: papel } = await admin.from('user_tenants').select('role').eq('user_id', user.id).eq('tenant_id', tenantId).maybeSingle();
-      if (!['admin', 'manager'].includes(String(papel?.role ?? ''))) return errResp('Só administrador ou gerente pode refazer a baixa das vendas', 403);
+      if (!['admin', 'manager'].includes(String(papel?.role ?? ''))) return errResp('Só administrador ou supervisor pode refazer a baixa das vendas', 403);
       const { data: item } = await admin.from('menu_items').select('id').eq('id', item_id).eq('tenant_id', tenantId).maybeSingle();
       if (!item) return errResp('Item não encontrado nesta loja', 404);
       const op: OpcoesFicha = { ...OPCOES_PADRAO, ...(opcoes ?? {}) };
@@ -527,7 +527,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const { desde } = payload as { desde: string };
       if (!/^\d{4}-\d{2}-\d{2}$/.test(String(desde ?? ''))) return errResp('Informe a data (AAAA-MM-DD)', 400);
       const { data: papel } = await admin.from('user_tenants').select('role').eq('user_id', user.id).eq('tenant_id', tenantId).maybeSingle();
-      if (!['admin', 'manager'].includes(String(papel?.role ?? ''))) return errResp('Só administrador ou gerente', 403);
+      if (!['admin', 'manager'].includes(String(papel?.role ?? ''))) return errResp('Só administrador ou supervisor', 403);
       const vendas = new Map<string, number>();
       const combosVendidos = new Map<string, number>();
       for (let from = 0; ; from += 1000) {
@@ -576,7 +576,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!isValidUuid(ingredient_id)) return errResp('Escolha o insumo', 400);
       if (!['g', 'kg', 'ml', 'l', 'un'].includes(String(consumption_unit ?? ''))) return errResp('Unidade inválida', 400);
       const { data: papel } = await admin.from('user_tenants').select('role').eq('user_id', user.id).eq('tenant_id', tenantId).maybeSingle();
-      if (!['admin', 'manager'].includes(String(papel?.role ?? ''))) return errResp('Só administrador ou gerente pode ligar opções ao estoque', 403);
+      if (!['admin', 'manager'].includes(String(papel?.role ?? ''))) return errResp('Só administrador ou supervisor pode ligar opções ao estoque', 403);
       const { data: ing } = await admin.from('ingredients').select('id').eq('id', ingredient_id).eq('tenant_id', tenantId).is('deleted_at', null).maybeSingle();
       if (!ing) return errResp('Insumo não encontrado nesta loja', 404);
       if (production_recipe_id) {

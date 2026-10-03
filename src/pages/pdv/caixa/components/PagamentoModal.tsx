@@ -392,7 +392,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
       });
       if (error) {
         const code = (error as EdgeHttpError).code;
-        toastError('Não foi possível dispensar', code === 'forbidden' ? 'Só gerente ou administrador pode dispensar uma cobrança aprovada.' : error.message);
+        toastError('Não foi possível dispensar', code === 'forbidden' ? 'Só supervisor ou administrador pode dispensar uma cobrança aprovada.' : error.message);
         return;
       }
       setCobrancasNaoUsadas((prev) => prev.filter((x) => x.id !== c.id));
@@ -1502,7 +1502,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                     <p className="text-[10px] text-zinc-400">
                       {hasPermissao('pdv_desconto')
                         ? 'Você tem permissão para aplicar desconto.'
-                        : 'O desconto exige autorização de supervisão, gerente ou admin.'}
+                        : 'O desconto exige autorização de líder, supervisor ou admin.'}
                     </p>
                   </>
                 )}
@@ -1653,7 +1653,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
       {showAutorizacaoCortesia && (
         <AutorizacaoGerenteModal
           titulo="Autorizar Cortesia"
-          descricao="Informe as credenciais de gerente ou admin para liberar este pedido como cortesia (R$ 0,00)."
+          descricao="Informe as credenciais de supervisor ou admin para liberar este pedido como cortesia (R$ 0,00)."
           niveisPermitidos={['gerente', 'admin']}
           tenantId={user?.tenantId ?? ''}
           onAutorizado={(autorizadoPor) => {
@@ -1668,7 +1668,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
       {/* Cortesia — destinatário + motivo */}
       {showCortesiaDetalhes && (
         <CortesiaDetalhesModal
-          autorizadoPor={cortesiaAutorTemp ?? 'Gerente'}
+          autorizadoPor={cortesiaAutorTemp ?? 'Supervisor'}
           onConfirmar={(destinatario, motivo) => handleConfirmarCortesia(destinatario, motivo)}
           onCancelar={() => { setShowCortesiaDetalhes(false); setCortesiaAutorTemp(null); }}
         />
@@ -1678,7 +1678,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
       {showDescontoAuth && (
         <AutorizacaoGerenteModal
           titulo="Autorizar Desconto"
-          descricao={`Libere o desconto de ${formatPrice(descontoPendente)} com credenciais de supervisão, gerente ou admin.`}
+          descricao={`Libere o desconto de ${formatPrice(descontoPendente)} com credenciais de líder, supervisor ou admin.`}
           niveisPermitidos={['supervisao', 'gerente', 'admin']}
           tenantId={user?.tenantId ?? ''}
           onAutorizado={(autorizadoPor) => {

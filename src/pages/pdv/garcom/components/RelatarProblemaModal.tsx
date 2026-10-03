@@ -60,7 +60,7 @@ export default function RelatarProblemaModal({ item, mesaNome, onClose }: Props)
             <i className="ri-send-check-line text-3xl text-amber-500" />
           </div>
           <h3 className="text-base font-bold text-zinc-900 mb-1">Solicitação Enviada!</h3>
-          <p className="text-sm text-zinc-500">O gerente será notificado para aprovação.</p>
+          <p className="text-sm text-zinc-500">O supervisor será notificado para aprovação.</p>
         </div>
       </div>
     );
@@ -153,7 +153,7 @@ export default function RelatarProblemaModal({ item, mesaNome, onClose }: Props)
             <textarea
               value={descricao}
               onChange={(e) => setDescricao(e.target.value.slice(0, 300))}
-              placeholder="Explique o que aconteceu para o gerente avaliar..."
+              placeholder="Explique o que aconteceu para o supervisor avaliar..."
               rows={3}
               className="w-full border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-800 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-red-300 resize-none"
             />
@@ -177,7 +177,7 @@ export default function RelatarProblemaModal({ item, mesaNome, onClose }: Props)
                 <i className="ri-alarm-warning-line mr-1" />
                 Urgente — cliente agitado
               </p>
-              <p className={`text-[10px] ${urgente ? 'text-red-500' : 'text-zinc-400'}`}>Notifica o gerente com prioridade alta</p>
+              <p className={`text-[10px] ${urgente ? 'text-red-500' : 'text-zinc-400'}`}>Notifica o supervisor com prioridade alta</p>
             </div>
           </button>
         </div>

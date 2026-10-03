@@ -481,7 +481,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       const parts: string[] = ['Cortesia'];
       if (cortesiaDest) parts.push(`Para: ${cortesiaDest}`);
       if (cortesiaMot) parts.push(`Motivo: ${cortesiaMot}`);
-      parts.push(`Autorizado por: ${cortesiaAutor ?? 'Gerente'}`);
+      parts.push(`Autorizado por: ${cortesiaAutor ?? 'Supervisor'}`);
       cortesiaNotesStr = parts.join(' | ');
     }
 
@@ -572,10 +572,10 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
             new_discount_amount: actualDesconto,
             new_total_amount: actualTotal,
             approval_notes: cortesiaAtiva
-              ? `Cortesia autorizada por: ${cortesiaAutor ?? 'Gerente'}`
+              ? `Cortesia autorizada por: ${cortesiaAutor ?? 'Supervisor'}`
               : (extraDiscount?.authorizedBy ? `Desconto autorizado por: ${extraDiscount.authorizedBy}` : null),
             reason: cortesiaAtiva
-              ? (cortesiaNotesStr ?? `Cortesia autorizada por: ${cortesiaAutor ?? 'Gerente'}`)
+              ? (cortesiaNotesStr ?? `Cortesia autorizada por: ${cortesiaAutor ?? 'Supervisor'}`)
               : `Desconto autorizado no PDV Caixa${extraDiscount?.authorizedBy ? ` (${extraDiscount.authorizedBy})` : ''}`,
           },
         });

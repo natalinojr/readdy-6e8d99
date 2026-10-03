@@ -260,7 +260,7 @@ export default function ItensClassificarCard({ call, tenantId, abertoInicial = f
       // lojas em que você classifica. Loja fora de `tenants`: se você é gestor dela, não sobrou nada
       // (2026-10-03: antes dizia "precisa ser admin ou gerente" para o dono com tudo classificado).
       if (tenantId && !todas.some((l) => l.id === tenantId)) {
-        if (r.gestor && !r.gestor.includes(tenantId)) throw new Error('Só admin ou gerente dessa loja classifica os itens.');
+        if (r.gestor && !r.gestor.includes(tenantId)) throw new Error('Só admin ou supervisor dessa loja classifica os itens.');
         setLojas([]);
         setTimeout(() => onTudoRef.current?.(), 0); // a pendência some da caixa/Hoje
         setLoading(false);

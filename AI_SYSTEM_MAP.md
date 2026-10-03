@@ -68,6 +68,7 @@ Rotas publicas ou fora do layout:
 Rotas dentro do layout autenticado:
 - `/` (índice): `src/pages/hoje/InicioPorPerfil.tsx` — manda cada perfil para o seu trabalho (2026-10-03)
 - `/hoje`: `src/pages/hoje/page.tsx` — tela inicial que conduz (pendências por bloco, tarefas de hoje, resumo)
+- `/hoje/rotina`: `src/pages/hoje/rotina/ConfigRotina.tsx` — rotina da loja por papel (só admin muda) (2026-10-03)
 - `/modulos`: `src/pages/modulos/page.tsx`
 - `/dashboard`: `src/pages/dashboard/page.tsx`
 - `/cardapio`: `src/pages/cardapio/page.tsx`
@@ -271,6 +272,87 @@ Quando o usuario pedir "muda X":
 ## Historico de solucoes e criterios
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
+
+### 2026-10-03 — Hierarquia na tela: Dono > Supervisor > Líder (só os nomes)
+- **Pedido do dono:** o papel `gerente` (banco `manager`) aparece como **Supervisor**; o `supervisao` (banco
+  `supervisor`) aparece como **Líder**. Enum `user_role`, chaves do front (`gerente`/`supervisao`), matriz
+  `permissions`, RLS, Edges e as cópias do mapa PT↔EN ficam iguais. **Pegadinha ao ler código:** `'supervisor'`
+  no banco é o **Líder** da tela; o Supervisor da tela é `manager`/`gerente`.
+- **Front:** rótulo central `perfilConfig` (a rotina do dia e quem lê dele seguem sozinhos) + os mapas soltos:
+  `ListaEquipe` (ganhou a chave de banco `supervisor`, que aparecia crua), Sidebar/TopBar/`modulos`/`perfil`/
+  `selecionar-loja` (ganharam `supervisao`, que aparecia vazio ou cru), `invite`, Hoje, Admin Master,
+  `PermissoesTab`, `DescontoAutorizacaoModal` (selos LÍD/SUP). A Auditoria mostra o rótulo em vez da chave
+  gravada (`AuditoriaContext`). Textos do PDV (autorização, cancelamento, desconto, cortesia, PIN do totem),
+  Ajuda, Configurações e avisos "só admin ou gerente" → "supervisor"; "supervisão, gerente ou admin" →
+  "líder, supervisor ou admin".
+- **Edges:** 21 mensagens de erro "admin/gerente" → "admin/supervisor"; o prompt do `assistente-brain`
+  (create_user) diz como cada chave se chama na tela. `login-pin` devolve "Apenas supervisor ou
+  administrador" e `kioskManagerPin.ts` aceita as duas formas. Antes de publicar, cada Edge no ar foi baixada
+  (`functions download --use-api --workdir <pasta>`, uma pasta por função) e comparada com o `main`.
+- **Banco:** migração `rotulos_supervisor_lider.sql` refaz 10 funções a partir do próprio `pg_get_functiondef`
+  trocando só o texto (mensagens de `fn_update_user`, `fn_set_user_badge`, `fn_toggle_user_active`,
+  `fn_get_users_list`, `fn_pdv_approval_decide`, `fn_automacao_*`, `fn_salvar_dashboard_metas`; autor padrão
+  "Supervisor" em `fn_cortesia_marcar_pedido`; "aprovado por supervisor" em `fn_pendencia_aprovacao_pdv_sync`).
+- **Não mexido (é dado):** o login "Gerente" @erpos.local da Paranaguá, nomes como "QA Gerente", pendências e
+  notas já gravadas, comentários e nomes de código (`AutorizacaoGerenteModal`, `senha_gerente`, `CFG_KEYS_GERENTE`).
+- **Regra:** nome de papel na tela sai de `perfilConfig[p].label`; não escrever "Gerente"/"Supervisão" à mão.
+
+### 2026-10-03 — Rotina do dia por papel (item 4 da visão): checklist que conduz até o "Tudo em dia"
+- **O que é:** cada loja tem a rotina de cada papel (itens, dias da semana, horário opcional). Ela aparece na Hoje logo depois do "Agora", e o "Tudo em dia" só sai com ela feita. Protótipo aprovado (v2, com os pedidos do dono): `docs/prototipos/rotina-proposta.html`.
+- **Por que NÃO é "tarefa que se repete" do módulo Tarefas:**
+  - tarefa é de uma pessoa, não de um papel, e só o dono tem o módulo;
+  - a próxima repetição só nasce quando alguém conclui a anterior (dia esquecido = não nasce a de hoje);
+  - o checklist não guarda quem marcou nem quando, e não é copiado na repetição.
+  - Por isso a rotina tem tabela própria. O módulo Tarefas segue igual em "Suas tarefas".
+- **Banco** (`20261003250000_rotina_do_dia.sql`):
+  - `rotina_itens`: `tenant_id`, `papel` (gerente | supervisao | equipe | caixa | cozinha), `tipo` (manual | abrir | fechar | contagem | receber | producao), `dias` smallint[] (0 = dom) ou `dias_plano` (contagem nos dias dos planos do Estoque), `dia` ("só hoje", criado por quem está acima), `hora`, `atalho`, `receita_id`/`quantidade` (produção), `ordem`, `ativo` (apagar = desativar; o histórico fica).
+  - `rotina_marcas`: uma por item e dia, com `registrado_por` (auth.uid, gravado no servidor), quem FEZ (`pessoa_user_id` OU `freelancer_id` + `pessoa_nome`) e `aparelho_id` reservado para o celular da loja.
+  - RLS: select por `auth_is_member_of`; sem grant de escrita para authenticated. Escrita só pelas RPCs security definer.
+- **Hierarquia** (pedido do dono): admin 4 > gerente 3 > supervisão 2 > equipe/caixa/cozinha 1. Quem está acima vê a rotina de quem está abaixo e cria "tarefa do dia"/"pedir produção" para essa pessoa: a supervisão para equipe, cozinha e caixa; o gerente também para a supervisão.
+  - O que se repete só o admin configura (`/hoje/rotina`).
+  - Marcar pode quem tem o papel do item ou está acima. Nível 1: qualquer pessoa da loja de nível ≥ 1 (o celular da loja).
+  - Desmarcar pode quem marcou, ou quem está acima.
+  - Regras em `fn_rotina_papel`/`fn_rotina_nivel` (SQL) e `NIVEL`/`papeisDaPessoa`/`papeisAbaixo` (`_shared/rotina.ts`).
+- **Automático = o sistema viu** (`fn_rotina_dados` devolve os fatos; a decisão é de `_shared/rotina.ts`, igual na tela e no cron):
+  - abrir: sessão (não treino) aberta hoje;
+  - fechar: o ÚLTIMO dia aberto hoje está fechado (vale mesmo fechando depois da meia-noite);
+  - receber: `fin_purchases.delivery_confirmed_at` hoje. Não existe "data prevista" na compra, por isso marca no 1º recebimento e "não veio entrega" é marcar à mão;
+  - contagem: pelos planos de `inventory_count_plans` com `situacaoPlano` (mesma regra do Estoque › Início; plano do dia ou atrasado até 6 dias, feito quando os itens do plano foram contados). Com dias escolhidos: uma contagem confirmada hoje;
+  - produção: a 1ª `production_batches` da ficha depois do pedido E a partir do dia pedido (pedido para amanhã não fecha com a produção de hoje). Quem = `produced_by`.
+  - Item automático também pode ser marcado à mão ("fiz de outro jeito").
+- **"Tudo em dia":** a Hoje soma `rotina.resumo.pendentes === 0` (com `!rotina.carregando && !rotina.erro`) à condição que já tinha.
+  - Item com horário que ainda não chegou é "mais tarde" e não segura o "Tudo em dia"; nesse caso a Hoje diz "Tudo em dia até agora ✓" e mostra o próximo.
+  - Passou da hora sem marcar: fica vermelho ("passou das 10:00"). "Só hoje" não feito vira "de ontem" por até 7 dias.
+- **Quem fez? (login compartilhado):**
+  - `loginCompartilhado(email)` = e-mail @erpos.local / .erpos.internal, que é o "Caixa" do celular da loja, o "Cozinha" e o "Gerente" genéricos. Para testar sem esse login: só no `npm run dev`, `localStorage.erpos_dev_compartilhado = '1'`.
+  - Nele toda marca pergunta quem fez (`QuemFez.tsx`, sem PIN). A lista é `fn_rotina_pessoas`: equipe sem tablet e sem logins genéricos + freelancers ativos, os com turno hoje primeiro. Devolve só id, nome e função (nunca CPF, telefone, Pix ou diária).
+  - Login pessoal: um toque. Quem está acima marcando item de baixo também vê "quem fez?", com "eu" primeiro.
+  - Produção no login da loja pergunta "Quem vai produzir?" antes de abrir o card (`RegistroProducaoModal` com `operador` = o nome).
+  - Alinhado com a proposta "Celular da loja" (outra sessão; PIN só no que mexe em estoque e dinheiro, ainda não aprovado): ela pluga o papel de aparelho no `loginCompartilhado` e o PIN no `QuemFez`.
+- **Na Hoje** (`src/pages/hoje/rotina/RotinaHoje.tsx`; `page.tsx` só monta, depois do "Agora"):
+  - "Rotina de hoje": o que a pessoa faz, com progresso e agrupado por papel no login da loja;
+  - supervisão: "Equipe hoje", a lista inteira + "Tarefa do dia" / "Pedir produção";
+  - gerente e dono: "Rotina na loja", o andamento por papel; o toque abre quem fez e a que horas. Não conta para o "Tudo em dia" deles;
+  - dono sem rotina montada: um cartão "Montar a rotina".
+  - Explicações quebram linha: no celular o texto cortado com "…" não dava para ler (pedido do dono).
+- **Configurar** (`ConfigRotina.tsx`): loja (onde é admin) × papel; "Começar com o modelo" por papel; editar (como marca, dias, horário, atalho); subir/descer; tirar (desativa); "Copiar para outra loja" (`fn_rotina_copiar`: junta, não duplica pelo nome). Nomes dos papéis vêm de `perfilConfig` (a troca Gerente → Supervisor e Supervisão → Líder pedida pelo dono é tarefa à parte).
+- **Bom dia da equipe** (`assistente-cron › bomDiaEquipe`): soma "N itens da rotina" (o que falta hoje no papel, mais tarde incluído) e, sem nada no "Agora", cita os 2 primeiros itens. Quem só tem rotina também recebe. Se a leitura da rotina falhar, o bom dia segue sem ela (log WARN).
+- **Aprovar pelo cartão da Hoje** (`CartaoHoje`, kind `aprovacao`): "Aprovar" e "Recusar" abrem uma confirmação (`confirmar`) antes de chamar `fn_pdv_approval_decide` (pedido do dono, para não decidir sem querer).
+- **Testado em 2026-10-03** (localhost, loja Testes PDV, sessões `qa.*` por link mágico, celular e computador):
+  - gerente criou tarefa do dia para a equipe e marcou por alguém ("Freela teste", marcado por QA Gerente);
+  - admin aplicou modelos, editou horário e reordenou; abrir/fechar a loja marcaram automático pela sessão do dia;
+  - caixa marcou e desmarcou; "Tudo em dia" e "Tudo em dia até agora" com item às 23:30;
+  - produção pedida → "Quem vai produzir?" (login da loja simulado) → card da produção → registrou → item automático com o nome;
+  - confirmação do Aprovar com "Voltar".
+  - Permissões testadas no banco numa transação que se desfaz: gerente não cria recorrente nem para gerente; caixa não cria e não marca supervisão; quem não marcou não desmarca; gerente não apaga recorrente.
+  - **Sem teste:** login @erpos.local de verdade (não existe na Testes PDV) e o bom dia enviado de verdade (só prévia).
+- **Pegadinhas (revisão de 2026-10-03):**
+  - `IF NOT (v_papel = 'admin' OR …)` com `v_papel` nulo (quem não é da loja) vira `NOT NULL` = NULL e o IF não nega. Toda RPC de permissão começa com `v_papel is null or …` ou compara com `is distinct from`.
+  - `fn_rotina_pessoas` só para quem faz rotina na loja (nível ≥ 1; totem/contador não). Não lista o dono da plataforma (`is_platform_owner`).
+  - Sem a situação do estoque (`fn_estoque_situacao` falhou), a tela mostra erro e não diz "tudo em dia"; o cron deixa a contagem fora da conta.
+  - O erro de leitura da rotina sempre aparece na Hoje (antes a seção sumia calada).
+  - A leitura que voltou depois de uma mais nova é descartada (`seq`).
+  - O modelo "Fechar a loja" já vem às 23:00, para não segurar o "Tudo em dia" da supervisão o dia inteiro.
 
 ### 2026-10-03 — Classificação de itens: nota de serviço ignorada sai da fila + criar insumo no cartão
 - **Taxa de plataforma não é despesa a classificar.** Mensalidade e Top Placement do iFood e a taxa da

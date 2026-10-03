@@ -17,11 +17,11 @@ describe('Classificar item sem nada pendente na loja', () => {
     render(<ItensClassificarCard call={resposta(['loja1']) as never} tenantId="loja1" abertoInicial onTudo={onTudo} />);
     expect(await screen.findByText(/Tudo classificado/)).toBeTruthy();
     await waitFor(() => expect(onTudo).toHaveBeenCalled());
-    expect(screen.queryByText(/admin ou gerente/)).toBeNull();
+    expect(screen.queryByText(/admin ou supervisor/)).toBeNull();
   });
 
   it('não é gestor da loja: avisa a permissão', async () => {
     render(<ItensClassificarCard call={resposta(['outra']) as never} tenantId="loja1" abertoInicial />);
-    expect(await screen.findByText('Só admin ou gerente dessa loja classifica os itens.')).toBeTruthy();
+    expect(await screen.findByText('Só admin ou supervisor dessa loja classifica os itens.')).toBeTruthy();
   });
 });

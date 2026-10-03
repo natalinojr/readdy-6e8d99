@@ -27,7 +27,7 @@ type Modo = 'pin' | 'email';
 
 export default function AutorizacaoGerenteModal({
   titulo = 'Autorização Necessária',
-  descricao = 'Esta ação requer autorização de um gerente ou administrador.',
+  descricao = 'Esta ação requer autorização de um supervisor ou administrador.',
   niveisPermitidos = ['gerente', 'admin'],
   tenantId,
   onAutorizado,
@@ -35,10 +35,10 @@ export default function AutorizacaoGerenteModal({
 }: Props) {
   const comSupervisao = niveisPermitidos.includes('supervisao');
   const quemPodeAutorizar = comSupervisao
-    ? 'Apenas supervisão, gerente ou administrador podem autorizar.'
-    : 'Apenas gerentes ou administradores podem autorizar.';
+    ? 'Apenas líder, supervisor ou administrador podem autorizar.'
+    : 'Apenas supervisores ou administradores podem autorizar.';
   // Rótulo dos campos: mesmo público da mensagem de erro (antes dizia só "gerente/admin")
-  const rotuloQuem = comSupervisao ? 'supervisão/gerente/admin' : 'gerente/admin';
+  const rotuloQuem = comSupervisao ? 'líder/supervisor/admin' : 'supervisor/admin';
   const [modo, setModo] = useState<Modo>('pin');
   const [matricula, setMatricula] = useState('');
   const [senha, setSenha] = useState('');

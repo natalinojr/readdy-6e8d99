@@ -1168,7 +1168,7 @@ function AutoatendimentoPageInner() {
           </button>
         ) : (
           <div className="mt-8 flex flex-col items-center gap-4 w-full max-w-xs">
-            <p className="text-zinc-400 text-sm font-semibold">{matriculaTablet ? 'PIN do tablet para sair' : logoutCampo === 'matricula' ? 'Matrícula do gerente para sair' : 'PIN do gerente para sair'}</p>
+            <p className="text-zinc-400 text-sm font-semibold">{matriculaTablet ? 'PIN do tablet para sair' : logoutCampo === 'matricula' ? 'Matrícula do supervisor para sair' : 'PIN do supervisor para sair'}</p>
             {/* Display do PIN */}
             <div className="flex gap-3 justify-center">
               {Array.from({ length: Math.max(4, logoutDisplay.length) }).map((_, i) => (
@@ -1271,7 +1271,7 @@ function AutoatendimentoPageInner() {
           </button>
         ) : (
           <div className="fixed bottom-5 left-5 z-[100] flex flex-col items-center gap-3 w-72 bg-zinc-900 border border-zinc-700 rounded-2xl p-4 shadow-2xl">
-            <p className="text-zinc-300 text-sm font-semibold self-start">{matriculaTablet ? 'PIN do tablet para sair' : logoutCampo === 'matricula' ? 'Matrícula do gerente para sair' : 'PIN do gerente para sair'}</p>
+            <p className="text-zinc-300 text-sm font-semibold self-start">{matriculaTablet ? 'PIN do tablet para sair' : logoutCampo === 'matricula' ? 'Matrícula do supervisor para sair' : 'PIN do supervisor para sair'}</p>
             {/* Display do PIN */}
             <div className="flex gap-2 justify-center w-full">
               {Array.from({ length: Math.max(4, logoutDisplay.length) }).map((_, i) => (

@@ -372,7 +372,7 @@ Deno.serve(async (req) => {
       return json({ success: true, url: data.signedUrl });
     }
 
-    if (!podeEditar) return erro('Só administrador ou gerente altera o envio para a contabilidade.', 403);
+    if (!podeEditar) return erro('Só administrador ou supervisor altera o envio para a contabilidade.', 403);
 
     if (action === 'salvar') {
       let limpo;

@@ -806,7 +806,7 @@ Deno.serve(async (req: Request) => {
       const auth = await requireMember(req, supabase, row.tenant_id);
       if (auth.error) return auth.error;
       // Dispensar esconde dinheiro recebido do caixa: só gerente/admin.
-      if (!isManager(auth.role)) return json({ error: 'Só gerente ou administrador pode dispensar uma cobrança aprovada.', code: 'forbidden' }, 403);
+      if (!isManager(auth.role)) return json({ error: 'Só supervisor ou administrador pode dispensar uma cobrança aprovada.', code: 'forbidden' }, 403);
       const motivo = String(body.reason ?? '').trim().slice(0, 200);
       if (!motivo) return json({ error: 'Diga o motivo (ex.: estornado na maquininha).' }, 400);
       await supabase.from('fin_pix_payments')
@@ -857,7 +857,7 @@ Deno.serve(async (req: Request) => {
       if (!row) return json({ error: (body.pix_payment_id || body.txid) ? 'Pagamento não encontrado' : 'pix_payment_id ou txid é obrigatório' }, (body.pix_payment_id || body.txid) ? 404 : 400);
       const auth = await requireMember(req, supabase, row.tenant_id);
       if (auth.error) return auth.error;
-      if (!isManager(auth.role)) return json({ error: 'Somente administrador ou gerente' }, 403);
+      if (!isManager(auth.role)) return json({ error: 'Somente administrador ou supervisor' }, 403);
       if (row.status !== 'pending') return json({ success: true, status: row.status });
       if (PROVIDERS.includes(row.provider)) {
         const st = await reconcileRow(supabase, row);
@@ -1124,7 +1124,7 @@ Deno.serve(async (req: Request) => {
       const tenantId = String(body.tenant_id ?? '');
       const auth = await requireMember(req, supabase, tenantId);
       if (auth.error) return auth.error;
-      if (!isManager(auth.role)) return json({ error: 'Somente administrador ou gerente' }, 403);
+      if (!isManager(auth.role)) return json({ error: 'Somente administrador ou supervisor' }, 403);
       const { inter: existing } = await loadProviderCfgs(supabase, tenantId);
       const pick = (k: 'client_id' | 'client_secret' | 'pix_key') => String(body[k] ?? '').trim() || String(existing?.[k] ?? '');
       const cand: ProviderCfg = {

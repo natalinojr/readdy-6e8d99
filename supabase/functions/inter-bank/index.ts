@@ -1109,7 +1109,7 @@ Deno.serve(async (req: Request) => {
     // ── Pagamentos ──
     const PAY_INTERNAL_ONLY = ['prepare_payment', 'execute_payment', 'cancel_payment', 'decode_boleto', 'reprepare_payment'];
     if (PAY_INTERNAL_ONLY.includes(action) && !internal) return errResp('Pagamento pelo Inter só pelo assistente, com botão e PIN.', 403);
-    if (['payment_status', 'list_payments', 'check_payment_scopes'].includes(action) && !isManager) return errResp('Apenas admin/gerente', 403);
+    if (['payment_status', 'list_payments', 'check_payment_scopes'].includes(action) && !isManager) return errResp('Apenas admin/supervisor', 403);
     // Diagnóstico (interno): pede UM escopo por vez e diz quais a integração do Inter aceita.
     if (action === 'probe_scopes') {
       if (!internal) return errResp('Unauthorized', 401);
@@ -1137,7 +1137,7 @@ Deno.serve(async (req: Request) => {
     // query (INTER_WEBHOOK_KEY) — o aviso só dispara uma consulta; o status continua vindo do Inter.
     // op: 'get' (padrão) | 'put' (cadastra/atualiza) | 'delete' | 'callbacks' (últimos envios, p/ depurar).
     if (action === 'webhook') {
-      if (!isManager) return errResp('Apenas admin/gerente', 403);
+      if (!isManager) return errResp('Apenas admin/supervisor', 403);
       const op = String(body.op ?? 'get');
       const chave = Deno.env.get('INTER_WEBHOOK_KEY') ?? '';
       if (op === 'put' && chave.length < 24) return errResp('INTER_WEBHOOK_KEY não configurada');
@@ -1231,7 +1231,7 @@ Deno.serve(async (req: Request) => {
     // Credencial PRÓPRIA de pagamento (integração do Inter só com os escopos de pagamento).
     // Só grava depois que o Inter entrega um token com os escopos de pagamento para ela.
     if (action === 'save_pay_credentials') {
-      if (!isManager) return errResp('Apenas admin/gerente', 403);
+      if (!isManager) return errResp('Apenas admin/supervisor', 403);
       const { data: cfg } = await admin.from('fin_inter_config').select('*').eq('tenant_id', tenantId).maybeSingle();
       if (!cfg) return errResp('Configure primeiro a integração do extrato (Banco Inter) nesta loja.');
       const pick = (k: string, cur: string) => (String(body[k] ?? '').trim() ? String(body[k]).trim() : (cfg[cur] ?? ''));
@@ -1274,7 +1274,7 @@ Deno.serve(async (req: Request) => {
       return errResp('A lista de Pix permitidos fica na tela Assistente do ERPOS, protegida por PIN.', 403);
     }
     if (action === 'delete_pay_credentials') {
-      if (!isManager) return errResp('Apenas admin/gerente', 403);
+      if (!isManager) return errResp('Apenas admin/supervisor', 403);
       await admin.from('fin_inter_config').update({
         pay_client_id: null, pay_client_secret: null, pay_cert_pem: null, pay_key_pem: null, pay_conta_corrente: null, pay_credentials_at: null,
         pay_source: null, pay_access_token: null, pay_token_expires_at: null, updated_at: new Date().toISOString(),
@@ -1306,7 +1306,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'delete_config') {
-      if (!isManager) return errResp('Apenas admin/gerente', 403);
+      if (!isManager) return errResp('Apenas admin/supervisor', 403);
       const { data: cfg } = await admin.from('fin_inter_config').select('bank_account_id').eq('tenant_id', tenantId).maybeSingle();
       await admin.from('fin_inter_config').delete().eq('tenant_id', tenantId);
       if (cfg?.bank_account_id) await admin.from('fin_bank_accounts').update({ synced_balance: null, synced_balance_at: null, synced_provider: null }).eq('id', cfg.bank_account_id).eq('tenant_id', tenantId);
@@ -1314,7 +1314,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'test_config' || action === 'save_config') {
-      if (!isManager) return errResp('Apenas admin/gerente', 403);
+      if (!isManager) return errResp('Apenas admin/supervisor', 403);
       const { data: existing } = await admin.from('fin_inter_config').select('*').eq('tenant_id', tenantId).maybeSingle();
       const pick = (k: string) => (String(body[k] ?? '').trim() ? String(body[k]).trim() : (existing?.[k] ?? ''));
       const creds: InterCreds = {

@@ -35,7 +35,7 @@ function detalhe(s: SolicitacaoAprovacao) {
 export default function AprovacoesPendentes({ onFechar, irPara }: AcaoProps) {
   const { solicitacoes, aprovar, rejeitar } = useAprovacoes();
   const { user } = useAuth();
-  const operador = user?.nome ?? 'Gerente';
+  const operador = user?.nome ?? 'Supervisor';
   const pendentes = solicitacoes.filter((s) => s.status === 'pendente');
   const { baloes, bot, eu } = useRoteiro();
   const [passo, setPasso] = useState<Passo>('lista');

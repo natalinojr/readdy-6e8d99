@@ -14,8 +14,8 @@ const permissoes: Permissao[] = PERMISSOES_CATALOGO;
 
 const papeis: { id: Papel; label: string; cor: string }[] = [
   { id: 'admin', label: 'Admin', cor: 'text-red-600 bg-red-50' },
-  { id: 'gerente', label: 'Gerente', cor: 'text-orange-600 bg-orange-50' },
-  { id: 'supervisao', label: 'Supervisão', cor: 'text-fuchsia-600 bg-fuchsia-50' },
+  { id: 'gerente', label: 'Supervisor', cor: 'text-orange-600 bg-orange-50' },
+  { id: 'supervisao', label: 'Líder', cor: 'text-fuchsia-600 bg-fuchsia-50' },
   { id: 'caixa', label: 'Caixa', cor: 'text-amber-600 bg-amber-50' },
   { id: 'garcom', label: 'Garçom', cor: 'text-green-600 bg-green-50' },
   { id: 'cozinha', label: 'Cozinha', cor: 'text-sky-600 bg-sky-50' },
@@ -247,7 +247,7 @@ export default function PermissoesTab() {
               <div className="bg-zinc-50 px-5 py-2 border-b border-zinc-100">
                 <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-widest">{cat}</span>
                 {cat === 'Financeiro' && (
-                  <span className="ml-2 text-[11px] text-zinc-400 normal-case">— só Admin e Gerente acessam o Financeiro</span>
+                  <span className="ml-2 text-[11px] text-zinc-400 normal-case">— só Admin e Supervisor acessam o Financeiro</span>
                 )}
                 {cat === 'Gestão' && (
                   <span className="ml-2 text-[11px] text-zinc-400 normal-case">— liberar qualquer uma já faz o módulo Gestão aparecer para o papel</span>
@@ -267,7 +267,7 @@ export default function PermissoesTab() {
                     const isAdmin = papel.id === 'admin';
                     if (travado(papel.id, perm)) {
                       return (
-                        <div key={papel.id} className="flex items-center justify-center py-3" title="Financeiro é só para Admin e Gerente">
+                        <div key={papel.id} className="flex items-center justify-center py-3" title="Financeiro é só para Admin e Supervisor">
                           <span className="text-zinc-300 text-sm">—</span>
                         </div>
                       );

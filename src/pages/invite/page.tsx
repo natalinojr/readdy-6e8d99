@@ -15,8 +15,8 @@ interface InviteToken {
 
 const PERFIL_LABEL: Record<UserPerfil, string> = {
   admin: 'Administrador',
-  gerente: 'Gerente',
-  supervisao: 'Supervisão',
+  gerente: 'Supervisor',
+  supervisao: 'Líder',
   caixa: 'Operador de Caixa',
   garcom: 'Garçom',
   cozinha: 'Cozinha / KDS',

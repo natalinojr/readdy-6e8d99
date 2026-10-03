@@ -269,7 +269,7 @@ export default function AprovacoesPage() {
   const { solicitacoes, aprovar, rejeitar, pendentesCount } = useAprovacoes();
   const { user } = useAuth();
   const [filtro, setFiltro] = useState<FilterStatus>('pendente');
-  const operador = user?.nome ?? 'Gerente';
+  const operador = user?.nome ?? 'Supervisor';
 
   const { error: toastErro } = useToast();
 

@@ -1161,7 +1161,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === "save_config") {
-      if (!isManager(member.role)) return json({ error: "Somente administrador ou gerente" }, 403);
+      if (!isManager(member.role)) return json({ error: "Somente administrador ou supervisor" }, 403);
       const cfg = await loadConfig(admin, tenantId);
       const patch: Record<string, unknown> = { tenant_id: tenantId, provider: "mercadopago", updated_at: new Date().toISOString() };
       const newToken = typeof body.access_token === "string" && body.access_token.trim() ? body.access_token.trim() : null;
@@ -1232,7 +1232,7 @@ Deno.serve(async (req: Request) => {
     if (action === "confirm_manual") {
       // Gerente viu o dinheiro na conta e o webhook não chegou: primeiro reconcilia no
       // provedor; só liquida "na força" (force) com perfil admin, e fica auditado em `error`.
-      if (!isManager(member.role)) return json({ error: "Somente administrador ou gerente" }, 403);
+      if (!isManager(member.role)) return json({ error: "Somente administrador ou supervisor" }, 403);
       const pixId = String(body.pix_payment_id ?? "");
       const { data: px } = await admin.from("fin_pix_payments").select("*").eq("id", pixId).eq("tenant_id", tenantId).maybeSingle();
       if (!px) return json({ error: "Pagamento não encontrado" }, 404);

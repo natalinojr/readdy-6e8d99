@@ -29,7 +29,9 @@ describe('papel supervisão nos mapas', () => {
     expect(ROLE_MAP['supervisor']).toBe('supervisao');
     expect(ROLE_MAP_REVERSE['supervisao']).toBe('supervisor');
     expect(PAPEL_TO_DB_ROLE['supervisao']).toBe('supervisor');
-    expect(perfilConfig['supervisao'].label).toBe('Supervisão');
+    expect(perfilConfig['supervisao'].label).toBe('Líder');
+    // Hierarquia na tela (dono, 2026-10-03): Dono > Supervisor (gerente) > Líder (supervisao).
+    expect(perfilConfig['gerente'].label).toBe('Supervisor');
   });
 
   it('fica entre caixa e gerente', () => {

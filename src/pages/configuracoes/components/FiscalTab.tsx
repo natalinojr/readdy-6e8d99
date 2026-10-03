@@ -147,7 +147,7 @@ export default function FiscalTab() {
       </div>
 
       {!podeEditar && (
-        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-3">Apenas administradores e gerentes podem alterar a configuração fiscal.</p>
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-3">Apenas administradores e supervisores podem alterar a configuração fiscal.</p>
       )}
 
       <Section title="Provedor (Brasil NFe)" icon={<ShieldCheck size={14} />}

@@ -19,6 +19,8 @@ import { contarAgoraPorLoja, diasEntre, type ItemHoje } from './organizar';
 import CartaoHoje from './CartaoHoje';
 import AprendiComVoce from './AprendiComVoce';
 import { DinheiroHoje, LojaHoje, VendasHoje } from './ResumoHoje';
+import RotinaHoje from './rotina/RotinaHoje';
+import { useRotinaHoje } from './rotina/useRotina';
 
 const saudacao = () => {
   const h = Number(new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hour12: false }).slice(0, 2));
@@ -29,7 +31,7 @@ const dataLonga = () => {
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
 const PAPEL: Record<string, string> = {
-  admin: 'Administrador', gerente: 'Gerente', supervisao: 'Supervisão', caixa: 'Caixa', garcom: 'Garçom', cozinha: 'Cozinha', financeiro: 'Financeiro',
+  admin: 'Administrador', gerente: 'Supervisor', supervisao: 'Líder', caixa: 'Caixa', garcom: 'Garçom', cozinha: 'Cozinha', financeiro: 'Financeiro',
 };
 
 interface Atalho { icone: string; label: string; rota: string }
@@ -40,6 +42,9 @@ export default function HojePage() {
   const { hasPermissao } = usePermissoes();
   const { hasModule } = useModuleAccess();
   const { itens, tarefas, feitas, erro, hoje, recarregar, concluirTarefa, marcar, papelDe, papeis, nLojas, dono, carregando } = useHoje();
+  // Rotina do dia por papel (src/pages/hoje/rotina/*): entra no "Tudo em dia".
+  const rotina = useRotinaHoje();
+  const maisTarde = rotina.resumo.maisTarde;
   const [loja, setLoja] = useState('');
   const [verEspera, setVerEspera] = useState(false);
   const [verFeitas, setVerFeitas] = useState(false);
@@ -85,8 +90,10 @@ export default function HojePage() {
   const varias = nLojas > 1 || lojas.length > 1;
   // Acumulado grande anda em porções: com a porção de hoje feita, o resto não segura o "Tudo em dia".
   const emDiaHoje = emDia.filter((i) => !i.porcao?.feita);
-  // "Tudo em dia" só com certeza: sem erro de leitura, nada para agora, nada acumulado e as tarefas feitas.
-  const tudoEmDia = !carregando && !erro && agora.length === 0 && emDiaHoje.length === 0 && tarefasAbertas.length === 0;
+  // "Tudo em dia" só com certeza: sem erro de leitura, nada para agora, nada acumulado, as tarefas feitas e a
+  // rotina em dia (o que tem horário mais tarde não segura: vira "Tudo em dia até agora").
+  const tudoEmDia = !carregando && !erro && agora.length === 0 && emDiaHoje.length === 0 && tarefasAbertas.length === 0
+    && !rotina.carregando && !rotina.erro && rotina.resumo.pendentes === 0;
 
   const atalhos: Atalho[] = (() => {
     const receber = admin || RECEBER_MODULO_KEYS.some((k) => hasPermissao(k));
@@ -108,7 +115,7 @@ export default function HojePage() {
   })();
 
   const cartao = (i: ItemHoje, compacto = false) => (
-    <CartaoHoje key={i.chave} item={i} hoje={hoje} dono={dono} papel={papelDe(i.tenantId)} meuNome={user?.nome ?? 'Gerente'}
+    <CartaoHoje key={i.chave} item={i} hoje={hoje} dono={dono} papel={papelDe(i.tenantId)} meuNome={user?.nome ?? 'Supervisor'}
       mostrarLoja={varias && !filtro} abrir={abrir} marcar={marcar} onMudou={recarregar} compacto={compacto} />
   );
 
@@ -141,7 +148,7 @@ export default function HojePage() {
       <div className="relative">
         <span className="mx-auto w-12 h-12 rounded-full bg-emerald-600 text-white flex items-center justify-center"><i className="ri-check-line text-2xl" /></span>
         <p className="mt-2 text-lg font-extrabold text-emerald-900">{perfil === 'caixa' ? 'Tudo pronto para vender.' : 'Pode fechar o app.'}</p>
-        <p className="text-sm text-emerald-800 mt-0.5">Se aparecer algo novo, ele volta aqui.</p>
+        <p className="text-sm text-emerald-800 mt-0.5">{maisTarde.length ? `Mais tarde: ${maisTarde[0].item.titulo.toLowerCase()} às ${maisTarde[0].item.hora}${maisTarde.length > 1 ? ` e mais ${maisTarde.length - 1}` : ''}.` : 'Se aparecer algo novo, ele volta aqui.'}</p>
       </div>
     </div>
   );
@@ -170,13 +177,16 @@ export default function HojePage() {
         <p className={`mt-3 text-[26px] md:text-3xl leading-tight font-extrabold tracking-tight ${tudoEmDia ? 'text-emerald-700' : 'text-zinc-900'}`}>
           {carregando ? 'Vendo o que tem para hoje…'
             : agora.length > 0 ? <><span className="text-red-600">{agora.length}</span> {agora.length === 1 ? 'coisa precisa' : 'coisas precisam'} de você</>
-            : tudoEmDia ? 'Tudo em dia ✓' : 'Nada urgente agora'}
+            : tudoEmDia ? (maisTarde.length ? <>Tudo em dia <span className="text-lg md:text-xl font-bold text-emerald-600">até agora</span> ✓</> : 'Tudo em dia ✓') : 'Nada urgente agora'}
         </p>
         {!carregando && (
           <p className="text-sm text-zinc-500 mt-1">
             {agora.length > 0 ? 'Cada cartão resolve aqui mesmo. O que vence mais para frente fica em “Pode esperar” e sobe para cá 3 dias antes.'
               : tudoEmDia ? (emDia.length > 0 ? 'Nada precisa de você agora. A porção de hoje do acumulado já foi.' : 'Nada precisa de você agora.')
               : erro ? 'Não consegui conferir tudo — veja o aviso abaixo.'
+              : rotina.erro ? 'Não consegui conferir a rotina — veja o aviso abaixo.'
+              : rotina.carregando ? 'Conferindo a rotina de hoje…'
+              : rotina.resumo.pendentes > 0 ? `Falta${rotina.resumo.pendentes === 1 ? '' : 'm'} ${rotina.resumo.pendentes} ${rotina.resumo.pendentes === 1 ? 'item' : 'itens'} da rotina de hoje.`
               : tarefasAbertas.length > 0 ? `Falta${tarefasAbertas.length === 1 ? '' : 'm'} ${tarefasAbertas.length} tarefa${tarefasAbertas.length === 1 ? '' : 's'} de hoje.`
               : 'Sobrou só o trabalho acumulado, para pôr em dia.'}
           </p>
@@ -221,6 +231,8 @@ export default function HojePage() {
               <div className="space-y-2.5">{agora.map((i) => cartao(i))}</div>
             </section>
           )}
+
+          <RotinaHoje rotina={rotina} filtroLoja={filtro || undefined} />
 
           {celular && (verVendas || verDinheiro || gestor) && <div className="space-y-3">{resumoSemLoja}</div>}
 

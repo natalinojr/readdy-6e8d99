@@ -1539,7 +1539,7 @@ Deno.serve(async (req: Request) => {
 
     // Substitui a tabela inteira da maquininha (o que não vier some)
     if (action === 'card_fees_save') {
-      if (!isManager) return errResp('Apenas administradores e gerentes podem alterar as taxas', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores podem alterar as taxas', 403);
       const provider = String(body.provider ?? 'stone');
       const PRODUTOS = ['debito', 'credito_vista', 'credito_2_6', 'credito_7_12'];
       const lista = Array.isArray(body.fees) ? (body.fees as Array<Record<string, unknown>>).slice(0, 200) : null;
@@ -1603,7 +1603,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'confirm') {
-      if (!isManager) return errResp('Apenas administradores e gerentes podem dar baixa', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores podem dar baixa', 403);
       const ids = Array.isArray(body.ids) ? [...new Set((body.ids as unknown[]).map(String))].slice(0, MAX_BATCH) : [];
       if (ids.length === 0) return errResp('Nenhum lançamento informado');
       const results: Result[] = [];
@@ -1616,14 +1616,14 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'undo') {
-      if (!isManager) return errResp('Apenas administradores e gerentes podem estornar', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores podem estornar', 403);
       const r = await undoOne(ctx, String(body.id ?? ''));
       log('INFO', 'undo', r.ok ? 'ok' : 'recusado', { tenantId, userId, id: body.id, msg: r.msg });
       return r.ok ? json({ success: true, results: [r], message: r.msg }) : errResp(r.msg);
     }
 
     if (action === 'create_from_statement') {
-      if (!isManager) return errResp('Apenas administradores e gerentes podem lançar pelo extrato', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores podem lançar pelo extrato', 403);
       const ids = Array.isArray(body.ids) ? [...new Set((body.ids as unknown[]).map(String))].slice(0, MAX_BATCH) : [];
       if (ids.length === 0) return errResp('Nenhum lançamento informado');
       const KINDS = ['despesa', 'compra', 'freelancer', 'fora_dre', 'prestador'] as const;
@@ -1661,7 +1661,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'create_split') {
-      if (!isManager) return errResp('Apenas administradores e gerentes podem lançar pelo extrato', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores podem lançar pelo extrato', 403);
       const id = String(body.id ?? '');
       const lista = (Array.isArray(body.partes) ? body.partes : []) as Row[];
       if (lista.length > 6) return errResp('Divida em no máximo 6 partes');
@@ -1702,7 +1702,7 @@ Deno.serve(async (req: Request) => {
         const sugestao = sugerirCombinacao(cands, Number(doc.valor_total ?? 0), String(doc.emitted_at ?? '').slice(0, 10));
         return json({ success: true, candidates: cands, suggestion: sugestao });
       }
-      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores', 403);
       if (action === 'link_monthly') {
         const ids = Array.isArray(body.ids) ? [...new Set((body.ids as unknown[]).map(String))].slice(0, 60) : [];
         if (ids.length === 0) return errResp('Escolha os pagamentos que esta nota cobre');
@@ -1742,7 +1742,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'prepaid_save') {
-      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores', 403);
       const cnpj = soDigitos(body.cnpj);
       if (cnpj.length !== 14) return errResp('CNPJ do fornecedor inválido');
       const nome = String(body.name ?? '').trim().slice(0, 120);
@@ -1774,7 +1774,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'prepaid_adjust') {
-      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores', 403);
       const sup = (await prepaidSuppliers(ctx)).find((s) => String(s.id) === String(body.supplier_id ?? ''));
       if (!sup) return errResp('Fornecedor pré-pago não encontrado', 404);
       const real = round2(Number(String(body.saldo_real ?? '').replace(',', '.')));
@@ -1790,7 +1790,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'prepaid_move_delete') {
-      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores', 403);
       const { data: m } = await admin.from('fin_prepaid_moves').select('id, kind').eq('id', String(body.id ?? '')).eq('tenant_id', tenantId).maybeSingle();
       if (!m) return errResp('Movimento não encontrado', 404);
       if (m.kind !== 'adjust') return errResp('Só acertos se apagam aqui: recarga desfaz na Conciliação e consumo pela nota');
@@ -1799,7 +1799,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'prepaid_consume' || action === 'prepaid_unconsume') {
-      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores', 403);
       const { data: doc } = await admin.from('fiscal_inbound_documents').select('*').eq('id', String(body.document_id ?? '')).eq('tenant_id', tenantId).maybeSingle();
       if (!doc) return errResp('Nota não encontrada', 404);
       const r = action === 'prepaid_consume' ? await prepaidConsume(ctx, doc) : await prepaidUnconsume(ctx, doc);
@@ -1808,7 +1808,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'save_counterpart_rule') {
-      if (!isManager) return errResp('Apenas administradores e gerentes podem criar regras', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores podem criar regras', 403);
       const raw = String(body.counterpart_doc ?? '').trim();
       const doc = /^[\d.\-/\s]+$/.test(raw) ? raw.replace(/\D/g, '') : raw.toLowerCase();
       const category = String(body.category ?? '').trim();
@@ -1837,7 +1837,7 @@ Deno.serve(async (req: Request) => {
 
     // ── Regra de lançamento ────────────────────────────────────────────────────
     if (action === 'launch_rule_save') {
-      if (!isManager) return errResp('Apenas administradores e gerentes podem criar regras', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores podem criar regras', 403);
       const raw = String(body.counterpart_doc ?? '').trim();
       const doc = /^[\d.\-/\s]+$/.test(raw) ? raw.replace(/\D/g, '') : raw.toLowerCase();
       if (!doc) return errResp('Pagamento sem CPF/CNPJ ou chave Pix: não dá para criar regra');
@@ -1890,7 +1890,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'launch_rule_apply') {
-      if (!isManager) return errResp('Apenas administradores e gerentes podem lançar', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores podem lançar', 403);
       const ruleId = String(body.rule_id ?? '');
       const { data: rule } = await admin.from('fin_reconciliation_rules').select('*').eq('id', ruleId).eq('tenant_id', tenantId).eq('action', 'launch').maybeSingle();
       if (!rule || !rule.is_active) return errResp('Regra não encontrada', 404);
@@ -1920,7 +1920,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'auto_apply_rules') {
-      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores', 403);
       const to = todayBR();
       const { data: regras } = await admin.from('fin_reconciliation_rules').select('*')
         .eq('tenant_id', tenantId).eq('action', 'launch').eq('is_active', true).eq('mode', 'auto');
@@ -1947,7 +1947,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'auto_confirm_exact') {
-      if (!isManager) return errResp('Apenas administradores e gerentes', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores', 403);
       const r = await autoConfirmExact(ctx);
       return json({ success: true, baixados: r.filter((x) => x.ok), falhas: r.filter((x) => !x.ok) });
     }
@@ -2005,7 +2005,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'link_manual') {
-      if (!isManager) return errResp('Apenas administradores e gerentes podem vincular pagamentos', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores podem vincular pagamentos', 403);
       const rowId = String(body.id ?? '');
       const alvo = (body.alvo ?? {}) as Row;
       const kind = alvo.kind === 'inbound_doc' ? 'inbound_doc' : alvo.kind === 'payable' ? 'payable' : null;
@@ -2094,7 +2094,7 @@ Deno.serve(async (req: Request) => {
 
     // ── Conta já paga × linha do extrato (Trilha versão D) ────────────────────
     if (action === 'paid_link_search' || action === 'link_paid') {
-      if (action === 'link_paid' && !isManager) return errResp('Apenas administradores e gerentes podem vincular pagamentos', 403);
+      if (action === 'link_paid' && !isManager) return errResp('Apenas administradores e supervisores podem vincular pagamentos', 403);
       const { data: bill } = await admin.from('fin_accounts_payable').select('id, description, supplier, amount, paid_amount, paid_date, due_date, status')
         .eq('id', String(body.bill_id ?? '')).eq('tenant_id', tenantId).maybeSingle();
       if (!bill) return errResp('Conta a pagar não encontrada', 404);
@@ -2150,7 +2150,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'unlink_paid') {
-      if (!isManager) return errResp('Apenas administradores e gerentes podem desfazer vínculos', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores podem desfazer vínculos', 403);
       const { data: row } = await admin.from('fin_bank_statement_imports').select('*').eq('id', String(body.statement_id ?? '')).eq('tenant_id', tenantId).maybeSingle();
       if (!row) return errResp('Lançamento não encontrado', 404);
       const r = await unlinkPaid(ctx, row);
@@ -2168,7 +2168,7 @@ Deno.serve(async (req: Request) => {
         if (error) return errResp('Pré-visualizar: ' + error.message, 500);
         return json({ success: true, preview: data });
       }
-      if (!isManager) return errResp('Apenas administradores e gerentes podem fechar o período', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores podem fechar o período', 403);
       const { data, error } = await admin.rpc('fn_fechar_periodo_anterior', { p_tenant: tenantId, p_inicio: inicio, p_user: userId });
       if (error) return errResp('Fechar o período: ' + error.message, 500);
       log('INFO', 'periodo_fechar', 'ok', { tenantId, userId, inicio, ...(data as Row ?? {}) });
@@ -2176,7 +2176,7 @@ Deno.serve(async (req: Request) => {
     }
 
     if (action === 'periodo_reabrir') {
-      if (!isManager) return errResp('Apenas administradores e gerentes podem reabrir o período', 403);
+      if (!isManager) return errResp('Apenas administradores e supervisores podem reabrir o período', 403);
       const { data, error } = await admin.rpc('fn_reabrir_periodo_anterior', { p_tenant: tenantId });
       if (error) return errResp('Reabrir: ' + error.message, 500);
       log('INFO', 'periodo_reabrir', 'ok', { tenantId, userId, ...(data as Row ?? {}) });
