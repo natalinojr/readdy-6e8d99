@@ -78,6 +78,10 @@ export function conferirAcesso(p: PedidoDeAcesso): string | null {
   if (p.papelAtual === 'admin') return 'Administrador tem tudo — não tem ajuste. O cargo dele muda em "Editar".';
   const desconhecida = p.keys.find((k) => !TODAS_AS_KEYS.has(k));
   if (desconhecida) return `Permissão desconhecida: ${desconhecida}`;
+  if (p.editor === 'gerente') {
+    if (!PAPEIS_DO_GERENTE.includes(p.papelAtual)) return 'O supervisor só muda o acesso de quem está abaixo dele na loja.';
+    if (!PAPEIS_DO_GERENTE.includes(p.papelNovo)) return 'O supervisor não dá esse cargo — só o dono.';
+  }
   // O que vai além do padrão do cargo tem que funcionar de verdade para esse cargo (revisão 2026-10-03).
   const padraoCargo = new Set(p.padraoDoCargoNovo);
   for (const k of p.keys) {
