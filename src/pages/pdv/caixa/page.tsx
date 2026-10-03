@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import AvisoImpressao from '@/components/feature/AvisoImpressao';
 import { Clock, Lock } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAppMode } from '@/contexts/AppModeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/hooks/usePermissoes';
@@ -323,7 +323,7 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
   const navigate = useNavigate();
   const { setMode } = useAppMode();
   const { user } = useAuth();
-  const { hasPermissao } = usePermissoes();
+  const { hasPermissao, loading: carregandoPermissoes } = usePermissoes();
   const { total, clearCart, destino, setDestino, addItem, carrinho, removeItem, enviarParaCozinha, finalizarPedido } = usePDV();
   const { success: toastSuccess, error: toastError } = useToast();
   const { pedidos: kdsPedidos } = useKDS();
@@ -342,6 +342,19 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
   const [busca, setBusca] = useState('');
   const [modal, setModal] = useState<ModalState>('none');
   const [tipoMovimento, setTipoMovimento] = useState<'sangria' | 'suprimento'>('sangria');
+  // /pdv/caixa?abrir=sangria&tipo=freelancer|outro|fornecedor ("O que aconteceu?", 2026-10-03): abre a
+  // sangria já com o tipo marcado. Com o caixa fechado o link fica esperando (aviso no PDVCaixaInner).
+  const [paramsUrl, setParamsUrl] = useSearchParams();
+  const [motivoSangria, setMotivoSangria] = useState<'Freelancer' | 'Outro' | 'Fornecedor' | undefined>(undefined);
+  useEffect(() => {
+    if (paramsUrl.get('abrir') !== 'sangria' || carregandoPermissoes) return; // decide com a matriz da loja já carregada
+    const t = paramsUrl.get('tipo');
+    setParamsUrl({}, { replace: true });
+    if (!hasPermissao('pdv_sangria')) return;
+    setMotivoSangria(t === 'freelancer' ? 'Freelancer' : t === 'outro' ? 'Outro' : t === 'fornecedor' ? 'Fornecedor' : undefined);
+    setTipoMovimento('sangria');
+    setModal('sangria');
+  }, [paramsUrl, setParamsUrl, hasPermissao, carregandoPermissoes]);
   const [itemSelecionado, setItemSelecionado] = useState<Item | null>(null);
   // Estado para abertura de mesa pelo caixa
   const [mesaParaAbrir, setMesaParaAbrir] = useState<{ id: string; numero: number } | null>(null);
@@ -1109,10 +1122,12 @@ function PDVOperacional({ onAbrirFechamento }: PDVOperacionalProps) {
       {modal === 'sangria' && (
         <SangriaSuprimentoModal
           tipoInicial={tipoMovimento}
+          motivoInicial={motivoSangria}
           historico={historicoCaixa}
           onRegistrar={handleRegistrarMovimento}
           onClose={() => {
             setModal('none');
+            setMotivoSangria(undefined);
             loadMovimentacoes();
           }}
         />
@@ -1128,6 +1143,9 @@ function PDVCaixaInner() {
   const { setMode } = useAppMode();
   const [modal, setModal] = useState<'none' | 'iniciar_sessao' | 'abertura_caixa' | 'fechar_sessao'>('none');
   const [fechamento, setFechamento] = useState<FechamentoData | null>(null);
+  // Link de sangria com o caixa fechado (dono, 2026-10-03): só avisa; o link fica e a sangria abre quando o caixa abrir.
+  const [paramsUrl, setParamsUrl] = useSearchParams();
+  const pedeSangria = paramsUrl.get('abrir') === 'sangria';
 
   const handleVoltar = () => {
     setMode('modulos');
@@ -1140,6 +1158,15 @@ function PDVCaixaInner() {
 
   return (
     <>
+      {pedeSangria && estado !== 'caixa_aberto' && (
+        <div className="fixed top-3 inset-x-3 md:inset-x-auto md:left-1/2 md:-translate-x-1/2 md:w-[440px] z-[60] bg-amber-50 border border-amber-300 text-amber-900 rounded-2xl p-3.5 shadow-lg flex gap-2.5 text-sm">
+          <i className="ri-safe-2-line text-xl text-amber-600 flex-shrink-0" />
+          <p className="flex-1"><b>Abra o caixa para fazer a sangria.</b> Assim que o caixa abrir, a sangria aparece sozinha.</p>
+          <button onClick={() => setParamsUrl({}, { replace: true })} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-amber-100 cursor-pointer flex-shrink-0" aria-label="Fechar aviso">
+            <i className="ri-close-line text-lg" />
+          </button>
+        </div>
+      )}
       {estado === 'sem_sessao' && (
         <SemSessaoView
           onIniciar={() => setModal('iniciar_sessao')}

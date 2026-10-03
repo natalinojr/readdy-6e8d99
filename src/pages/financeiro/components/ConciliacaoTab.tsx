@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useBankAccounts } from '@/hooks/useFinanceiro';
@@ -527,6 +527,14 @@ export default function ConciliacaoTab() {
   const [filterType, setFilterType] = useState<'all' | 'credit' | 'debit'>('all');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [page, setPage] = useState(1);
+  // ?abrir=pendentes ("O que aconteceu?" › saiu do banco e ninguém lançou): só as saídas pendentes.
+  // Num efeito (não no estado inicial): já estando na aba, a URL nova chega depois do remount.
+  const [paramsUrl, setParamsUrl] = useSearchParams();
+  useEffect(() => {
+    if (paramsUrl.get('abrir') !== 'pendentes') return;
+    setFilterStatus('pending'); setFilterType('debit'); setPage(1);
+    setParamsUrl((p) => { p.delete('abrir'); return p; }, { replace: true });
+  }, [paramsUrl, setParamsUrl]);
 
   const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
     setToast({ msg, type });

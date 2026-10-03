@@ -17,6 +17,8 @@ interface MovimentoCaixa {
 
 interface SangriaSuprimentoModalProps {
   tipoInicial?: TipoMovimento;
+  /** Já abre com o tipo de retirada marcado (link /pdv/caixa?abrir=sangria&tipo=…, do "O que aconteceu?"). */
+  motivoInicial?: MotivoRetirada;
   historico: MovimentoCaixa[];
   onRegistrar: (mov: MovimentoCaixa) => void;
   onClose: () => void;
@@ -42,6 +44,7 @@ const fmt = (v: number) =>
 
 export default function SangriaSuprimentoModal({
   tipoInicial = 'sangria',
+  motivoInicial,
   historico,
   onRegistrar,
   onClose,
@@ -52,7 +55,7 @@ export default function SangriaSuprimentoModal({
 
   const [tipo, setTipo] = useState<TipoMovimento>(tipoInicial);
   const [valor, setValor] = useState('');
-  const [motivoRetirada, setMotivoRetirada] = useState<MotivoRetirada | ''>('');
+  const [motivoRetirada, setMotivoRetirada] = useState<MotivoRetirada | ''>(motivoInicial ?? '');
   const [motivoAdicao, setMotivoAdicao] = useState<MotivoAdicao | ''>('');
   const [nomeFornecedor, setNomeFornecedor] = useState('');
   const [nomeFreelancer, setNomeFreelancer] = useState('');

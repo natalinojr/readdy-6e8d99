@@ -50,6 +50,12 @@
   },
   "shortcuts": [
     {
+      "name": "Lançar (o que aconteceu?)",
+      "short_name": "Lançar",
+      "url": "/lancar",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
       "name": "Minhas tarefas",
       "short_name": "Minhas",
       "url": "/tarefas",
