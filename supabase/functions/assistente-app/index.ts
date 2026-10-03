@@ -17,7 +17,9 @@
 //                                                    mensagem, a hora e as não lidas
 //   seen      { id, topic?, group_jid? }           → marca visto até esse id (no assunto, no grupo, ou geral)
 //   items_pending {}                               → itens de fornecedor sem classificação CMV × despesa
-//                                                    (lojas onde o dono é admin/gerente) + categorias
+//                                                    (lojas onde o dono é admin/gerente) + categorias;
+//                                                    gestor = todas essas lojas, mesmo as sem item (loja fora
+//                                                    de `tenants` e dentro de `gestor` = tudo classificado)
 //   item_classify { tenant_id, ids, classe, dre_category_id?, merchandise_category_id? }
 //                                                  → classifica pelo chat (fn_item_classify com o JWT do dono)
 //   item_link { tenant_id, id, ingredient_id, units_per_package }
@@ -1140,7 +1142,7 @@ Deno.serve(async (req) => {
       if (lErr) throw new Error(lErr.message);
       // deno-lint-ignore no-explicit-any
       const ids = ((lojas ?? []) as any[]).map((l) => String(l.tenant_id));
-      if (!ids.length) return json({ success: true, data: { tenants: [] } });
+      if (!ids.length) return json({ success: true, data: { tenants: [], gestor: [] } });
       const [itens, cats, mercs, ings] = await Promise.all([
         admin.from('fin_item_classifications')
           .select('id, tenant_id, description, supplier_name, unit_label, last_unit_price, suggested_classe, suggested_dre_category_id, suggestion_reason, merchandise_category_id, is_service, created_at')
@@ -1163,7 +1165,7 @@ Deno.serve(async (req) => {
           ingredients: (ings.data ?? []).filter((g) => g.tenant_id === tid).map((g) => ({ id: g.id, name: g.name, unit: g.unit })),
         };
       }).filter((t) => t.items.length).sort((a, b) => a.name.localeCompare(b.name));
-      return json({ success: true, data: { tenants } });
+      return json({ success: true, data: { tenants, gestor: ids } });
     }
 
     if (action === 'item_classify') {
