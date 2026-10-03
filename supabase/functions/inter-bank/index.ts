@@ -282,6 +282,21 @@ async function syncTenant(admin: Admin, tenantId: string, opts: { days?: number;
       rows.push({ tenant_id: tenantId, bank_account_id: cfg.bank_account_id, external_id: externalId, transaction_date: date, amount, description, transaction_type: type, status: 'pending', source: 'inter', raw: tx });
     }
 
+    // Pix logo depois do envio vem com detalhes.tipoDetalhe='INCOMPLETE' (sem E2E, sem nome de quem recebe)
+    // e o upsert abaixo ignora a linha que já existe — ela ficava incompleta para sempre e a baixa feita
+    // na confirmação do Inter nunca ligava (Marcelle, 02/10). Quando o Inter já manda completo, atualiza
+    // raw e descrição da linha gravada (só esses campos; vínculo e status ficam como estão).
+    const completos = rows.filter((r) => String((r.raw as InterTx).detalhes?.tipoDetalhe ?? '') !== 'INCOMPLETE');
+    if (completos.length > 0) {
+      const { data: incompletas } = await admin.from('fin_bank_statement_imports').select('id, external_id')
+        .eq('tenant_id', tenantId).eq('bank_account_id', cfg.bank_account_id).eq('raw->detalhes->>tipoDetalhe', 'INCOMPLETE')
+        .gte('transaction_date', from).limit(200); // poucas linhas: casar em memória (o .in com centenas de ids estoura a URL)
+      for (const inc of incompletas ?? []) {
+        const novo = completos.find((r) => r.external_id === inc.external_id);
+        if (novo) await admin.from('fin_bank_statement_imports').update({ raw: novo.raw, description: novo.description }).eq('id', inc.id);
+      }
+    }
+
     let inserted: any[] = [];
     for (let i = 0; i < rows.length; i += 200) {
       const { data, error } = await admin.from('fin_bank_statement_imports')
