@@ -97,6 +97,8 @@ export default function MotoboyListaPage() {
   // Saída montada pelo gestor (Fase 3): ordem das paradas ainda pendentes
   const [rota, setRota] = useState<{ paradas: string[] } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [atualizando, setAtualizando] = useState(false);
+  const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
   const [erro, setErro] = useState('');
 
   // Form de login
@@ -114,6 +116,13 @@ export default function MotoboyListaPage() {
   // GPS liga só com pedido dele a caminho/em rota, ou com o turno ligado.
   const temEntregaAtiva = orders.some((o) => o.meu && o.status !== 'delivered' && (o.motoboy_status === 'a_caminho_loja' || o.motoboy_status === 'coletou'));
   const gps = useMotoboyGps(session?.tenant_id, session?.driver_id, !!session && (temEntregaAtiva || turno));
+  // Pegou uma entrega → o turno liga sozinho (dono, 2026-10-02: ficava "desligado" com entrega na mão).
+  // Desligar continua sendo do motoboy, quando terminar.
+  useEffect(() => {
+    if (!temEntregaAtiva || turno) return;
+    setTurno(true);
+    try { localStorage.setItem(TURNO_KEY, '1'); } catch { /* ok */ }
+  }, [temEntregaAtiva, turno]);
   const avisoGps = textoGps(gps.estado);
   // Tick local (sem tocar servidor) pra o contador de tempo andar.
   const [now, setNow] = useState(() => Date.now());
@@ -467,8 +476,15 @@ export default function MotoboyListaPage() {
             <button type="button" onClick={() => setShowMapa(true)} className="inline-flex items-center gap-1 text-xs font-bold text-blue-600">
               <i className="ri-map-2-line" /> Mapa
             </button>
-            <button type="button" onClick={() => carregar(session)} className="inline-flex items-center gap-1 text-xs font-bold text-amber-600">
-              <i className="ri-refresh-line" /> Atualizar
+            <button type="button" disabled={atualizando}
+              onClick={async () => {
+                // Antes não dava sinal nenhum (dono, 2026-10-02): agora gira e mostra a hora da última atualização.
+                setAtualizando(true);
+                try { await carregar(session); setAtualizadoEm(new Date()); } finally { setAtualizando(false); }
+              }}
+              className="inline-flex items-center gap-1 text-xs font-bold text-amber-600 disabled:opacity-60">
+              <i className={'ri-refresh-line' + (atualizando ? ' animate-spin' : '')} />
+              {atualizando ? 'Atualizando…' : atualizadoEm ? `Atualizado ${atualizadoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : 'Atualizar'}
             </button>
           </div>
         </div>

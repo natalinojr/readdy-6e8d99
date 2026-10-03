@@ -141,6 +141,10 @@ export default function MotoboyPage() {
   const minhaEntregaAtiva = !!order && !!session && order.claimed_by_id === session.driver_id && order.status !== 'delivered'
     && (order.motoboy_status === 'a_caminho_loja' || order.motoboy_status === 'coletou');
   const gps = useMotoboyGps(session?.tenant_id, session?.driver_id, !!session && (minhaEntregaAtiva || turnoLigado));
+  // Pegou a entrega → liga o turno (a lista "Minhas entregas" já abre com ele ligado).
+  useEffect(() => {
+    if (minhaEntregaAtiva && !turnoLigado) { try { localStorage.setItem('erpos_motoboy_turno', '1'); } catch { /* ok */ } }
+  }, [minhaEntregaAtiva, turnoLigado]);
   const avisoGps = textoGps(gps.estado);
 
   const sinalizar = async (signal: string, motivoTxt?: string) => {
