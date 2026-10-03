@@ -384,7 +384,10 @@ async function resumoGrupos(admin: SupabaseClient, cfg: Record<string, any>, own
   }
   if (!partes.length) return preview ? { texto: null, grupos: grupos.length } : null;
   const corpo = partes.map((p) => `👥 *${p.nome}*${p.pasta ? ` · pasta ${p.pasta}` : ''} · ${p.mensagens} msg\n${p.texto}`).join('\n\n');
-  const texto = `🗞️ *Resumo dos grupos — ${hoje.split('-').reverse().slice(0, 2).join('/')}*\n\n${corpo}\n\nQuer que algum item vire tarefa? Me diga, por exemplo: "o 1 do ${partes[0].nome} vira tarefa".`;
+  // A dica só aparece quando tem item numerado em "Precisa de você".
+  const comItem = partes.find((p) => /(^|\n)\s*1[.)]\s/.test(p.texto));
+  const dica = comItem ? `\n\nQuer que algum item vire tarefa? Me diga, por exemplo: "o 1 do ${comItem.nome} vira tarefa".` : '';
+  const texto = `🗞️ *Resumo dos grupos — ${hoje.split('-').reverse().slice(0, 2).join('/')}*\n\n${corpo}${dica}`;
   if (preview) return { texto, grupos: partes.length };
   await deliver(ownerChat as string, texto, '/assistente');
   await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: texto, topic: 'avisos', kind: 'automatico' });
