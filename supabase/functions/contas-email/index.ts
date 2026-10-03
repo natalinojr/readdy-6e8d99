@@ -29,7 +29,7 @@
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { isFinanceiroRole } from '../_shared/tenant-auth.ts';
 import {
-  lerBoletos, lancarBoleto, motivoPendencia, resumoBoleto, onlyDigits,
+  lerBoletos, lancarBoleto, motivoPendencia, resumoBoleto, onlyDigits, destinoCerto, guardarBoleto, acharDestino,
   type Anexo as AnexoLido, type BoletoLido, type Fornecedor,
 } from './leitura.ts';
 
@@ -317,26 +317,42 @@ async function processar(admin: Admin, tenantId: string, mailId: string, email: 
     return;
   }
 
+  const doCnpj = (b: BoletoLido) => (b.cnpj ? porCnpj[b.cnpj.slice(0, 8)] ?? null : null);
   const lista: BoletoRaw[] = boletos.map((b) => {
-    const m = b.valor ? motivoPendencia(b, remetente, b.cnpj ? porCnpj[b.cnpj.slice(0, 8)] ?? null : null)
+    const m = b.valor ? motivoPendencia(b, remetente, doCnpj(b))
       : { motivo: 'O boleto não traz valor.', alerta: false };
-    return { ...b, beneficiario: b.beneficiario ?? (m ? null : remetente?.name ?? null), motivo: m?.motivo ?? null, alerta: m?.alerta ?? false };
+    // Nome do fornecedor cadastrado dono do CNPJ antes do que foi lido do PDF (que pode ser rótulo).
+    return { ...b, beneficiario: doCnpj(b)?.name ?? b.beneficiario ?? (m ? null : remetente?.name ?? null), motivo: m?.motivo ?? null, alerta: m?.alerta ?? false };
   });
 
-  if (!lista.some((b) => b.motivo)) {
+  // Bate com a conta de uma nota fiscal (ou já está guardado): guarda sem perguntar, venha de quem
+  // vier (dono, 2026-10-03). O aviso de CNPJ diferente do remetente continua parando.
+  for (const b of lista) {
+    if (b.alerta || !b.valor) continue;
+    const d = await destinoCerto(admin, tenantId, b);
+    if (!d) continue;
+    if (d.tipo === 'ja' || await guardarBoleto(admin, tenantId, d.conta.id, b)) {
+      b.conta_id = d.conta.id; b.acao = d.acao; b.motivo = null;
+    }
+  }
+  const abertos = lista.filter((b) => !b.conta_id);
+
+  if (!abertos.some((b) => b.motivo)) {
     // Fornecedor conhecido e beneficiário batendo: lança direto.
-    for (const b of lista) {
+    for (const b of abertos) {
       const r = await lancarBoleto(admin, tenantId, b, { fornecedor: remetente!.name, remetente: email.remetenteEmail, assunto: email.subject });
       if (r.ok) { b.conta_id = r.conta_id; b.acao = r.acao; }
       else b.motivo = `Há ${r.ambiguo.length} contas em aberto de ${remetente!.name} com esse valor: escolha qual é.`;
     }
     if (lista.every((b) => b.conta_id)) {
       await admin.from('fin_mail_messages').update({
-        status: 'bill', bill_id: lista[0].conta_id, supplier_id: remetente!.id, boleto_digitavel: lista[0].digitavel,
+        status: 'bill', bill_id: lista[0].conta_id, supplier_id: remetente?.id ?? doCnpj(lista[0])?.id ?? null, boleto_digitavel: lista[0].digitavel,
         amount: lista[0].valor, due_date: lista[0].vencimento, reason: lista.map((b) => `${resumoBoleto(b)}: ${b.acao}`).join(' · '),
         raw: { ...base, boletos: lista }, processed_at: agora,
       }).eq('id', mailId);
-      log('INFO', 'processar', 'lançado direto', { mailId, fornecedor: remetente!.name, boletos: lista.length });
+      // "Ler de novo" de um e-mail que estava esperando: a pendência dele fecha junto.
+      await admin.rpc('fn_pendencia_resolver_ref', { p_tenant: tenantId, p_kind: 'boleto_email', p_ref: mailId, p_motivo: 'boleto guardado na conta' });
+      log('INFO', 'processar', 'lançado direto', { mailId, fornecedor: remetente?.name ?? doCnpj(lista[0])?.name ?? null, boletos: lista.length, acoes: lista.map((b) => b.acao) });
       return;
     }
   }
@@ -463,6 +479,18 @@ Deno.serve(async (req: Request) => {
         .eq('id', String(body.mail_id ?? '')).eq('tenant_id', tenantId).maybeSingle();
       return m as any;
     };
+    // Nome para achar a conta do boleto: o fornecedor do e-mail; senão o cadastrado dono do CNPJ do
+    // boleto; só por último o nome lido do PDF (2026-10-03: o lido era "Pagador" e o botão criava
+    // uma conta duplicada em vez de achar a da NF).
+    const nomeParaConta = async (m: any, boletos: BoletoRaw[]) => {
+      let doEmail: string | null = null;
+      if (m.supplier_id) {
+        const { data: f } = await admin.from('fin_suppliers').select('name').eq('id', m.supplier_id).maybeSingle();
+        doEmail = f?.name ?? null;
+      }
+      const { porCnpj } = await fornecedores(admin, tenantId, '', boletos.map((b) => b.cnpj).filter(Boolean) as string[]);
+      return (b: BoletoRaw) => doEmail ?? (b.cnpj ? porCnpj[b.cnpj.slice(0, 8)]?.name : null) ?? b.beneficiario;
+    };
     const resolverPendencia = async (motivo: string) => {
       await admin.rpc('fn_pendencia_resolver_ref', { p_tenant: tenantId, p_kind: 'boleto_email', p_ref: String(body.mail_id), p_motivo: motivo });
       await admin.from('pendencias').update({ resolvida_por: u.user.id }).eq('tenant_id', tenantId).eq('kind', 'boleto_email').eq('ref', String(body.mail_id)).eq('status', 'resolvida');
@@ -477,9 +505,22 @@ Deno.serve(async (req: Request) => {
         anexos.push({ nome: a.nome, tipo: a.tipo, url: s?.signedUrl ?? null });
       }
       const { raw, ...resto } = m;
+      // O cartão diz antes para onde o boleto vai: conta da NF, conta que já existe ou conta nova.
+      const boletos = (raw?.boletos ?? []) as BoletoRaw[];
+      const aberto = !['bill', 'ignored'].includes(m.status);
+      const quem = aberto ? await nomeParaConta(m, boletos) : null;
+      const comDestino = [];
+      for (const b of boletos) {
+        if (!quem || b.conta_id || !(Number(b.valor) > 0)) { comDestino.push(b); continue; }
+        const d = await acharDestino(admin, tenantId, b, quem(b));
+        const conta = 'conta' in d ? { id: d.conta.id, description: d.conta.description, due_date: d.conta.due_date } : null;
+        const rotulo = d.tipo === 'nota' ? d.acao.replace(/^guardado/, 'Guardar') : d.tipo === 'existente' ? 'Guardar na conta que já existe'
+          : d.tipo === 'ja' ? 'Já está guardado: marcar como feito' : null;
+        comDestino.push({ ...b, destino: { tipo: d.tipo, conta, rotulo, contas: d.tipo === 'ambiguo' ? d.lista.length : undefined } });
+      }
       return json({
         success: true,
-        mail: { ...resto, encaminhado_por: raw?.encaminhado_por ?? null, avisos: raw?.avisos ?? [], boletos: raw?.boletos ?? [], anexos, texto: String(raw?.texto ?? '').slice(0, 3000) },
+        mail: { ...resto, encaminhado_por: raw?.encaminhado_por ?? null, avisos: raw?.avisos ?? [], boletos: comDestino, anexos, texto: String(raw?.texto ?? '').slice(0, 3000) },
       });
     }
 
@@ -491,17 +532,13 @@ Deno.serve(async (req: Request) => {
       if (!m) return errResp('E-mail não encontrado.', 404);
       const boletos = (m.raw?.boletos ?? []) as BoletoRaw[];
       if (!boletos.length) return errResp('Esse e-mail não tem boleto lido. Reprocesse ou lance pela tela de Contas a Pagar.');
-      let fornecedor: string | null = null;
-      if (m.supplier_id) {
-        const { data: f } = await admin.from('fin_suppliers').select('name').eq('id', m.supplier_id).maybeSingle();
-        fornecedor = f?.name ?? null;
-      }
+      const quem = await nomeParaConta(m, boletos);
       const indice = body.indice == null ? null : Number(body.indice);
       for (const [i, b] of boletos.entries()) {
         if (b.conta_id || (indice != null && i !== indice)) continue;
         if (!(Number(b.valor) > 0)) return errResp('O boleto não traz valor: lance pela tela de Contas a Pagar.');
         const r = await lancarBoleto(admin, tenantId, b, {
-          fornecedor: fornecedor ?? b.beneficiario, remetente: m.from_email ?? '', assunto: m.subject ?? '',
+          fornecedor: quem(b), remetente: m.from_email ?? '', assunto: m.subject ?? '',
           contaId: indice === i ? (body.conta_id ? String(body.conta_id) : null) : null,
         });
         if (!r.ok) {

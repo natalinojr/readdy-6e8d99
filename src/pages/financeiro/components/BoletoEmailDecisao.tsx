@@ -11,6 +11,8 @@ interface Boleto {
   digitavel: string; valor: number | null; vencimento: string | null; beneficiario: string | null;
   cnpj: string | null; origem: string; anexo: string | null; motivo?: string | null; alerta?: boolean;
   conta_id?: string | null; acao?: string | null;
+  // Para onde vai se tocar no botão (calculado na hora pela edge; 2026-10-03).
+  destino?: { tipo: 'ja' | 'nota' | 'existente' | 'ambiguo' | 'nova'; conta: { id: string; description: string; due_date: string } | null; rotulo: string | null; contas?: number };
 }
 interface Detalhe {
   id: string; from_email: string | null; from_name: string | null; subject: string | null; status: string; reason: string | null;
@@ -45,10 +47,12 @@ export default function BoletoEmailDecisao({ tenantId, mailId, onFeito }: {
   const lancar = async (extra: Record<string, unknown> = {}) => {
     setBusy('lancar'); setErro(null);
     try {
-      const r = await chamar<{ lancado?: boolean; ambiguo?: Conta[]; indice?: number; boleto?: string }>(tenantId, 'lancar', { mail_id: mailId, ...extra });
+      const r = await chamar<{ lancado?: boolean; ambiguo?: Conta[]; indice?: number; boleto?: string; contas?: Array<{ acao?: string | null }> }>(tenantId, 'lancar', { mail_id: mailId, ...extra });
       if (r.ambiguo) { setAmbiguo({ indice: r.indice ?? 0, contas: r.ambiguo, boleto: r.boleto ?? '' }); return; }
       setAmbiguo(null);
-      if (r.lancado) onFeito('Conta lançada em Contas a Pagar com o boleto guardado. O pagamento continua esperando sua aprovação.');
+      const criou = (r.contas ?? []).some((c) => /criada/.test(c.acao ?? ''));
+      if (r.lancado) onFeito(criou ? 'Conta lançada em Contas a Pagar com o boleto guardado. O pagamento continua esperando sua aprovação.'
+        : 'Boleto guardado na conta que já existia. O pagamento continua esperando sua aprovação.');
       else await carregar();
     } catch (e) { setErro((e as Error).message); } finally { setBusy(null); setConfirmar(false); }
   };
@@ -60,8 +64,8 @@ export default function BoletoEmailDecisao({ tenantId, mailId, onFeito }: {
   const reler = async () => {
     setBusy('reler'); setErro(null);
     try {
-      const r = await chamar<{ status: string }>(tenantId, 'reprocessar', { mail_id: mailId });
-      if (r.status === 'bill') onFeito('Lido de novo e lançado.'); else await carregar();
+      const r = await chamar<{ status: string; reason?: string | null }>(tenantId, 'reprocessar', { mail_id: mailId });
+      if (r.status === 'bill') onFeito(r.reason ? `Lido de novo: ${r.reason}` : 'Lido de novo e lançado.'); else await carregar();
     } catch (e) { setErro((e as Error).message); } finally { setBusy(null); }
   };
 
@@ -73,6 +77,9 @@ export default function BoletoEmailDecisao({ tenantId, mailId, onFeito }: {
   const abertos = d.boletos.filter((b) => !b.conta_id);
   const alerta = abertos.some((b) => b.alerta);
   const fechado = d.status === 'bill' || d.status === 'ignored';
+  // Um boleto só e já se sabe a conta: o botão diz isso ("Guardar na conta da NF 801213"), não "Lançar conta".
+  const destinoUnico = abertos.length === 1 ? abertos[0].destino : undefined;
+  const guardar = !!destinoUnico?.rotulo;
 
   return (
     <div className="mt-2 space-y-2 text-xs text-zinc-700">
@@ -97,6 +104,14 @@ export default function BoletoEmailDecisao({ tenantId, mailId, onFeito }: {
           {b.conta_id
             ? <p className="mt-1 text-[11px] text-green-700"><i className="ri-checkbox-circle-line" /> {b.acao}</p>
             : b.motivo && <p className={`mt-1 text-[11px] ${b.alerta ? 'text-red-700 font-semibold' : 'text-amber-800'}`}>{b.motivo}</p>}
+          {!b.conta_id && !fechado && b.destino && (
+            <p className="mt-1 text-[11px] text-zinc-600">
+              <i className="ri-arrow-right-line" />{' '}
+              {b.destino.conta ? <>Vai para a conta <b className="text-zinc-800">{b.destino.conta.description}</b> · vence {dia(b.destino.conta.due_date)}</>
+                : b.destino.tipo === 'ambiguo' ? `Há ${b.destino.contas ?? 'várias'} contas em aberto com esse valor: você escolhe em qual entra.`
+                  : 'Não achei conta desse boleto: vai criar uma conta nova em Contas a Pagar.'}
+            </p>
+          )}
         </div>
       ))}
       {!d.boletos.length && d.reason && <p className="rounded-lg bg-amber-50 border border-amber-100 px-2.5 py-2 text-[11px] text-amber-800">{d.reason}</p>}
@@ -144,8 +159,8 @@ export default function BoletoEmailDecisao({ tenantId, mailId, onFeito }: {
               <button onClick={() => (confirmar ? lancar() : setConfirmar(true))} disabled={!!busy}
                 className={`h-8 px-3 rounded-lg text-xs font-semibold cursor-pointer disabled:opacity-50 ${alerta ? 'bg-red-600 text-white' : 'bg-violet-600 text-white'}`}>
                 <i className="ri-file-add-line" /> {busy === 'lancar' ? 'Lançando…'
-                  : confirmar ? (alerta ? 'Confirmar: conferi com o fornecedor' : 'Confirmar: lançar a conta')
-                    : alerta ? 'Lançar mesmo assim' : abertos.length > 1 ? `Lançar ${abertos.length} contas` : 'Lançar conta'}
+                  : confirmar ? (alerta ? 'Confirmar: conferi com o fornecedor' : guardar ? 'Confirmar: guardar o boleto nessa conta' : 'Confirmar: lançar a conta')
+                    : alerta ? 'Lançar mesmo assim' : guardar ? destinoUnico?.rotulo : abertos.length > 1 ? `Lançar ${abertos.length} contas` : 'Lançar conta'}
               </button>
             )}
             <button onClick={() => setMotivo('')} disabled={!!busy}
