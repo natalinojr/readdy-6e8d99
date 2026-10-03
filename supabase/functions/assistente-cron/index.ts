@@ -22,7 +22,7 @@
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import postgres from 'npm:postgres@3.4.5';
 import { deveCobrar, mesclarPedidoBoleto } from '../_shared/trilha-acoes.ts';
-import { agoraDaPessoa, pendHojeDaLinha, tituloCurto, COLUNAS_PEND_HOJE } from '../_shared/hoje-organizar.ts';
+import { agoraDaPessoa, pendHojeDaLinha, tituloCurto, COLUNAS_PEND_HOJE, PORCAO_KINDS, fornecedorDoBoleto } from '../_shared/hoje-organizar.ts';
 import { PAPEL_DO_BANCO, DONO_EMAIL } from '../_shared/pendencia-visivel.ts';
 import { situacaoPlano, descreverFrequencia, type PlanoContagem } from '../_shared/estoque-planos.ts';
 
@@ -1324,6 +1324,61 @@ async function syncPendenciasClassificacao(admin: SupabaseClient, tenants: Array
   }
 }
 
+// ── Piloto automático e porções (2026-10-03, tela Hoje fase 3) ─────────────────────────────────────
+// Roda logo depois da sincronização da caixa de pendências:
+//  1. Porções: guarda o total de cada pendência acumulada na 1ª volta do dia depois das 8h
+//     (pendencias_porcao) — depois das automações da manhã (notas às 6h, conciliação 7h, regras 7h30),
+//     para o "já foram" não contar o que o sistema lançou sozinho de madrugada. A Hoje mostra a
+//     "porção de hoje" e quanto já andou.
+//  2. Regra ensinada "não cobrar boleto deste fornecedor" (automacoes.sem_boleto_fornecedor): fecha
+//     como descartada as "Falta o boleto" dele, com motivo, e anota no diário com desfazer. Não mexe na
+//     que alguém já pediu o boleto (payload.pedido_em): foi decisão de gente. Sem a linha no diário
+//     (sem desfazer), volta as pendências como estavam.
+async function pilotoEPorcoes(admin: SupabaseClient, tenants: Array<{ id: string; name: string }>) {
+  const ids = tenants.map((t) => t.id);
+  if (!ids.length) return;
+  const hoje = localDate();
+  const { data: acum } = localHHMM() < '08:00' ? { data: [] } : await admin.from('pendencias').select('id, payload')
+    .in('tenant_id', ids).in('kind', [...PORCAO_KINDS]).in('status', ['aberta', 'vista']);
+  const linhas = ((acum ?? []) as Array<{ id: string; payload: Record<string, unknown> | null }>)
+    .filter((p) => Number(p.payload?.total ?? 0) > 0)
+    .map((p) => ({ pendencia_id: p.id, dia: hoje, total_inicio: Math.round(Number(p.payload?.total ?? 0)) }));
+  if (linhas.length) {
+    const { error } = await admin.from('pendencias_porcao').upsert(linhas, { onConflict: 'pendencia_id,dia', ignoreDuplicates: true });
+    if (error) log('WARN', 'porções', { error: error.message });
+  }
+
+  const { data: regras } = await admin.from('automacoes').select('id, tenant_id, alvo')
+    .in('tenant_id', ids).eq('chave', 'sem_boleto_fornecedor').eq('ligada', true);
+  for (const r of (regras ?? []) as Array<{ id: string; tenant_id: string; alvo: string }>) {
+    const { data: abertas } = await admin.from('pendencias').select('id, titulo, status, payload')
+      .eq('tenant_id', r.tenant_id).eq('kind', 'boleto_faltando').in('status', ['aberta', 'vista']);
+    const doFornecedor = ((abertas ?? []) as Array<{ id: string; titulo: string; status: string; payload: Record<string, unknown> | null }>)
+      .filter((p) => (fornecedorDoBoleto(p.titulo) ?? '').toUpperCase() === r.alvo && !p.payload?.pedido_em);
+    if (!doFornecedor.length) continue;
+    const { data: fechadas, error } = await admin.from('pendencias').update({
+      status: 'descartada', resolvida_em: new Date().toISOString(), resolvida_por: null,
+      motivo: `pago sem boleto — regra ensinada (${r.alvo})`,
+    }).in('id', doFornecedor.map((p) => p.id)).in('status', ['aberta', 'vista']).select('id');
+    if (error) { log('WARN', 'piloto sem boleto', { error: error.message }); continue; }
+    // Só o que foi fechado de verdade agora (alguém pode ter resolvido uma no mesmo instante).
+    const fechar = ((fechadas ?? []) as Array<{ id: string }>).map((p) => p.id);
+    if (!fechar.length) continue;
+    const { error: erroDiario } = await admin.from('automacoes_diario').insert({
+      tenant_id: r.tenant_id, chave: 'sem_boleto_fornecedor', automacao_id: r.id, pendencia_ids: fechar, desfazer: 'reabrir_descartadas',
+      titulo: `Não cobrei boleto de ${r.alvo} (${fechar.length} conta${fechar.length === 1 ? '' : 's'})`,
+      detalhe: 'você ensinou que ele é pago sem boleto',
+    });
+    if (erroDiario) {
+      // Sem diário não há desfazer: volta como estava e tenta na próxima volta.
+      log('WARN', 'piloto sem boleto: diário', { error: erroDiario.message });
+      for (const p of doFornecedor.filter((x) => fechar.includes(x.id))) {
+        await admin.from('pendencias').update({ status: p.status, resolvida_em: null, resolvida_por: null, motivo: null }).eq('id', p.id).eq('status', 'descartada');
+      }
+    }
+  }
+}
+
 // Estoque crítico e tarefas vencidas também viram linha na caixa (2026-09-18) — não porque
 // os avisos estavam errados, mas porque a caixa só serve se for O lugar de olhar. Se metade
 // do que espera o dono estivesse aqui e a outra metade espalhada em mensagens, ele teria de
@@ -1828,6 +1883,7 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
       if (!dry) { state.pend_synced_at = new Date().toISOString(); await saveState(); }
       await syncPendenciasClassificacao(admin, tenants);
       await syncPendenciasOperacao(admin, tenants, String(cfg.owner_user_id ?? ''));
+      if (!dry) await pilotoEPorcoes(admin, tenants).catch((e) => log('WARN', 'piloto/porções', { error: errMsg(e) }));
       if (dry) res.pendencias = 'caixa sincronizada';
     }
   }
@@ -2068,6 +2124,7 @@ Deno.serve(async (req) => {
       const tenants = await getTenants(admin, cfg);
       await syncPendenciasClassificacao(admin, tenants);
       await syncPendenciasOperacao(admin, tenants, String(cfg.owner_user_id ?? ''));
+      await pilotoEPorcoes(admin, tenants).catch((e) => log('WARN', 'piloto/porções', { error: errMsg(e) }));
       return json({ ok: true, pendencias: tenants.length });
     } catch (e) { return json({ error: errMsg(e) }, 500); }
   }

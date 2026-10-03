@@ -57,6 +57,8 @@ export interface ItemHoje {
   juntas: PendHoje[];
   /** boleto pedido: dias desde o pedido */
   pedidoHaDias?: number;
+  /** trabalho acumulado: a porção de hoje (null = pequeno, faz de uma vez) */
+  porcao?: Porcao | null;
   fornecedor?: string;
 }
 
@@ -74,6 +76,27 @@ export const DIAS_SEM_RESPOSTA = 2;
 const JA = new Set(['aprovacao', 'pagamento_grupo', 'pagamento_pendente']);
 /** É para hoje mesmo sem vencimento no payload. */
 const HOJE_MESMO = new Set(['conta_vence_hoje', 'pedido_pagamento', 'pedido_pagamento_pagar']);
+
+// ── Porções (2026-10-03): trabalho acumulado vira "a porção de hoje", com data para terminar ──────
+/** Kinds agregados (payload.total) que viram porção. */
+export const PORCAO_KINDS = new Set(['item_sem_classe', 'conta_sem_dre', 'nota_nao_lancada']);
+/** Abaixo disso não vale dividir: faz de uma vez. */
+export const PORCAO_MINIMO = 6;
+export interface Porcao { meta: number; feitos: number; restante: number; dias: number; feita: boolean }
+/**
+ * Porção de hoje a partir do total do começo do dia (gravado pelo cron em pendencias_porcao na 1ª volta
+ * depois das 8h, quando as automações da manhã já rodaram) e do total de agora: ~1/5 do que havia de
+ * manhã (no mínimo 3), quanto já andou e em quantos dias termina nesse ritmo. "feitos" é quanto o total
+ * caiu — não separa o que a pessoa fez do que o sistema lançou sozinho, e se chega coisa nova no meio do
+ * dia o andamento some (o total subiu). É um guia de ritmo, não uma medida de quem fez.
+ */
+export function porcaoDe(totalInicio: number, totalAgora: number): Porcao | null {
+  if (!(totalInicio >= PORCAO_MINIMO)) return null;
+  const meta = Math.min(totalInicio, Math.max(3, Math.ceil(totalInicio / 5)));
+  const feitos = Math.max(0, totalInicio - totalAgora);
+  const restante = Math.max(0, totalAgora);
+  return { meta, feitos, restante, dias: Math.ceil(restante / meta), feita: feitos >= meta };
+}
 
 const num = (v: unknown): number | null => (v == null || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
 
@@ -145,7 +168,7 @@ export function compararItens(a: ItemHoje, b: ItemHoje): number {
   return a.criadaEm.localeCompare(b.criadaEm);
 }
 
-export function organizarHoje(pendencias: PendHoje[], hoje: string): ItemHoje[] {
+export function organizarHoje(pendencias: PendHoje[], hoje: string, porcoes?: Map<string, number>): ItemHoje[] {
   // Tarefas vencidas são da pessoa: aparecem na rotina ("Suas tarefas"), não como pendência da loja.
   const lista = pendencias.filter((p) => p.kind !== 'tarefa_vencida');
   const usadas = new Set<string>();
@@ -193,12 +216,18 @@ export function organizarHoje(pendencias: PendHoje[], hoje: string): ItemHoje[] 
     }));
   }
 
-  // 3) O resto, uma pendência por cartão.
+  // 3) O resto, uma pendência por cartão. Trabalho acumulado ganha a porção de hoje. A porção NÃO muda
+  //    o bloco (revisão 2026-10-03): nota não lançada é boleto vencido ou vencendo — continua em "Agora"
+  //    mesmo com a porção feita, e o servidor (resumo/bom dia, sem porções) conta igual à tela. Quem
+  //    usa a porção feita é a página: o acumulado ("Para pôr em dia") com a porção do dia feita não
+  //    segura o "Tudo em dia".
   for (const p of lista) {
     if (usadas.has(p.id)) continue;
     const { bloco, pedidoHaDias } = blocoDe(p, hoje);
     const forn = p.kind === 'boleto_faltando' ? fornecedorDoBoleto(p.titulo) ?? undefined : undefined;
-    itens.push(item(p, hoje, bloco, { pedidoHaDias, fornecedor: forn }));
+    const total = num(p.payload?.total);
+    const porcao = PORCAO_KINDS.has(p.kind) && total != null ? porcaoDe(porcoes?.get(p.id) ?? total, total) : undefined;
+    itens.push(item(p, hoje, bloco, { pedidoHaDias, fornecedor: forn, porcao }));
   }
 
   return itens.sort(compararItens);
