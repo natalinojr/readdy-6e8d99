@@ -5,8 +5,8 @@ import { useCardapio } from '@/contexts/CardapioContext';
 import ConfirmModal from '@/components/base/ConfirmModal';
 import { confirmar } from '@/components/base/Dialogos';
 import type { Item } from '@/types/cardapio';
-import HorarioExibicaoEditor from '@/components/feature/HorarioExibicaoEditor';
-import { erroHorario, resumoHorario, temHorario, visivelAgora, type HorarioExibicao } from '@/lib/horarioExibicao';
+import HorarioExibicaoEditor, { SeloHorario } from '@/components/feature/HorarioExibicaoEditor';
+import { erroHorario, visivelAgora, type HorarioExibicao } from '@/lib/horarioExibicao';
 
 type Canal = 'casa' | 'ambos' | 'delivery';
 const canalLabel = (val: Canal) =>
@@ -163,14 +163,10 @@ export default function CategoriasTab() {
                 <span className="text-xs text-gray-500">
                   <i className="ri-file-list-3-line mr-1" />{cat.totalItens} itens
                 </span>
-                {temHorario(cat.horario) && (
-                  <span
-                    title={visivelAgora([cat.horario]) ? 'No horário agora — aparecendo no cardápio' : 'Fora do horário agora — escondida do cardápio do cliente'}
-                    className={`text-xs px-2 py-0.5 rounded-full ${visivelAgora([cat.horario]) ? 'bg-emerald-50 text-emerald-700' : 'bg-indigo-50 text-indigo-700'}`}
-                  >
-                    <i className="ri-time-line mr-1" />{resumoHorario(cat.horario)}
-                  </span>
-                )}
+                <SeloHorario
+                  horario={cat.horario}
+                  visivelPorCanal={{ casa: visivelAgora([cat.horario], 'casa'), delivery: visivelAgora([cat.horario], 'delivery') }}
+                />
               </div>
               {/* Canal: aplica casa/ambos/delivery a todos os itens da categoria.
                   O botão do canal atual fica laranja (null = itens com canais mistos). */}
@@ -279,7 +275,7 @@ export default function CategoriasTab() {
                 <HorarioExibicaoEditor
                   value={modal.horario}
                   onChange={h => setModal(s => ({ ...s, horario: h }))}
-                  ajuda="Fora desses horários a categoria inteira some do delivery, da mesa (QR) e do autoatendimento."
+                  ajuda="Fora desses horários a categoria inteira some do cardápio do cliente (delivery, mesa/QR e autoatendimento). Cada horário pode valer para casa e delivery ou só para um deles."
                 />
               </div>
               <div>

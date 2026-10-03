@@ -53,6 +53,7 @@ const AssistentePage = lazy(() => import('@/pages/assistente/page'));
 const ReceberPage = lazy(() => import('@/pages/receber/page'));
 const HojePage = lazy(() => import('@/pages/hoje/page'));
 const InicioPorPerfil = lazy(() => import('@/pages/hoje/InicioPorPerfil'));
+const LancarPage = lazy(() => import('@/pages/lancar/page'));
 
 const MesaQRPage = lazy(() => import('../pages/mesa-qr/page'));
 const JogosDemoPage = lazy(() => import('../components/jogos/JogosDemo'));
@@ -121,6 +122,8 @@ const routes: RouteObject[] = [
       { path: 'estoque', element: <EstoquePage /> },
       // Celular da loja: receber mercadoria por etapas (nota, compra, cupom, sem nota)
       { path: 'receber', element: <ReceberPage /> },
+      // Começo único de lançamento "O que aconteceu?" (celular, atalho do app, ⚡)
+      { path: 'lancar', element: <LancarPage /> },
       { path: 'aprovacoes', element: <AprovacoesPage /> },
       { path: 'configuracoes', element: <ConfiguracoesPage /> },
       { path: 'config-delivery', element: <ConfigDeliveryPage /> },

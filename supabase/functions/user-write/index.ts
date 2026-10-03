@@ -22,6 +22,18 @@ function errResp(message: string) {
 }
 
 /**
+ * Gerente só mexe em usuários da loja onde o Admin marcou "Gerenciar usuários" para o papel
+ * dele (Configurações › Permissões). Sem linha na matriz = desmarcado, igual ao padrão do
+ * Gerente no front (2026-10-03: antes o gerente passava sempre, mesmo com a tela escondida).
+ */
+async function gerenteGerenciaUsuarios(db: ReturnType<typeof createClient>, tenantId: string, role: string): Promise<boolean> {
+  const { data } = await db.from('permissions').select('allowed')
+    .eq('tenant_id', tenantId).eq('role', role).eq('permission_key', 'usuarios_gerenciar')
+    .limit(1).maybeSingle();
+  return (data as { allowed?: boolean } | null)?.allowed === true;
+}
+
+/**
  * Gera a próxima matrícula sequencial no formato 0001, 0002, ...
  * Busca o maior badge_number numérico existente e incrementa.
  */
@@ -73,8 +85,12 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       if (action === 'create_user') {
         const { tenant_id, perfil } = body;
         if (!tenant_id) return errResp('tenant_id obrigatório');
-        const callerRank = callerIsOwner ? 3 : roleRank(callerTenants.get(String(tenant_id)));
+        const callerRole = callerTenants.get(String(tenant_id));
+        const callerRank = callerIsOwner ? 3 : roleRank(callerRole);
         if (callerRank < 2) return errResp('Apenas administrador ou gerente desta loja pode criar usuários');
+        if (callerRank === 2 && !(await gerenteGerenciaUsuarios(db, String(tenant_id), callerRole!))) {
+          return errResp('Seu perfil não tem "Gerenciar usuários" nesta loja');
+        }
         const newRole = ({ admin: 'admin', gerente: 'manager', financeiro: 'financeiro' } as Record<string, string>)[String(perfil)] ?? 'staff';
         // Gerente só cria papéis abaixo do seu; admin cria qualquer um.
         if (callerRank < 3 && roleRank(newRole) >= callerRank) {
@@ -89,13 +105,24 @@ Deno.serve({ verify_jwt: false }, async (req) => {
             return errResp('Sem permissão: este usuário só pode ser alterado por ele mesmo');
           }
           if (!callerIsOwner) {
+            // Quem tem acesso a módulo fora da loja (Contratação, Tarefas — user_module_access,
+            // dado pelo Admin Master) vê dados de todas as lojas: trocar a senha/PIN dele ou
+            // apagá-lo é só com o dono. Senão o admin/gerente da loja entrava como essa pessoa
+            // (2026-10-03, revisão da correção do gerente).
+            const { data: modulos, error: modErr } = await db.from('user_module_access').select('module').eq('user_id', targetId).limit(1);
+            if (modErr || (modulos?.length ?? 0) > 0) {
+              return errResp('Sem permissão: este usuário tem acesso a módulos de todas as lojas — só o dono altera');
+            }
             // Senha/PIN/exclusão valem para TODAS as lojas do alvo: o chamador precisa ser
-            // admin (ou gerente, com alvo abaixo de gerente) em cada loja onde o alvo tem vínculo.
+            // admin (ou gerente com "Gerenciar usuários" marcado, e alvo abaixo de gerente) em cada
+            // loja onde o alvo tem vínculo.
             const targetTenants = await userMemberships(db, targetId);
             if (targetTenants.size === 0) return errResp('Sem permissão para alterar este usuário');
             for (const [tid, targetRole] of targetTenants) {
-              const callerRank = roleRank(callerTenants.get(tid));
-              const allowed = callerRank >= 3 || (callerRank === 2 && roleRank(targetRole) < 2);
+              const callerRole = callerTenants.get(tid);
+              const callerRank = roleRank(callerRole);
+              const allowed = callerRank >= 3 || (callerRank === 2 && roleRank(targetRole) < 2
+                && await gerenteGerenciaUsuarios(db, tid, callerRole!));
               if (!allowed) return errResp('Sem permissão para alterar este usuário');
             }
           }

@@ -11,6 +11,7 @@ import { useIsMobile } from '@/pages/tarefas/lib/mobile';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes, RECEBER_MODULO_KEYS } from '@/hooks/usePermissoes';
+import { FIN_KEYS } from '@/constants/permissoesAbas';
 import { useModuleAccess } from '@/hooks/useModuleAccess';
 import { kindConfig } from '@/contexts/PendenciasContext';
 import { useHoje, type TarefaHoje } from './useHoje';
@@ -48,8 +49,11 @@ export default function HojePage() {
   const perfil = user?.perfil;
   const gestor = perfil === 'admin' || perfil === 'gerente';
   const naLoja = perfil === 'supervisao' || perfil === 'caixa';
-  const verVendas = gestor || hasPermissao('gestao_dashboard');
-  const verDinheiro = gestor || perfil === 'financeiro';
+  // Só o admin passa direto; o gerente segue a matriz como os outros (RotaProtegida, 2026-10-03).
+  const admin = perfil === 'admin';
+  const verVendas = admin || hasPermissao('gestao_dashboard');
+  const verFinanceiro = admin || perfil === 'financeiro' || FIN_KEYS.some((k) => hasPermissao(k));
+  const verDinheiro = verFinanceiro && (gestor || perfil === 'financeiro');
 
   const abrir = async (tenantId: string, rota: string) => {
     if (tenantId && tenantId !== user?.tenantId) await selectTenant(tenantId);
@@ -79,20 +83,21 @@ export default function HojePage() {
   const tudoEmDia = !carregando && !erro && agora.length === 0 && emDia.length === 0 && tarefasAbertas.length === 0;
 
   const atalhos: Atalho[] = (() => {
-    const receber = gestor || RECEBER_MODULO_KEYS.some((k) => hasPermissao(k));
+    const receber = admin || RECEBER_MODULO_KEYS.some((k) => hasPermissao(k));
     const todosA: Record<string, Atalho | null> = {
-      financeiro: gestor || perfil === 'financeiro' ? { icone: 'ri-money-dollar-circle-line', label: 'Financeiro', rota: '/financeiro' } : null,
+      // Lançar: o começo único "O que aconteceu?" (/lancar) mostra só o que o perfil pode.
+      lancar: { icone: 'ri-add-circle-line', label: 'Lançar', rota: '/lancar' },
+      financeiro: verFinanceiro ? { icone: 'ri-money-dollar-circle-line', label: 'Financeiro', rota: '/financeiro' } : null,
       dashboard: verVendas ? { icone: 'ri-line-chart-line', label: 'Loja ao vivo', rota: '/dashboard' } : null,
       caixa: perfil === 'caixa' || perfil === 'supervisao' || gestor ? { icone: 'ri-computer-line', label: 'Ir para o caixa', rota: '/pdv/caixa' } : null,
       receber: receber ? { icone: 'ri-truck-line', label: 'Receber mercadoria', rota: '/receber' } : null,
-      reembolso: receber ? { icone: 'ri-refund-2-line', label: 'Pedir reembolso', rota: '/receber?pedido=reembolso' } : null,
-      contar: gestor || hasPermissao('estoque_movimentar') ? { icone: 'ri-scales-3-line', label: 'Contar estoque', rota: '/estoque?tab=inventario' } : null,
+      contar: admin || hasPermissao('estoque_movimentar') ? { icone: 'ri-scales-3-line', label: 'Contar estoque', rota: '/estoque?tab=inventario' } : null,
       tarefas: hasModule('tarefas') ? { icone: 'ri-task-line', label: 'Tarefas', rota: '/tarefas' } : null,
     };
-    const ordem = gestor ? ['financeiro', 'dashboard', 'receber', 'tarefas']
-      : perfil === 'supervisao' ? ['caixa', 'receber', 'contar', 'tarefas']
-      : perfil === 'caixa' ? ['caixa', 'receber', 'reembolso', 'tarefas']
-      : ['receber', 'contar', 'tarefas'];
+    const ordem = gestor ? ['lancar', 'financeiro', 'dashboard', 'receber', 'contar', 'tarefas']
+      : perfil === 'supervisao' ? ['lancar', 'caixa', 'receber', 'contar', 'tarefas', 'dashboard']
+      : perfil === 'caixa' ? ['caixa', 'lancar', 'receber', 'tarefas']
+      : ['lancar', 'receber', 'contar', 'tarefas'];
     return ordem.map((k) => todosA[k]).filter((a): a is Atalho => !!a);
   })();
 
@@ -289,7 +294,7 @@ function Titulo({ texto, n, tom = 'zinc', explica, acao }: { texto: string; n?: 
   const cor = { red: 'bg-red-500 text-white', amber: 'bg-amber-100 text-amber-800', zinc: 'bg-zinc-200 text-zinc-600', green: 'bg-emerald-600 text-white' }[tom];
   return (
     <div className="flex items-baseline gap-2 mb-2 px-0.5">
-      <h2 className="text-[15px] font-extrabold text-zinc-900">{texto}</h2>
+      <h2 className="text-[15px] font-extrabold text-zinc-900 whitespace-nowrap">{texto}</h2>
       {n != null && <span className={`px-2 rounded-full text-[11px] font-bold leading-5 ${cor}`}>{n}</span>}
       {explica && <span className="text-[12px] text-zinc-400 truncate">{explica}</span>}
       {acao && <span className="ml-auto text-[12px] font-bold text-amber-600">{acao}</span>}

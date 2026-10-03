@@ -878,7 +878,23 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         .eq("is_draft", true).eq("status", "draft")
         .order("created_at", { ascending: true }).limit(50);
       if (error) throw error;
-      return new Response(JSON.stringify({ data: data ?? [] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      // QR universal "paga antes": o cliente pode estar pagando pelo celular (Pix/cartão pelo app) agora.
+      // O PDV trava Receber/Cancelar enquanto a cobrança online está pendente (senão paga em dobro).
+      const ids = (data ?? []).map((o: { id: string }) => o.id);
+      const pendente = new Map<string, string>();
+      if (ids.length > 0) {
+        const { data: cobr } = await admin.from("fin_pix_payments").select("method, allocation, order_id, created_at")
+          .eq("tenant_id", tenantId).eq("provider", "mercadopago").eq("status", "pending").gt("expires_at", new Date().toISOString());
+        // Cartão fica pendente até 45 min se o cliente largar o desafio do banco: trava só os 10 primeiros.
+        const limiteCartao = Date.now() - 10 * 60 * 1000;
+        for (const c of (cobr ?? []) as Array<{ method: string | null; allocation: Array<{ order_id: string }> | null; order_id: string | null; created_at: string }>) {
+          if ((c.method ?? "pix") !== "pix" && new Date(c.created_at).getTime() < limiteCartao) continue;
+          const alvo = [...(c.allocation ?? []).map((a) => a.order_id), c.order_id].filter(Boolean) as string[];
+          for (const oid of alvo) if (ids.includes(oid)) pendente.set(oid, (c.method ?? "pix") === "pix" ? "pix" : "cartao");
+        }
+      }
+      const rows = (data ?? []).map((o: { id: string }) => ({ ...o, online_pending: pendente.get(o.id) ?? null }));
+      return new Response(JSON.stringify({ data: rows }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // Pedido do tablet já pago que continuou segurado: o caixa manda pra cozinha na mão.

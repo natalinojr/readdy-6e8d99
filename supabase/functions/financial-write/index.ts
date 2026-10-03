@@ -922,7 +922,10 @@ Deno.serve(async (req) => {
                 .select('fee_percentage, name')
                 .eq('id', relatedPayment.payment_method_id)
                 .maybeSingle();
-              const feePercent = Number((pmData as Record<string, unknown>)?.fee_percentage ?? 0);
+              // Recebível com taxa própria (cartão online do Mercado Pago: mesma forma "Cartão de Crédito",
+              // taxa diferente da maquininha) vence a taxa da forma de pagamento.
+              const feeOwn = (installment as Record<string, unknown>).fee_percentage;
+              const feePercent = Number(feeOwn != null ? feeOwn : ((pmData as Record<string, unknown>)?.fee_percentage ?? 0));
               if (feePercent > 0) {
                 const feeAmount = Math.round((instAmount * feePercent / 100) * 100) / 100;
                 if (feeAmount > 0) {

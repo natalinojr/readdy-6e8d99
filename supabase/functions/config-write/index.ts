@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.0'
-import { authenticate, isManagerRole, tenantRole } from '../_shared/tenant-auth.ts'
+import { authenticate, isManagerRole, roleRank, tenantRole } from '../_shared/tenant-auth.ts'
 
 // Ações só de leitura: qualquer membro da loja pode chamar.
 const CONFIG_READ_ACTIONS = new Set(['list_ingredient_categories', 'get_kitchen_stations', 'get_permissions'])
@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
 
     // ── Autorização (2026-09-17): antes aceitava qualquer tenant_id sem login ──
     // Leitura: basta ser membro da loja (inclui totem/tablet, que chama get_permissions).
-    // Escrita de configuração/permissões/loja: admin ou gerente da loja.
+    // Escrita de configuração/loja: admin ou gerente da loja. Matriz de permissões: só o admin.
     const caller = await authenticate(req, supabaseAdmin)
     if (!caller) {
       return new Response(JSON.stringify({ success: false, error: 'Unauthorized' }), {
@@ -60,13 +60,19 @@ Deno.serve(async (req) => {
       // Configurações › Permissões ('configuracoes_editar'). É a MESMA porta que o front
       // usa para abrir a tela — sem isso, marcar a permissão para o Caixa deixava a tela
       // visível mas todo salvamento voltava 403 (2026-09-21).
-      // Uma exceção continua de admin/gerente: a matriz de permissões — quem grava
-      // upsert_permissions amplia o próprio acesso.
+      // A matriz de permissões é só do Admin: quem grava upsert_permissions se dá qualquer
+      // permissão. Até 2026-10-03 o Gerente passava aqui e, chamando a edge direto, marcava
+      // para si a aba Permissões (na tela ela já era só do Admin — cfg_permissoes somenteAdmin).
       // O papel 'financeiro' não ganha nada aqui: ele não recebe 'configuracoes_editar'
       // (spec modulo-financeiro-sem-pdv, 2026-09-20) e só usa get_permissions, de leitura.
-      const SO_GERENTE = new Set(['upsert_permissions'])
+      const SO_ADMIN = new Set(['upsert_permissions'])
+      if (SO_ADMIN.has(action) && roleRank(role) < 3) {
+        return new Response(JSON.stringify({ success: false, error: 'Só o Admin da loja altera as permissões' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403,
+        })
+      }
       if (!CONFIG_READ_ACTIONS.has(action) && !isManagerRole(role)) {
-        const liberado = !SO_GERENTE.has(action) && await podeConfigurar(supabaseAdmin, String(tId), role)
+        const liberado = await podeConfigurar(supabaseAdmin, String(tId), role)
         if (!liberado) {
           return new Response(JSON.stringify({ success: false, error: 'Seu perfil não pode alterar estas configurações' }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403,
@@ -732,6 +738,7 @@ Deno.serve(async (req) => {
         delivery_commission_rates: 'delivery_commission_rates',
         delivery_payment_methods: 'delivery_payment_methods',
         self_service_payment_methods: 'self_service_payment_methods',
+        qr_universal_pay_before: 'qr_universal_pay_before',
         delivery_print_enabled: 'delivery_print_enabled',
         bloquear_item_sem_insumo: 'bloquear_item_sem_insumo',
         bloquear_item_sem_insumo_reserva: 'bloquear_item_sem_insumo_reserva',

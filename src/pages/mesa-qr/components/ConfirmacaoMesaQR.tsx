@@ -40,6 +40,10 @@ interface Props {
   participantId?: string;
   /** Desconto do clube gravado pelo servidor neste pedido. */
   descontoClube?: number;
+  /** Modo "só vai pra cozinha depois de pago" (QR universal): pedido segurado até o pagamento. `pago` = já foi para a cozinha. */
+  aguardandoPagamento?: { numero: string; total: number; pago: boolean } | null;
+  /** Abre o pagamento pelo celular. Ausente = a loja não tem pagamento online (só no caixa). */
+  onPagarAgora?: () => void;
 }
 
 export default function ConfirmacaoMesaQR(props: Props) {
@@ -67,6 +71,12 @@ export default function ConfirmacaoMesaQR(props: Props) {
   const descontoClube = Math.min(props.descontoClube || 0, subtotalPedido);
   const totalPedido = Math.max(0, subtotalPedido - descontoClube);
 
+  // Pedido segurado: aguardando = ainda não pago (não está na cozinha); pagoSegurado = pagou e já foi.
+  const segurado = Boolean(props.aguardandoPagamento);
+  const aguardando = segurado && !props.aguardandoPagamento?.pago;
+  const pagoSegurado = segurado && Boolean(props.aguardandoPagamento?.pago);
+  const totalSegurado = props.aguardandoPagamento ? props.aguardandoPagamento.total : totalPedido;
+
   return (
     <div className="min-h-screen flex flex-col items-center font-sans relative overflow-hidden px-4 py-8"
       style={{
@@ -77,9 +87,9 @@ export default function ConfirmacaoMesaQR(props: Props) {
 
       <div className={'w-full max-w-md flex flex-col items-center text-center z-10 transition-all duration-700 ' + (visible ? 'translate-y-0 opacity-100' : 'translate-y-8 opacity-0')}>
         {/* Badge confirmado */}
-        <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-gradient-to-br from-emerald-500 to-green-600 rounded-full mb-6 shadow-lg shadow-green-500/20">
-          <i className="ri-checkbox-circle-line text-white text-sm" />
-          <span className="text-white text-xs font-bold uppercase tracking-wider">Pedido Confirmado</span>
+        <div className={'inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full mb-6 shadow-lg ' + (aguardando ? 'bg-gradient-to-br from-amber-500 to-amber-600 shadow-amber-500/20' : 'bg-gradient-to-br from-emerald-500 to-green-600 shadow-green-500/20')}>
+          <i className={(aguardando ? 'ri-time-line' : 'ri-checkbox-circle-line') + ' text-white text-sm'} />
+          <span className="text-white text-xs font-bold uppercase tracking-wider">{aguardando ? 'Aguardando pagamento' : pagoSegurado ? 'Pago' : 'Pedido Confirmado'}</span>
         </div>
 
         {/* Senha gigante */}
@@ -96,10 +106,52 @@ export default function ConfirmacaoMesaQR(props: Props) {
               {accessToken}
             </p>
             <p className="text-white/70 text-sm leading-relaxed max-w-xs mx-auto">
-              Guarde esta senha para retirar seus pedidos no balcão quando ficarem prontos.
+              {aguardando
+                ? 'Guarde esta senha: é com ela que você paga no caixa e retira seus pedidos no balcão quando ficarem prontos.'
+                : 'Guarde esta senha para retirar seus pedidos no balcão quando ficarem prontos.'}
             </p>
           </div>
         </div>
+
+        {/* Pedido segurado: só vai para a cozinha depois de pago */}
+        {aguardando ? (
+          <div className="w-full mb-6 px-5 py-5 bg-white rounded-2xl border-2 border-amber-300 shadow-sm">
+            <p className="text-sm font-black text-zinc-800">Falta o pagamento</p>
+            <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
+              Seu pedido só vai para a cozinha depois de pago.
+            </p>
+            {props.onPagarAgora ? (
+              <>
+                <button
+                  type="button"
+                  onClick={props.onPagarAgora}
+                  className="mt-4 w-full flex items-center justify-center gap-2 bg-gradient-to-br from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white font-black py-4 rounded-xl cursor-pointer transition-all shadow-lg shadow-emerald-500/20 whitespace-nowrap text-base"
+                >
+                  <i className="ri-secure-payment-line text-lg" />
+                  Pagar agora · {formatCurrency(totalSegurado)}
+                </button>
+                <p className="text-xs text-zinc-500 mt-3">
+                  ou pague no caixa informando sua senha <strong className="text-zinc-800 tracking-wider">{accessToken}</strong>
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-zinc-600 mt-3">
+                Pague no caixa informando sua senha <strong className="text-zinc-800 tracking-wider">{accessToken}</strong>.
+              </p>
+            )}
+          </div>
+        ) : null}
+        {pagoSegurado ? (
+          <div className="w-full mb-6 flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-left">
+            <div className="w-10 h-10 flex items-center justify-center bg-emerald-100 rounded-full shrink-0">
+              <i className="ri-checkbox-circle-fill text-emerald-500 text-xl" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-black text-emerald-800">Pago!</p>
+              <p className="text-xs text-emerald-600">Seu pedido foi para a cozinha</p>
+            </div>
+          </div>
+        ) : null}
 
         {/* Número do pedido */}
         {numeroPedido ? (
@@ -111,21 +163,30 @@ export default function ConfirmacaoMesaQR(props: Props) {
               <p className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider">Nº do Pedido</p>
               <p className="text-lg font-black text-zinc-800">{numeroPedido}</p>
             </div>
-            <span className="flex items-center gap-1 text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200">
-              <i className="ri-send-plane-line text-[10px]" />
-              Enviado
-            </span>
+            {aguardando ? (
+              <span className="flex items-center gap-1 text-xs font-bold text-amber-700 bg-amber-50 px-3 py-1.5 rounded-full border border-amber-200 whitespace-nowrap">
+                <i className="ri-time-line text-[10px]" />
+                Aguardando pagamento
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-full border border-emerald-200">
+                <i className="ri-send-plane-line text-[10px]" />
+                Enviado
+              </span>
+            )}
           </div>
         ) : null}
 
-        {/* Joguinhos enquanto a comida fica pronta */}
-        <div className="w-full mt-6">
-          <JogosEspera
-            tenantId={props.tenantId}
-            credencial={props.participantId ? { tipo: 'mesa', participant_id: props.participantId, access_token: accessToken } : null}
-            onNovoPedido={onNovoPedido}
-          />
-        </div>
+        {/* Joguinhos enquanto a comida fica pronta (só depois que o pedido foi para a cozinha) */}
+        {!aguardando ? (
+          <div className="w-full mt-6">
+            <JogosEspera
+              tenantId={props.tenantId}
+              credencial={props.participantId ? { tipo: 'mesa', participant_id: props.participantId, access_token: accessToken } : null}
+              onNovoPedido={onNovoPedido}
+            />
+          </div>
+        ) : null}
 
         {/* Itens do pedido com foto */}
         {confirmedCartItems.length > 0 ? (
@@ -201,9 +262,15 @@ export default function ConfirmacaoMesaQR(props: Props) {
 
         {/* Timeline simples */}
         <div className="flex items-center gap-1 mt-6 text-[11px] text-zinc-400 font-medium">
-          <span className="flex items-center gap-1.5 font-bold text-emerald-600">
-            <i className="ri-check-fill text-xs" />Enviado
-          </span>
+          {aguardando ? (
+            <span className="flex items-center gap-1.5 font-bold text-amber-600">
+              <i className="ri-time-line text-xs" />Aguardando pagamento
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 font-bold text-emerald-600">
+              <i className="ri-check-fill text-xs" />{pagoSegurado ? 'Pago' : 'Enviado'}
+            </span>
+          )}
           <i className="ri-arrow-right-s-line text-sm text-zinc-300" />
           <span className="flex items-center gap-1.5 text-zinc-400">
             <i className="ri-checkbox-blank-circle-line text-[10px]" />Preparando

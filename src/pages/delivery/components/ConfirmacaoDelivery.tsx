@@ -3,6 +3,7 @@ import { formatCurrency } from '@/lib/formatters';
 import AcompanharPedido from './AcompanharPedido';
 import HistoricoPedidos from './HistoricoPedidos';
 import PixCobrancaPanel from '@/components/feature/PixCobrancaPanel';
+import CartaoCobrancaPanel from '@/components/feature/CartaoCobrancaPanel';
 import TrocarPagamentoDelivery from './TrocarPagamentoDelivery';
 
 type TabOption = 'acompanhar' | 'historico';
@@ -19,10 +20,14 @@ interface Props {
   modoEntrega?: 'entrega' | 'retirada';
   /** Resumo de valores (subtotal, desconto do cupom, taxa) capturado ao confirmar */
   resumo?: { subtotal: number; desconto: number; deliveryFee: number; voucherCodigo: string } | null;
-  /** Pedido a pagar por Pix pelo app: {orderId, orderToken} identificam o pedido na Edge online-payments */
-  pixOnline?: { orderId: string; orderToken: string } | null;
+  /** Pedido a pagar pelo app: {orderId, orderToken} identificam o pedido na Edge online-payments; `metodo` = painel mostrado (sem o campo = Pix) */
+  pixOnline?: { orderId: string; orderToken: string; metodo?: 'pix' | 'cartao' } | null;
+  /** Cartão de crédito pelo app: `pronto` = public_status já respondeu; `ativo` = loja aceita cartão; `publicKey` = chave pública do Mercado Pago */
+  cartaoOnline?: { pronto: boolean; ativo: boolean; publicKey: string };
+  /** Cliente escolheu o outro meio (Pix ↔ cartão): só troca o painel mostrado */
+  onTrocarMetodoApp?: (metodo: 'pix' | 'cartao') => void;
   onPixPago?: () => void;
-  /** Outras formas (cobrança na entrega/retirada) para quem desistir do Pix pelo app */
+  /** Outras formas (cobrança na entrega/retirada) para quem desistir do pagamento pelo app */
   metodosAlternativos?: { key: string; label: string; icon: string }[];
   onTrocarPagamento?: (metodoKey: string, cashAmount?: string) => Promise<boolean>;
 }
@@ -46,11 +51,15 @@ export default function ConfirmacaoDelivery(props: Props) {
   const modoEntrega = props.modoEntrega || 'entrega';
   const resumo = props.resumo;
   const pixOnline = props.pixOnline;
+  const cartaoOnline = props.cartaoOnline;
+  const metodoApp: 'pix' | 'cartao' = pixOnline && pixOnline.metodo === 'cartao' ? 'cartao' : 'pix';
+  // Só oferece o cartão quando a loja aceita e a chave pública chegou
+  const cartaoPodeUsar = !!cartaoOnline && cartaoOnline.ativo && !!cartaoOnline.publicKey;
   // Retirada não tem taxa: a taxa exibida é a capturada na confirmação (0 na retirada), nunca a do endereço atual
   const taxaExibida = resumo ? resumo.deliveryFee : (modoEntrega === 'retirada' ? 0 : deliveryFee);
 
   const [abaAtiva, setAbaAtiva] = useState<TabOption>('acompanhar');
-  // "PIX pelo app": o pedido só vai pra cozinha depois do Pix confirmar
+  // Pix/cartão pelo app: o pedido só vai pra cozinha depois do pagamento confirmar
   const [pixPago, setPixPago] = useState(false);
   const metodosAlternativos = props.metodosAlternativos || [];
   const [trackingNumero, setTrackingNumero] = useState(numeroPedido);
@@ -88,7 +97,7 @@ export default function ConfirmacaoDelivery(props: Props) {
           {!vendoOriginal
             ? 'Você está vendo um pedido do seu histórico'
             : pixOnline && !pixPago
-            ? 'Seu pedido vai para a cozinha assim que o Pix for confirmado'
+            ? 'Seu pedido vai para a cozinha assim que o pagamento for confirmado'
             : (phone ? 'Acompanhe abaixo o status do seu pedido' : 'Seu pedido foi enviado para a cozinha')}
         </p>
 
@@ -138,15 +147,51 @@ export default function ConfirmacaoDelivery(props: Props) {
         ) : null}
       </div>
 
-      {/* Pix pelo app: o cliente paga aqui mesmo; a confirmação chega sozinha */}
+      {/* Pagamento pelo app: o cliente paga aqui mesmo (Pix ou cartão); a confirmação chega sozinha.
+          Só UM painel por vez — cada um cancela a cobrança pendente do outro ao montar. */}
       {pixOnline && vendoOriginal ? (
         <div className="mb-5">
-          <PixCobrancaPanel
-            auth={pixOnline.orderToken ? { order_id: pixOnline.orderId, order_token: pixOnline.orderToken } : { order_id: pixOnline.orderId, order_phone: phone || '' }}
-            onPago={function () { setPixPago(true); if (props.onPixPago) props.onPixPago(); }}
-            titulo="Pague agora com Pix"
-            textoPago="Seu pedido foi para a cozinha. Obrigado!"
-          />
+          {metodoApp === 'cartao' ? (
+            cartaoOnline && !cartaoOnline.pronto ? (
+              <div className="flex items-center justify-center gap-2 py-6 text-xs text-zinc-400">
+                <i className="ri-loader-4-line animate-spin text-amber-500" />
+                Preparando o pagamento com cartão…
+              </div>
+            ) : cartaoPodeUsar ? (
+              <CartaoCobrancaPanel
+                auth={pixOnline.orderToken ? { order_id: pixOnline.orderId, order_token: pixOnline.orderToken } : { order_id: pixOnline.orderId, order_phone: phone || '' }}
+                publicKey={cartaoOnline!.publicKey}
+                onPago={function () { setPixPago(true); if (props.onPixPago) props.onPixPago(); }}
+                textoPago="Seu pedido foi para a cozinha"
+              />
+            ) : (
+              <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl">
+                <p className="text-xs text-amber-800">O pagamento com cartão não está disponível agora. Você pode pagar com Pix.</p>
+              </div>
+            )
+          ) : (
+            <PixCobrancaPanel
+              auth={pixOnline.orderToken ? { order_id: pixOnline.orderId, order_token: pixOnline.orderToken } : { order_id: pixOnline.orderId, order_phone: phone || '' }}
+              onPago={function () { setPixPago(true); if (props.onPixPago) props.onPixPago(); }}
+              titulo="Pague agora com Pix"
+              textoPago="Seu pedido foi para a cozinha. Obrigado!"
+            />
+          )}
+
+          {/* Trocar Pix ↔ cartão: clique explícito, nunca automático */}
+          {!pixPago && props.onTrocarMetodoApp && (metodoApp === 'cartao' || cartaoPodeUsar) ? (
+            <div className="mt-2 text-center">
+              <button
+                type="button"
+                onClick={function () { props.onTrocarMetodoApp!(metodoApp === 'cartao' ? 'pix' : 'cartao'); }}
+                className="py-2 text-xs font-bold text-amber-600 hover:text-amber-700 cursor-pointer whitespace-nowrap"
+              >
+                {metodoApp === 'cartao'
+                  ? <>Prefere Pix? <span className="underline">Pagar com Pix</span></>
+                  : <span className="underline">Pagar com cartão de crédito</span>}
+              </button>
+            </div>
+          ) : null}
 
           {!pixPago && props.onTrocarPagamento ? (
             <div className="mt-2">
@@ -154,7 +199,7 @@ export default function ConfirmacaoDelivery(props: Props) {
                 metodos={metodosAlternativos}
                 orderTotal={orderTotal}
                 modoEntrega={modoEntrega}
-                labelAbrir="Cancelar o Pix e pagar de outra forma"
+                labelAbrir="Cancelar e pagar de outra forma"
                 onConfirmar={props.onTrocarPagamento}
               />
             </div>
