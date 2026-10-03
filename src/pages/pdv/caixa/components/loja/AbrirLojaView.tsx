@@ -258,7 +258,7 @@ export default function AbrirLojaView({ modo, onVoltar, onAberta, onFecharDia }:
               >
                 {abrindo
                   ? <><i className="ri-loader-4-line animate-spin" /> Abrindo…</>
-                  : <>{btnTxt}{valor != null && <span className="md:hidden">&nbsp;com {fmtBRL(valor)}</span>}<kbd className="hidden md:inline text-[11px] font-black bg-black/10 rounded-md px-1.5 py-0.5 ml-1">Enter</kbd></>}
+                  : <>{btnTxt}{valor != null && <span className="md:hidden">com {fmtBRL(valor)}</span>}<kbd className="hidden md:inline text-[11px] font-black bg-black/10 rounded-md px-1.5 py-0.5 ml-1">Enter</kbd></>}
               </button>
             </div>
           </div>

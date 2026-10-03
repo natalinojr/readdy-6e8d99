@@ -563,9 +563,9 @@ export default function FecharLojaModal({ tipo, onClose, onIrPara }: Props) {
     rodape = (
       <>
         <button onClick={nPend > 0 ? () => setPasso('pend') : sair} className={btnSec}>{nPend > 0 ? 'Voltar' : 'Cancelar'}</button>
-        <div className="hidden sm:block text-right px-2">
-          <p className="text-[11px] font-bold text-stone-400">Total contado</p>
-          <p className="text-lg font-black text-zinc-900">{contado != null ? fmtBRL(contado) : '—'}</p>
+        <div className="text-right px-1 sm:px-2">
+          <p className="text-[11px] font-bold text-stone-400 whitespace-nowrap">Total contado</p>
+          <p className="text-base sm:text-lg font-black text-zinc-900 whitespace-nowrap">{contado != null ? fmtBRL(contado) : '—'}</p>
         </div>
         <button onClick={() => acaoPrincipal.current?.()} disabled={contado == null} className={`${btnPri} bg-amber-500 hover:bg-amber-600 text-zinc-900`}>
           Conferir {kbd}
