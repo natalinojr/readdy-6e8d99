@@ -458,7 +458,11 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
   const qtdNoCarrinho = (id: string) => carrinho.filter((i) => i.itemId === id).reduce((s, i) => s + i.quantidade, 0);
 
   return (
-    <div className="flex h-full">
+    // Coluna: cardápio em cima e a barra "Ver pedido" embaixo, no fluxo. A barra era
+    // fixed por cima da tela e cobria a última categoria assim que entrava o 1º item
+    // (o "chope some e volta" do tablet de Paranaguá, 2026-10).
+    <div className="flex flex-col h-full">
+    <div className="flex flex-1 min-h-0">
       {/* ── Estado de carregamento ────────────────────────────────────── */}
       {loading && (
         <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
@@ -553,7 +557,7 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
           </div>
 
           {/* Lista de itens */}
-          <div className="flex-1 overflow-y-auto p-6 pb-32">
+          <div className="flex-1 overflow-y-auto p-6">
             {/* Busca + atualizar cardápio */}
             <div className="flex items-center gap-3 mb-5">
               <div className="relative flex-1">
@@ -708,10 +712,11 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
           </div>
         </>
       )}
+    </div>
 
       {/* Barra inferior */}
       {totalItens > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 p-6 bg-zinc-950/95 backdrop-blur-sm border-t border-zinc-800 z-20">
+        <div className="flex-shrink-0 p-6 bg-zinc-950 border-t border-zinc-800">
           <button onClick={onVerCarrinho}
             className="w-full flex items-center justify-between bg-amber-500 hover:bg-amber-400 text-zinc-950 px-12 py-7 rounded-2xl cursor-pointer active:scale-[0.99] transition-all">
             <div className="flex items-center gap-4">
