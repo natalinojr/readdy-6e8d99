@@ -262,18 +262,30 @@ function avisarPagamento(r: ResultadoPagamento | undefined, p: Pedido, onErro: (
 
 function PagarDeNovo({ p, tenantId, onErro, onJanela }: { p: Pedido; tenantId: string; onErro: (m: string | null) => void; onJanela: (a: AvisoPagamento) => void }) {
   const [indo, setIndo] = useState(false);
+  // O aviso fica no próprio cartão: no topo da tela ele ficava fora da vista de quem rolou até o botão e
+  // parecia que "Pagar agora" não fazia nada (dono, 2026-10-04 — loja sem Inter conectado).
+  const [aviso, setAviso] = useState<string | null>(null);
   const mandar = async () => {
     setIndo(true);
+    setAviso(null);
     onErro(null);
     const { data, erro } = await chamarPedidos<{ pagamento: ResultadoPagamento }>('preparar_pagamento', tenantId, { id: p.id });
     setIndo(false);
-    if (erro) { onErro(erro); return; }
-    avisarPagamento(data?.pagamento, p, onErro, onJanela);
+    if (erro) { setAviso(erro); return; }
+    avisarPagamento(data?.pagamento, p, setAviso, onJanela);
   };
   return (
-    <button type="button" onClick={mandar} disabled={indo} className="mt-3 w-full py-3 rounded-2xl bg-violet-600 active:bg-violet-700 disabled:bg-zinc-200 text-white text-sm font-bold flex items-center justify-center gap-1.5 cursor-pointer">
-      <i className="ri-lock-2-line" /> {indo ? 'Preparando…' : 'Pagar agora'}
-    </button>
+    <>
+      <button type="button" onClick={mandar} disabled={indo} className="mt-3 w-full py-3 rounded-2xl bg-violet-600 active:bg-violet-700 disabled:bg-zinc-200 text-white text-sm font-bold flex items-center justify-center gap-1.5 cursor-pointer">
+        <i className="ri-lock-2-line" /> {indo ? 'Preparando…' : 'Pagar agora'}
+      </button>
+      {aviso && (
+        <>
+          <p className="mt-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-xl px-3 py-2">{aviso}</p>
+          <Pix chave={p.pix_chave} />
+        </>
+      )}
+    </>
   );
 }
 
