@@ -1,6 +1,6 @@
 import { useEstoque } from '../../../contexts/EstoqueContext';
 import { KpiCard } from '../../financeiro/components/dreUi';
-import { abaixoDoMinimo, estaEsgotado } from '@/lib/estoqueRegras';
+import { abaixoDoMinimo, estaEsgotado, precisaConferir } from '@/lib/estoqueRegras';
 import { regraDoInsumo } from './insumos/InsumosUtils';
 
 const fmt = (v: number, digits = 2) =>
@@ -14,23 +14,19 @@ export default function DivergenciaPanel() {
   // Regra única do estoque (2026-10-03): os mesmos números do Início e do Dashboard.
   const esgotados = insumos.filter((i) => estaEsgotado(regraDoInsumo(i)));
   const alertas = insumos.filter((i) => abaixoDoMinimo(regraDoInsumo(i)));
-  const conferir = insumos.filter((i) => i.rastrearEstoque !== false && i.estoqueAtual < 0);
+  const conferir = insumos.filter((i) => precisaConferir(regraDoInsumo(i)));
 
-  // Comparação entre estoque atual e última contagem
-  const divergencias = ultimaContagem
+  // Divergência da própria contagem (contado − teórico daquele momento), maior impacto em R$ primeiro.
+  // Antes era estoque atual − contado, que é só o que vendeu/entrou depois da contagem.
+  const todasDivergencias = ultimaContagem
     ? ultimaContagem.itens
-      .map((item) => {
-        const atual = insumos.find((i) => i.id === item.insumoId);
-        if (!atual) return null;
-        const diff = atual.estoqueAtual - item.qtdContada;
-        return { nome: item.insumoNome, unidade: item.unidade, diff, precoUnitario: item.precoUnitario };
-      })
-      .filter((d): d is NonNullable<typeof d> => d !== null && Math.abs(d.diff) > 0.01)
+      .map((item) => ({ nome: item.insumoNome, unidade: item.unidade, diff: item.diferenca, precoUnitario: item.precoUnitario }))
+      .filter((d) => Math.abs(d.diff) > 0.00005)
       .sort((a, b) => Math.abs(b.diff * b.precoUnitario) - Math.abs(a.diff * a.precoUnitario))
-      .slice(0, 5)
     : [];
+  const divergencias = todasDivergencias.slice(0, 5);
 
-  const impactoTotal = divergencias.reduce((s, d) => s + d.diff * d.precoUnitario, 0);
+  const impactoTotal = todasDivergencias.reduce((s, d) => s + d.diff * d.precoUnitario, 0);
 
   return (
     <div className="space-y-3">
@@ -68,7 +64,7 @@ export default function DivergenciaPanel() {
           icon="ri-error-warning-line"
           value={String(conferir.length)}
           valueTone={conferir.length > 0 ? 'text-red-600' : 'text-zinc-400'}
-          sub={conferir.length > 0 ? 'Estoque negativo no sistema' : 'Nenhum negativo'}
+          sub={conferir.length > 0 ? 'Negativo ou esgotado com saldo' : 'Nada para conferir'}
           atual={conferir.length}
           semVariacao
         />
@@ -92,7 +88,7 @@ export default function DivergenciaPanel() {
                 <p className={`text-sm font-bold tabular-nums ${impactoTotal < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
                   {impactoTotal >= 0 ? '+' : ''}{fmt(impactoTotal)}
                 </p>
-                <p className="text-[11px] text-zinc-400">impacto acumulado</p>
+                <p className="text-[11px] text-zinc-400">ajuste da contagem</p>
               </div>
             )}
           </div>
@@ -101,9 +97,7 @@ export default function DivergenciaPanel() {
             <div className="flex items-center gap-2 px-5 py-3">
               <i className="ri-checkbox-circle-fill text-emerald-400 text-sm flex-shrink-0" />
               <p className="text-xs text-zinc-500">
-                {ultimaContagem.itensComDiferenca > 0
-                  ? <>Estoque atual coincide com o que foi contado. A última contagem registrou <strong className="text-amber-600">{ultimaContagem.itensComDiferenca} divergência{ultimaContagem.itensComDiferenca > 1 ? 's' : ''}</strong> que foram ajustadas — sem novas movimentações divergentes desde então.</>
-                  : 'Estoque teórico alinhado com a última contagem. Nenhuma divergência detectada.'}
+                Na última contagem o contado bateu com o sistema: nenhuma diferença.
               </p>
             </div>
           ) : (
@@ -121,9 +115,9 @@ export default function DivergenciaPanel() {
                   </div>
                 </div>
               ))}
-              {ultimaContagem.itensComDiferenca > 5 && (
+              {todasDivergencias.length > 5 && (
                 <p className="text-[11px] text-zinc-400 px-5 py-2">
-                  + {ultimaContagem.itensComDiferenca - 5} outros itens · Veja o histórico completo na aba Inventário.
+                  + {todasDivergencias.length - 5} outros itens · Veja o histórico completo na aba Inventário.
                 </p>
               )}
             </div>

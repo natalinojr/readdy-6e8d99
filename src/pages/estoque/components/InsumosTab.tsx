@@ -246,7 +246,7 @@ const STATUS_RANK: Record<string, number> = { Conferir: 0, Esgotado: 1, 'Abaixo 
   };
 
   const handleEntradaRapida = async (insumo: Insumo, quantidade: number, motivo: string) => {
-    await addMovimentacao({
+    const r = await addMovimentacao({
       insumoId: insumo.id,
       tipo: 'entrada',
       quantidade,
@@ -254,6 +254,7 @@ const STATUS_RANK: Record<string, number> = { Conferir: 0, Esgotado: 1, 'Abaixo 
       motivo,
     });
     await reloadInsumos();
+    return r;
   };
 
   const handleExcluir = async (insumo: Insumo) => {

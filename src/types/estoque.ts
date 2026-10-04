@@ -121,6 +121,8 @@ export interface Movimentacao {
   operador: string;
   data: string;
   hora: string;
+  /** Horário da movimentação (ISO), para filtrar pelo dia de Brasília */
+  criadoEm?: string;
   custo?: number;
   /** Numero do pedido que gerou a baixa (ex: P2504260001) */
   pedidoNumero?: string | null;
@@ -138,6 +140,8 @@ export interface InventarioItemContado {
   precoUnitario: number;
   /** Primeira quantidade contada, quando o item foi editado depois de confirmado. */
   qtdOriginal?: number;
+  /** Contagem cheia: ninguém mexeu no campo; o servidor grava o teórico do momento (diferença 0). */
+  semMudanca?: boolean;
 }
 
 export interface InventarioEdicao {

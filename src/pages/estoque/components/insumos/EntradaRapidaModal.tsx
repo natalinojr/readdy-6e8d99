@@ -7,13 +7,15 @@ const MOTIVO_COMPRA = 'Compra de fornecedor';
 interface EntradaRapidaModalProps {
   insumo: Insumo;
   onClose: () => void;
-  onConfirm: (quantidade: number, motivo: string) => void;
+  onConfirm: (quantidade: number, motivo: string) => Promise<{ ok: boolean; erro?: string }>;
   onOpenCompra: (insumo: Insumo) => void;
 }
 
 export default function EntradaRapidaModal({ insumo, onClose, onConfirm, onOpenCompra }: EntradaRapidaModalProps) {
   const [quantidade, setQuantidade] = useState('');
   const [motivo, setMotivo] = useState('Reposição de estoque');
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState('');
 
   const isCompra = motivo === MOTIVO_COMPRA;
   const qtyNum = parseFloat(quantidade) || 0;
@@ -23,14 +25,19 @@ export default function EntradaRapidaModal({ insumo, onClose, onConfirm, onOpenC
   const purchaseFactor = insumo.purchaseFactor ?? 1;
   const qtyEmCompra = hasPurchaseUnit && purchaseFactor > 0 ? qtyNum / purchaseFactor : null;
 
-  const handleConfirm = () => {
+  const handleConfirm = async () => {
     if (isCompra) {
       onOpenCompra(insumo);
       return;
     }
     const qty = parseFloat(quantidade);
-    if (qty > 0) {
-      onConfirm(qty, motivo);
+    if (qty > 0 && !salvando) {
+      // Só fecha depois que o servidor gravou; com erro, fica aberto e mostra o motivo.
+      setSalvando(true);
+      setErro('');
+      const r = await onConfirm(qty, motivo);
+      setSalvando(false);
+      if (!r.ok) { setErro(r.erro ? `Não foi possível registrar a entrada: ${r.erro}` : 'Não foi possível registrar a entrada. Tente de novo.'); return; }
       onClose();
     }
   };
@@ -170,19 +177,26 @@ export default function EntradaRapidaModal({ insumo, onClose, onConfirm, onOpenC
           )}
         </div>
 
+        {erro && (
+          <div className="flex items-center gap-2 px-3 py-2.5 mt-3 bg-red-50 border border-red-200 rounded-xl">
+            <i className="ri-error-warning-line text-red-500 text-sm flex-shrink-0" />
+            <p className="text-xs text-red-600">{erro}</p>
+          </div>
+        )}
+
         <div className="flex gap-2 mt-5">
           <button onClick={onClose} className="flex-1 py-2 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer whitespace-nowrap">
             Cancelar
           </button>
           <button
             onClick={handleConfirm}
-            disabled={!isCompra && (!quantidade || parseFloat(quantidade) <= 0)}
+            disabled={salvando || (!isCompra && (!quantidade || parseFloat(quantidade) <= 0))}
             className={`flex-1 py-2 text-sm font-semibold text-white rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2 ${
               isCompra ? 'bg-emerald-500 hover:bg-emerald-600' : 'bg-green-600 hover:bg-green-700'
             }`}
           >
             {isCompra && <div className="w-4 h-4 flex items-center justify-center"><ShoppingCart size={13} /></div>}
-            {isCompra ? 'Ir para Nova Compra' : 'Confirmar Entrada'}
+            {isCompra ? 'Ir para Nova Compra' : salvando ? 'Registrando...' : 'Confirmar Entrada'}
           </button>
         </div>
       </div>

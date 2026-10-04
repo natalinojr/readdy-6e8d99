@@ -93,7 +93,7 @@ export const vaiFaltarEm = (i: BaseRegra & { consumoDia: number | null }, diasPr
   return i.acompanha && d !== null && !abaixoDoMinimo(i) && d <= diasPrevisao;
 };
 /** Número impossível (negativo) ou conflito: precisa contar para saber a verdade. */
-export const precisaConferir = (i: InsumoSituacao) =>
+export const precisaConferir = (i: Pick<InsumoSituacao, 'acompanha' | 'contaInventario' | 'estoque' | 'marcadoEsgotado'>) =>
   i.acompanha && i.contaInventario && (i.estoque < 0 || (i.marcadoEsgotado && i.estoque > 0));
 
 /** Feito na cozinha: saída de ficha de produção ou cadastrado com fornecedor "Produção interna". */

@@ -507,6 +507,9 @@ export const NON_IDEMPOTENT_ACTIONS = new Set([
   'enviar_guia', // contabilidade: repetir pode preparar o pagamento da guia duas vezes
   'enviar_xml_mes', // contabilidade-xml: repetir manda o e-mail dos XMLs duas vezes
   'testar_email',
+  'create_batch_with_stock', // production-write: repetir lança a produção (e a baixa dos insumos) duas vezes
+  'delete_batch', // production-write: excluir produção devolve o estoque; a tela mostra o erro em vez de reenviar
+  'add_stock_movement', // stock-write: repetir duplica a entrada/saída/perda (a tela mostra o erro desde 2026-10-04)
 ]);
 
 /**

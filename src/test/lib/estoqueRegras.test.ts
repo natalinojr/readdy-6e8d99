@@ -49,6 +49,9 @@ describe('regras', () => {
     expect(precisaConferir(insumo({ estoque: 4, marcadoEsgotado: true }))).toBe(true);
     expect(precisaConferir(insumo({ estoque: -203, contaInventario: false }))).toBe(false); // Coentro fora da contagem
     expect(precisaConferir(insumo({ estoque: 0, marcadoEsgotado: true }))).toBe(false);
+    // Formato do insumo da tela (regraDoInsumo): o mesmo "Para conferir" do Início no painel do Estoque
+    expect(precisaConferir({ acompanha: true, contaInventario: true, estoque: -1, marcadoEsgotado: false })).toBe(true);
+    expect(precisaConferir({ acompanha: false, contaInventario: true, estoque: -1, marcadoEsgotado: false })).toBe(false);
   });
 
   it('produzido: ficha de produção ou fornecedor "Produção interna"', () => {

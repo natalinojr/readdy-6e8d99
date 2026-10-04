@@ -14,6 +14,8 @@ export default function RegistrarSaidaModal({ onClose }: Props) {
   const [insumoId, setInsumoId] = useState('');
   const [quantidade, setQuantidade] = useState('');
   const [motivo, setMotivo] = useState('');
+  // Texto do "Outro" separado da escolha: antes o texto trocava o motivo e o campo sumia na 1ª letra.
+  const [motivoOutro, setMotivoOutro] = useState('');
   const [loading, setLoading] = useState(false);
   const [sucesso, setSucesso] = useState(false);
   const [erro, setErro] = useState('');
@@ -44,17 +46,19 @@ export default function RegistrarSaidaModal({ onClose }: Props) {
     if (!quantidade || isNaN(qtdNum) || qtdNum <= 0) { setErro('Informe uma quantidade válida.'); return; }
     if (qtdInvalida) { setErro(`Quantidade maior que o estoque disponível (${estoqueDisponivel} ${insumoSelecionado?.unidade ?? ''}).`); return; }
     if (!motivo.trim()) { setErro('Informe o motivo da saída.'); return; }
+    const motivoFinal = motivo === 'Outro' ? motivoOutro.trim() || 'Outro' : motivo.trim();
 
     setLoading(true);
     try {
-      await addMovimentacao({
+      const r = await addMovimentacao({
         insumoId,
         tipo: 'saida_manual',
         quantidade: qtdNum,
         unidade: insumoSelecionado?.unidade ?? 'un',
-        motivo: motivo.trim(),
+        motivo: motivoFinal,
         operadorId: user?.id,
       });
+      if (!r.ok) { setErro(r.erro ? `Não foi possível registrar a saída: ${r.erro}` : 'Erro ao registrar saída. Tente novamente.'); return; }
       setSucesso(true);
       setTimeout(() => onClose(), 1500);
     } catch {
@@ -201,7 +205,8 @@ export default function RegistrarSaidaModal({ onClose }: Props) {
                     type="text"
                     placeholder="Descreva o motivo..."
                     className="mt-2 w-full text-sm border border-zinc-200 rounded-xl px-3 py-2.5 text-zinc-800 placeholder-zinc-400 focus:outline-none focus:border-amber-400"
-                    onChange={(e) => setMotivo(e.target.value === '' ? 'Outro' : e.target.value)}
+                    value={motivoOutro}
+                    onChange={(e) => { setMotivoOutro(e.target.value); setErro(''); }}
                   />
                 )}
               </div>

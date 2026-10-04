@@ -1,4 +1,8 @@
 import type { InventarioItemContado } from '../../../contexts/EstoqueContext';
+import { fmtQtd } from '@/lib/estoqueRegras';
+
+// Quantidade legível (2,5 kg e não "2.500 kg"); a unidade da tela é "un"/"l", a do formatador é "unit"/"L".
+const fq = (q: number, u: string) => fmtQtd(q, u === 'un' ? 'unit' : u === 'l' ? 'L' : u);
 
 const fmt = (v: number, digits = 2) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: digits }).format(v);
@@ -94,12 +98,12 @@ export default function ConfirmarInventarioModal({ itens, operador, onConfirmar,
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-semibold text-zinc-800 truncate">{item.insumoNome}</p>
                         <p className="text-[10px] text-zinc-400">
-                          Sistema: {item.qtdTeorica} {item.unidade} → Contado: {item.qtdContada} {item.unidade}
+                          Sistema: {fq(item.qtdTeorica, item.unidade)} → Contado: {fq(item.qtdContada, item.unidade)}
                         </p>
                       </div>
                       <div className="text-right flex-shrink-0">
                         <p className="text-xs font-bold text-red-500">
-                          {item.diferenca.toFixed(3)} {item.unidade}
+                          {fq(item.diferenca, item.unidade)}
                         </p>
                         <p className="text-[10px] text-zinc-400">{fmt(item.diferenca * item.precoUnitario)}</p>
                       </div>
@@ -123,12 +127,12 @@ export default function ConfirmarInventarioModal({ itens, operador, onConfirmar,
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-semibold text-zinc-800 truncate">{item.insumoNome}</p>
                         <p className="text-[10px] text-zinc-400">
-                          Sistema: {item.qtdTeorica} {item.unidade} → Contado: {item.qtdContada} {item.unidade}
+                          Sistema: {fq(item.qtdTeorica, item.unidade)} → Contado: {fq(item.qtdContada, item.unidade)}
                         </p>
                       </div>
                       <div className="text-right flex-shrink-0">
                         <p className="text-xs font-bold text-emerald-600">
-                          +{item.diferenca.toFixed(3)} {item.unidade}
+                          +{fq(item.diferenca, item.unidade)}
                         </p>
                         <p className="text-[10px] text-zinc-400">{fmt(item.diferenca * item.precoUnitario)}</p>
                       </div>

@@ -74,6 +74,9 @@ function classifyMovement(
   // Transferência de entrada também não é consumo
   if (type === 'transfer_in') return { bucket: 'transferencia', isConsumo: false };
 
+  // Estorno (ex.: produção excluída) desfaz um movimento: não é consumo (2026-10-04)
+  if (r.startsWith('estorno')) return { bucket: 'ajuste', isConsumo: false };
+
   // Correção de conversão (Classificação de itens) acerta a ENTRADA de uma compra antiga — não é consumo
   if (r.startsWith('correção de conversão') || r.startsWith('correcao de conversao')) return { bucket: 'ajuste', isConsumo: false };
   // Compensação de "aplicar ficha só no consumo": mantém o saldo, não é consumo

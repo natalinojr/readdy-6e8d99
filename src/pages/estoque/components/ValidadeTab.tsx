@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { todayBrasilia } from '@/lib/dateUtils';
 import { Segmented } from '../../financeiro/components/dreUi';
 
 interface ExpiryAlert {
@@ -33,8 +35,17 @@ interface IngredientBatch {
 
 type FilterStatus = 'all' | 'expired' | 'critical' | 'warning' | 'ok';
 
+// Data pura (AAAA-MM-DD) sem fuso: new Date('2026-10-04') é meia-noite UTC e aparecia 03/10 em Brasília.
 function formatDate(iso: string) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (m) return `${m[3]}/${m[2]}/${m[1]}`;
   return new Date(iso).toLocaleDateString('pt-BR');
+}
+
+/** Dias até vencer em datas de Brasília (validade é AAAA-MM-DD; new Date() dela é meia-noite UTC). Negativo = vencido. */
+function diasAteVencer(ymd: string): number {
+  const utc = (s: string) => Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10));
+  return Math.round((utc(ymd) - utc(todayBrasilia())) / 86400000);
 }
 
 function formatQty(qty: number, unit: string) {
@@ -56,9 +67,13 @@ function statusConfig(status: string) {
 
 export default function ValidadeTab() {
   const { user } = useAuth();
+  const toast = useToast();
   const [alerts, setAlerts] = useState<ExpiryAlert[]>([]);
   const [allBatches, setAllBatches] = useState<IngredientBatch[]>([]);
   const [loading, setLoading] = useState(true);
+  // Erro de leitura aparece no lugar da lista (antes virava "tudo dentro do prazo").
+  const [erroAlertas, setErroAlertas] = useState<string | null>(null);
+  const [erroLotes, setErroLotes] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterStatus>('all');
   const [viewMode, setViewMode] = useState<'alerts' | 'all'>('alerts');
   const [search, setSearch] = useState('');
@@ -70,11 +85,17 @@ export default function ValidadeTab() {
     if (!user?.tenantId || !editingExpiry) return;
     setSavingExpiry(true);
     try {
-      await supabase
+      const { data, error } = await supabase
         .from('ingredient_batches')
         .update({ expiry_date: editingExpiry })
         .eq('id', batchId)
-        .eq('tenant_id', user.tenantId);
+        .eq('tenant_id', user.tenantId)
+        .select('id');
+      // Confere o resultado: antes fechava a edição como se tivesse salvo mesmo com erro.
+      if (error || !data?.length) {
+        toast.error('Não salvei a validade', error?.message ?? 'Nenhum lote foi alterado. Atualize e tente de novo.');
+        return;
+      }
       setEditingBatchId(null);
       setEditingExpiry('');
       await loadData();
@@ -84,17 +105,19 @@ export default function ValidadeTab() {
   };
 
   const loadData = useCallback(async () => {
+    if (!user?.tenantId) return;
     setLoading(true);
     try {
-      // Carrega alertas de validade da view
-      const { data: alertData } = await supabase
+      // Carrega alertas de validade da view (só da loja aberta)
+      const { data: alertData, error: alertErr } = await supabase
         .from('ingredient_expiry_alerts')
         .select('*')
+        .eq('tenant_id', user.tenantId)
         .order('days_until_expiry', { ascending: true });
 
       // Carrega todos os lotes com join de ingrediente
       // Coluna real: expiry_date (não expires_at)
-      const { data: batchData } = await supabase
+      const { data: batchData, error: batchErr } = await supabase
         .from('ingredient_batches')
         .select(`
           id, batch_code, quantity_remaining, unit_cost, supplier_id,
@@ -102,8 +125,11 @@ export default function ValidadeTab() {
           ingredient_id, tenant_id,
           ingredients (name, unit)
         `)
+        .eq('tenant_id', user.tenantId)
         .order('expiry_date', { ascending: true, nullsFirst: false });
 
+      setErroAlertas(alertErr ? alertErr.message : null);
+      setErroLotes(batchErr ? batchErr.message : null);
       setAlerts((alertData ?? []) as ExpiryAlert[]);
       setAllBatches(
         (batchData ?? []).map((b: Record<string, unknown>) => ({
@@ -241,11 +267,21 @@ export default function ValidadeTab() {
       {viewMode === 'alerts' && (
         <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
           {filteredAlerts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-14 text-zinc-400">
-              <i className="ri-checkbox-circle-line text-4xl mb-2 text-zinc-200" />
-              <p className="text-sm font-semibold text-zinc-500">Nenhum alerta encontrado</p>
-              <p className="text-xs text-zinc-400 mt-1">Todos os ingredientes estão dentro do prazo</p>
-            </div>
+            erroAlertas ? (
+              <div className="flex flex-col items-center justify-center py-14 text-zinc-400 px-4 text-center">
+                <i className="ri-error-warning-line text-4xl mb-2 text-red-300" />
+                <p className="text-sm font-semibold text-red-600">Não foi possível ler os lotes</p>
+                <p className="text-xs text-zinc-400 mt-1">{erroAlertas}</p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-14 text-zinc-400">
+                <i className="ri-checkbox-circle-line text-4xl mb-2 text-zinc-200" />
+                <p className="text-sm font-semibold text-zinc-500">Nenhum alerta encontrado</p>
+                <p className="text-xs text-zinc-400 mt-1">
+                  {alerts.length === 0 ? 'Nenhum lote com validade foi registrado' : 'Nenhum lote neste filtro'}
+                </p>
+              </div>
+            )
           ) : (
           <>
           {/* Celular: cartão por alerta (a tabela não cabe em 375px) */}
@@ -336,20 +372,28 @@ export default function ValidadeTab() {
       {viewMode === 'all' && (
         <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
           {filteredBatches.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-14 text-zinc-400">
-              <i className="ri-stack-line text-4xl mb-2 text-zinc-200" />
-              <p className="text-sm font-semibold text-zinc-500">Nenhum lote cadastrado</p>
-              <p className="text-xs text-zinc-400 mt-1">Lotes são criados ao registrar entradas de estoque</p>
-            </div>
+            erroLotes ? (
+              <div className="flex flex-col items-center justify-center py-14 text-zinc-400 px-4 text-center">
+                <i className="ri-error-warning-line text-4xl mb-2 text-red-300" />
+                <p className="text-sm font-semibold text-red-600">Não foi possível ler os lotes</p>
+                <p className="text-xs text-zinc-400 mt-1">{erroLotes}</p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-14 text-zinc-400">
+                <i className="ri-stack-line text-4xl mb-2 text-zinc-200" />
+                <p className="text-sm font-semibold text-zinc-500">{allBatches.length === 0 ? 'Nenhum lote cadastrado' : 'Nenhum lote encontrado'}</p>
+                <p className="text-xs text-zinc-400 mt-1">
+                  {allBatches.length === 0 ? 'Entradas e compras ainda não registram lote nem validade' : 'Nenhum lote nesta busca'}
+                </p>
+              </div>
+            )
           ) : (
           <>
           {/* Celular: cartão por lote (a tabela não cabe em 375px) */}
           <ul className="md:hidden p-3 space-y-2">
             {filteredBatches.map((b) => {
-              const isExpired = b.expiry_date ? new Date(b.expiry_date) < new Date() : false;
-              const daysLeft = b.expiry_date
-                ? Math.ceil((new Date(b.expiry_date).getTime() - Date.now()) / 86400000)
-                : null;
+              const daysLeft = b.expiry_date ? diasAteVencer(b.expiry_date) : null;
+              const isExpired = daysLeft != null && daysLeft < 0;
               const isEditing = editingBatchId === b.id;
               return (
                 <li key={b.id}>
@@ -428,10 +472,8 @@ export default function ValidadeTab() {
               </thead>
               <tbody className="divide-y divide-zinc-100/80">
                 {filteredBatches.map((b) => {
-                  const isExpired = b.expiry_date ? new Date(b.expiry_date) < new Date() : false;
-                  const daysLeft = b.expiry_date
-                    ? Math.ceil((new Date(b.expiry_date).getTime() - Date.now()) / 86400000)
-                    : null;
+                  const daysLeft = b.expiry_date ? diasAteVencer(b.expiry_date) : null;
+                  const isExpired = daysLeft != null && daysLeft < 0;
                   const isEditing = editingBatchId === b.id;
                   return (
                     <tr key={b.id} className={`hover:bg-zinc-50 transition-colors ${isExpired ? 'bg-red-50/50' : ''}`}>

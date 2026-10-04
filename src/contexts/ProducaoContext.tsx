@@ -199,7 +199,8 @@ interface ProducaoContextValue {
   deleteRecipe: (id: string) => Promise<void>;
   addBatch: (batch: NovaBatelada, operador: string) => Promise<string>;
   addBatchWithStock: (batch: NovaBateladaComEstoque) => Promise<string>;
-  deleteBatch: (id: string) => Promise<void>;
+  /** Devolve quantos movimentos o servidor desfez e quais insumos ficaram (contados depois da produção). */
+  deleteBatch: (id: string) => Promise<{ estornados: number; pulados: string[] }>;
   getRecipeById: (id: string) => ProductionRecipe | undefined;
   getBatchesByRecipeId: (recipeId: string) => ProductionBatch[];
   getBatchById: (id: string) => ProductionBatch | undefined;
@@ -588,6 +589,8 @@ export function ProducaoProvider({ children }: { children: ReactNode }) {
     const { data, error: apiErr } = await invokeWithAuth<{
       success: boolean;
       error?: string;
+      estornados?: number;
+      pulados?: string[];
     }>('production-write', {
       body: {
         action: 'delete_batch',
@@ -600,6 +603,8 @@ export function ProducaoProvider({ children }: { children: ReactNode }) {
     if (!data?.success) throw new Error(data?.error ?? 'Erro ao excluir produção');
 
     await loadFromBackend();
+    // O servidor desfaz no estoque o que a produção fez (2026-10-04); insumo contado depois fica como está.
+    return { estornados: Number(data.estornados ?? 0), pulados: Array.isArray(data.pulados) ? data.pulados : [] };
   }, [user?.tenantId, loadFromBackend]);
 
   const getRecipeById = useCallback(

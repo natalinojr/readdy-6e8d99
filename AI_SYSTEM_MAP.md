@@ -273,6 +273,34 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-10-04 — Estoque: revisão das 10 abas + erros que mexiam no estoque
+- **Pedido do dono:** revisar as abas do Estoque na linha "simples, óbvio, propositivo". Proposta de layout (5 grupos
+  Início · Insumos · Movimentos · Contagem · Custo, "+ Registrar", ficha do insumo, "Arrumar a lista") em
+  `docs/prototipos/estoque-abas-proposta.html` (não commitado), **esperando OK do dono**. Esta leva só corrige erros.
+- **Contagem cheia desfazia vendas** (`ContagemInventario.tsx`): o campo nascia com o teórico da abertura; venda no
+  meio (Realtime) mudava o teórico e o número velho ia na confirmação = ajuste positivo. Agora só os `mexidos`
+  (digitados/conferidos) valem; o resto acompanha o teórico e vai com `semMudanca: true`, e `fn_confirm_inventory`
+  usa o teórico da hora de gravar para esses itens (migração `20261004161000_inventario_campo_intocado.sql`).
+  Rascunho guarda `mexidos` (rascunho antigo: conferidos + pendentes). Testado na Testes PDV: tela com 993, venda
+  no banco (992), confirmação gravou 992 com diferença 0.
+- **Excluir produção não devolvia o estoque** (`fn_production_crud › delete_batch`, migrações `20261004160000` e
+  `20261004163000`): agora estorna cada movimento da produção com `signed_quantity <> 0` ("Estorno (produção
+  excluída): …", sentido contrário), pula insumo contado depois (`fn_insumo_contado_entre`, volta em `pulados`),
+  apaga a linha informativa de perda e trava (advisory lock da contagem + `FOR UPDATE` no registro; repetida =
+  "já foi excluída"). Preço médio do produto não volta. A criação limita o estoque em 0 (`GREATEST`) mas grava a
+  quantidade inteira no movimento: o estorno devolve a quantidade inteira (raro: a tela bloqueia produzir sem estoque).
+- **Sucesso falso:** `addMovimentacao` devolve `{ok, erro}` (Saída, Transferência, Entrada rápida mostram o erro);
+  `add_stock_movement`, `delete_batch` e `create_batch_with_stock` estão em `NON_IDEMPOTENT_ACTIONS` (sem reenvio
+  automático depois de erro de rede; antes podia duplicar).
+- **Movimentações:** o Realtime/recargas repetem o último filtro (`paramsMovRef` no `EstoqueContext`); atalhos de
+  data e "(hoje)" em Brasília; estorno não conta como entrada. **Consumo:** motivo "Estorno…" não é consumo.
+- **Validade & Lotes:** a view `ingredient_expiry_alerts` não tinha GRANT (tela dizia "tudo no prazo"); agora
+  `security_invoker` + leitura para authenticated e "hoje" de Brasília (`20261004162000_validade_view_leitura.sql`);
+  datas `date` formatadas sem fuso; leitura filtra a loja. Nenhuma loja tem lote: nenhuma tela cria lote ainda.
+- **Inventário:** painel de divergência usa a `diferenca` da própria contagem (antes estoque atual − contado = as
+  vendas desde então). **Início:** "Estoque em dia ✓" só sem nada abaixo do mínimo; cartão Contar mostra o número real.
+- **Pegadinha:** `stock_movements.operator_id` é NOT NULL; `production_batches.recipe_id` também.
+
 ### 2026-10-03 — Acesso por pessoa: "o que essa pessoa faz?" (Usuários › O que faz)
 - **Pedido do dono:** trocar o cargo + grade de 81 permissões por "o que essa pessoa faz?", em português do dia a dia, **valendo para a pessoa** e com **cada loja com a sua configuração**. Protótipo aprovado: `docs/prototipos/acesso-por-pessoa-proposta.html` (não commitado, como os outros).
 - **Camadas** (a de cima vale por cima): padrão do cargo no código → ajuste do cargo na loja (`permissions`, Configurações › Permissões) → **ajuste da pessoa na loja** (`user_permissions (tenant_id, user_id, permission_key, allowed)`, FK em `user_tenants` com cascade: sair da loja apaga). `allowed` true acrescenta, false tira. Nada de chave nova.

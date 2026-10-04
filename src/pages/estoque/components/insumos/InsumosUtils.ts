@@ -4,6 +4,7 @@ import { abaixoDoMinimo, estaEsgotado, fmtPrecoUnit } from '@/lib/estoqueRegras'
 /** Insumo do EstoqueContext no formato das regras únicas (src/lib/estoqueRegras.ts). */
 export const regraDoInsumo = (i: Insumo) => ({
   acompanha: i.rastrearEstoque !== false, minimo: i.estoqueMinimo, estoque: i.estoqueAtual, marcadoEsgotado: i.esgotado,
+  contaInventario: i.contaInventario !== false,
 });
 /** Filtro de situação da lista = os mesmos números do topo e do Início (insumo sem aviso não entra). */
 export const passaFiltroStatus = (i: Insumo, filtro: string) => {

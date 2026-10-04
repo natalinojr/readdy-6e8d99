@@ -110,9 +110,6 @@ export default function EstoquePage() {
             >
               <i className={t.icon} />
               {t.label}
-              {t.id === 'validade' && (
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-              )}
             </button>
           ))}
         </div>

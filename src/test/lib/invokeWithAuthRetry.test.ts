@@ -30,7 +30,7 @@ async function run(action: string, fetchMock: ReturnType<typeof vi.fn>) {
 }
 
 describe('invokeWithAuth — retry em erro de rede', () => {
-  it.each(['record_payment', 'close_cash_register', 'add_cash_movement', 'register_partial_refund'])(
+  it.each(['record_payment', 'close_cash_register', 'add_cash_movement', 'register_partial_refund', 'create_batch_with_stock'])(
     '%s não é reenviado',
     async (action) => {
       const fetchMock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));

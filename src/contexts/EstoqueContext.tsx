@@ -258,7 +258,7 @@ interface EstoqueContextValue {
     unidade: string;
     motivo?: string;
     operadorId?: string;
-  }) => Promise<void>;
+  }) => Promise<{ ok: boolean; erro?: string }>;
   registrarPerda: (itensPerda: PerdaItem[], motivo: string, operador: string) => Promise<void>;
   /** contadoEm (ISO): horário da contagem; o que entrou/saiu depois dele fica por cima do contado. */
   confirmarInventario: (itens: InventarioItemContado[], operador: string, contadoEm?: string) => Promise<{ ok: boolean; erro?: string }>;
@@ -472,6 +472,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
           operador: r.operator_name ?? 'Sistema',
           data: createdAt.toLocaleDateString('pt-BR'),
           hora: createdAt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+          criadoEm: createdAt.toISOString(),
           pedidoNumero: r.order_number ?? null,
           itemVendidoNome: r.sold_item_name ?? null,
           custo,
@@ -482,6 +483,19 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       console.error('[EstoqueContext] loadMovimentacoes error:', e);
     }
   }, [user?.tenantId]);
+
+  // Últimos filtros pedidos pela aba Movimentações: o Realtime e os recarregamentos depois de gravar
+  // repetem esses filtros (antes trocavam a lista filtrada pela padrão a cada venda).
+  type ParamsMov = { dateFrom?: Date; dateTo?: Date; ingredientId?: string; busca?: string; tiposDb?: string[] };
+  const paramsMovRef = useRef<ParamsMov>({});
+  const reloadMovimentacoesTela = useCallback((dateFrom?: Date, dateTo?: Date, ingredientId?: string, busca?: string, tiposDb?: string[]) => {
+    paramsMovRef.current = { dateFrom, dateTo, ingredientId, busca, tiposDb };
+    return loadMovimentacoes(dateFrom, dateTo, ingredientId, busca, tiposDb);
+  }, [loadMovimentacoes]);
+  const recarregarMovimentacoes = useCallback(() => {
+    const p = paramsMovRef.current;
+    return loadMovimentacoes(p.dateFrom, p.dateTo, p.ingredientId, p.busca, p.tiposDb);
+  }, [loadMovimentacoes]);
 
   const loadInventarioSessions = useCallback(async () => {
     if (!user?.tenantId) return;
@@ -516,6 +530,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     from.setHours(0, 0, 0, 0);
     // Sem limite final: "até agora" usava o relógio do aparelho, e num PC atrasado as
     // movimentações recentes (ex.: entrada de compra) sumiam da aba Movimentações (2026-09-12).
+    paramsMovRef.current = { dateFrom: from };
     loadMovimentacoes(from);
     loadInventarioSessions();
 
@@ -527,16 +542,16 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
         loadInsumos();
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'stock_movements', filter: `tenant_id=eq.${tenantId}` }, () => {
-        loadMovimentacoes();
+        recarregarMovimentacoes();
         loadInsumos();
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'production_batches', filter: `tenant_id=eq.${tenantId}` }, () => {
         loadInsumos();
-        loadMovimentacoes();
+        recarregarMovimentacoes();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'production_batch_items' }, () => {
         loadInsumos();
-        loadMovimentacoes();
+        recarregarMovimentacoes();
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'inventory_sessions', filter: `tenant_id=eq.${tenantId}` }, () => {
         loadInventarioSessions();
@@ -554,7 +569,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       if (msg?.tenantId !== tenantId) return;
       if (msg?.type === 'stock_updated' || msg?.type === 'ingredient_updated') {
         loadInsumos();
-        loadMovimentacoes();
+        recarregarMovimentacoes();
       }
     };
     bc?.addEventListener('message', handleBroadcast);
@@ -563,7 +578,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     const handleStorage = (e: StorageEvent) => {
       if (e.key === 'erpos_estoque_reload_trigger') {
         loadInsumos();
-        loadMovimentacoes();
+        recarregarMovimentacoes();
       }
     };
     window.addEventListener('storage', handleStorage);
@@ -575,7 +590,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       bc?.close();
       window.removeEventListener('storage', handleStorage);
     };
-  }, [user?.tenantId, loadInsumos, loadMovimentacoes, loadInventarioSessions]);
+  }, [user?.tenantId, loadInsumos, loadMovimentacoes, recarregarMovimentacoes, loadInventarioSessions]);
 
   // Função para notificar outras abas sobre mudança no estoque
   const broadcastStockUpdate = useCallback(() => {
@@ -602,15 +617,15 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     unidade: string;
     motivo?: string;
     operadorId?: string;
-  }) => {
-    if (!user?.tenantId) return;
+  }): Promise<{ ok: boolean; erro?: string }> => {
+    if (!user?.tenantId) return { ok: false, erro: 'Loja não identificada' };
     const insumo = insumos.find((i) => i.id === mov.insumoId);
     let finalQty = mov.quantidade;
     if (insumo && insumo.unidade !== mov.unidade) {
       const converted = convertUnit(mov.quantidade, mov.unidade, insumo.unidade);
       if (converted !== null) finalQty = converted;
     }
-    const { error } = await invokeWithAuth('stock-write', {
+    const { data, error } = await invokeWithAuth<{ error?: string }>('stock-write', {
       body: {
         action: 'add_stock_movement',
         tenant_id: user.tenantId,
@@ -622,14 +637,16 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
         operator_id: mov.operadorId ?? null,
       },
     });
-    if (error) { console.error('[EstoqueContext] addMovimentacao error:', error); return; }
+    // Erro volta para a tela (antes só ia ao console e a tela dizia "registrada").
+    const errMsg = error?.message ?? (typeof data?.error === 'string' ? data.error : null);
+    if (errMsg) { console.error('[EstoqueContext] addMovimentacao error:', errMsg); return { ok: false, erro: errMsg }; }
 
     // Notificar outras abas
     broadcastStockUpdate();
 
     // Forçar recarga imediata nesta aba
     await loadInsumos();
-    await loadMovimentacoes();
+    await recarregarMovimentacoes();
 
     const tipoAuditoria = mov.tipo === 'entrada' ? 'estoque_entrada' : 'estoque_ajustado';
     registrarEvento({
@@ -643,7 +660,8 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       detalhes: mov.motivo ?? undefined,
       depois: { quantidade: finalQty, motivo: mov.motivo ?? '' },
     });
-  }, [user, insumos, registrarEvento, broadcastStockUpdate, loadInsumos, loadMovimentacoes]);
+    return { ok: true };
+  }, [user, insumos, registrarEvento, broadcastStockUpdate, loadInsumos, recarregarMovimentacoes]);
 
   const registrarPerda = useCallback(async (itensPerda: PerdaItem[], motivo: string, _operador: string) => {
     if (!user?.tenantId) throw new Error('Loja não identificada. Entre novamente.');
@@ -679,7 +697,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     // Notificar outras abas e recarregar (mesmo em falha parcial, para a tela refletir o que gravou)
     if (gravados > 0) broadcastStockUpdate();
     await loadInsumos();
-    await loadMovimentacoes();
+    await recarregarMovimentacoes();
     if (falha) {
       console.error('[EstoqueContext] registrarPerda error:', falha);
       throw new Error(gravados > 0
@@ -699,7 +717,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       detalhes: motivo,
       depois: { itens: itensPerda.length, motivo },
     });
-  }, [user, insumos, registrarEvento, broadcastStockUpdate, loadInsumos, loadMovimentacoes]);
+  }, [user, insumos, registrarEvento, broadcastStockUpdate, loadInsumos, recarregarMovimentacoes]);
 
   const setRastrearEstoque = useCallback(async (insumoId: string, rastrear: boolean) => {
     if (!user?.tenantId) return;
@@ -794,7 +812,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
 
     broadcastStockUpdate();
     await loadInsumos();
-    await loadMovimentacoes();
+    await recarregarMovimentacoes();
     await loadInventarioSessions();
 
     registrarEvento({
@@ -808,7 +826,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       depois: { itens_contados: itens.length, divergencias: comDiferenca.length, valor_ajuste: valorAjuste, contado_em: contadoEm ?? 'agora' },
     });
     return { ok: true };
-  }, [user?.tenantId, registrarEvento, broadcastStockUpdate, loadInsumos, loadMovimentacoes, loadInventarioSessions]);
+  }, [user?.tenantId, registrarEvento, broadcastStockUpdate, loadInsumos, recarregarMovimentacoes, loadInventarioSessions]);
 
   const editarInventario = useCallback(async (
     sessionId: string,
@@ -832,7 +850,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
 
     broadcastStockUpdate();
     await loadInsumos();
-    await loadMovimentacoes();
+    await recarregarMovimentacoes();
     await loadInventarioSessions();
 
     const editados = Number(data?.editados ?? 0);
@@ -854,7 +872,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       });
     }
     return { editados, bloqueados };
-  }, [user, registrarEvento, broadcastStockUpdate, loadInsumos, loadMovimentacoes, loadInventarioSessions]);
+  }, [user, registrarEvento, broadcastStockUpdate, loadInsumos, recarregarMovimentacoes, loadInventarioSessions]);
 
   const upsertInsumo = useCallback(async (insumo: Partial<Insumo> & { nome: string }): Promise<string | undefined> => {
     if (!user?.tenantId) return;
@@ -954,7 +972,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
       insumosEsgotados, itensDesabilitadosIds, loading, setRastrearEstoque, setContaInventario,
       addMovimentacao, registrarPerda,
       confirmarInventario, editarInventario, marcarInsumoEsgotado, upsertInsumo,
-      setInsumos, reloadInsumos: loadInsumos, reloadMovimentacoes: loadMovimentacoes,
+      setInsumos, reloadInsumos: loadInsumos, reloadMovimentacoes: reloadMovimentacoesTela,
       reloadInventarioSessions: loadInventarioSessions,
     }}>
       {children}

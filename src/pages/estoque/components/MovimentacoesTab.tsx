@@ -7,6 +7,7 @@ import TransferirEstoqueModal from './TransferirEstoqueModal';
 import NovaCompraModal from '../../financeiro/components/NovaCompraModal';
 import RegistrarSaidaModal from './RegistrarSaidaModal';
 import { KpiCard } from '../../financeiro/components/dreUi';
+import { todayBrasilia, somarDias, dateKeyBrasilia } from '@/lib/dateUtils';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -83,6 +84,10 @@ export default function MovimentacoesTab() {
     const to = dateTo ? new Date(dateTo + 'T23:59:59') : undefined;
     reloadMovimentacoes(from, to, undefined, buscaAplicada || undefined, tiposDb);
   }, [dateFrom, dateTo, buscaAplicada, filtroTipo, reloadMovimentacoes]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Saiu da aba com filtro: volta a lista padrão (o Realtime repete o último filtro pedido).
+  const reloadRef = useRef(reloadMovimentacoes);
+  reloadRef.current = reloadMovimentacoes;
+  useEffect(() => () => { if (jaFiltrou.current) reloadRef.current(); }, []);
 
   const handleOpenCompra = (insumoId?: string) => {
     if (insumoId) {
@@ -126,11 +131,16 @@ export default function MovimentacoesTab() {
     });
   }, [movimentacoes, filtroTipo, buscaInsumo, dateFrom, dateTo]);
 
-  const totalEntradas = movs.filter((m) => m.tipo === 'entrada').reduce((s, m) => s + (m.custo ?? 0), 0);
+  const hasDateFilter = dateFrom || dateTo;
+  // Sem período escolhido o cartão diz "(hoje)": soma só as entradas de hoje (Brasília), não todas as carregadas.
+  const hojeBR = todayBrasilia();
+  const totalEntradas = movs
+    // Estorno (ex.: produção excluída) volta insumo, não é mercadoria que entrou.
+    .filter((m) => m.tipo === 'entrada' && !/^estorno/i.test(m.motivo ?? '') && (hasDateFilter || (!!m.criadoEm && dateKeyBrasilia(m.criadoEm) === hojeBR)))
+    .reduce((s, m) => s + (m.custo ?? 0), 0);
   const totalPerdas = movs.filter((m) => m.tipo === 'perda').length;
   const totalSaidasVenda = movs.filter((m) => m.tipo === 'saida_venda').length;
 
-  const hasDateFilter = dateFrom || dateTo;
   const clearDates = () => { setDateFrom(''); setDateTo(''); };
 
   return (
@@ -252,18 +262,15 @@ export default function MovimentacoesTab() {
               <button
                 key={label}
                 onClick={() => {
-                  const today = new Date();
-                  const todayStr = today.toISOString().split('T')[0];
+                  // Dia de Brasília (toISOString é UTC: depois das 21h já virava amanhã).
+                  const todayStr = todayBrasilia();
                   if (days === 0) {
                     setDateFrom(todayStr); setDateTo(todayStr);
                   } else if (days === -1) {
-                    const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-                    setDateFrom(firstDay.toISOString().split('T')[0]);
+                    setDateFrom(todayStr.slice(0, 8) + '01');
                     setDateTo(todayStr);
                   } else {
-                    const from = new Date(today);
-                    from.setDate(from.getDate() - days);
-                    setDateFrom(from.toISOString().split('T')[0]);
+                    setDateFrom(somarDias(todayStr, -days));
                     setDateTo(todayStr);
                   }
                 }}

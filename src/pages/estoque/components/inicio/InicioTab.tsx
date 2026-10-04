@@ -61,7 +61,11 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
   const nPorPedir = listaCompra.filter((i) => !pedidoDoInsumo(i, situacao.pedidos)).length;
   const vaiFaltar = situacao.insumos.filter((i) => i.vaiFaltar);
   const nComprar = comprarIds.size;
-  const nContar = podeContar ? hoje.itens.length : 0;
+  // Já pedidos, esperando a mercadoria chegar.
+  const nEsperando = nComprar - nPorPedir;
+  // Número real para todos, o mesmo da seção Contar (antes 0 com ✓ "em dia" para quem não tem a
+  // permissão de inventário); sem a permissão a pessoa só não conta.
+  const nContar = hoje.itens.length;
 
   const ir = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   // Leva até a linha do insumo na lista de compras e acende ela por uns segundos.
@@ -85,7 +89,8 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
   const partes: string[] = [];
   if (nPorPedir) partes.push(`pedir ${nPorPedir} ${nPorPedir === 1 ? 'insumo' : 'insumos'}`);
   if (nContar) partes.push(`contar ${nContar}`);
-  const emDia = !nPorPedir && !nContar && !vaiFaltar.length;
+  // "Em dia" só sem nada abaixo do mínimo (nem pedido esperando chegar), nada para contar e nada para faltar.
+  const emDia = totais.abaixoMinimo === 0 && !nComprar && !nContar && !vaiFaltar.length;
 
   return (
     <div className="p-4 md:p-6 max-w-2xl lg:max-w-[1400px] mx-auto pb-16">
@@ -95,7 +100,9 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
         <h2 className="text-2xl font-extrabold text-emerald-700 tracking-tight">Estoque em dia ✓</h2>
       ) : (
         <h2 className="text-[22px] md:text-2xl font-extrabold text-zinc-900 tracking-tight leading-tight">
-          {partes.length ? `Hoje: ${partes.join(' e ')}` : 'Hoje: ver o que vai faltar'}
+          {partes.length
+            ? `Hoje: ${partes.join(' e ')}`
+            : nEsperando ? `Pedidos feitos — esperando chegar ${nEsperando}` : 'Hoje: ver o que vai faltar'}
         </h2>
       )}
       <p className="text-xs text-zinc-500 mt-1 mb-3 lg:mb-0">
@@ -109,7 +116,7 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
           detalhe={nComprar && !nPorPedir ? 'pedidos mandados' : `abaixo do mínimo${totais.zeradosAbaixo ? ` · ${totais.zeradosAbaixo} zerados` : ''}${totais.naLista ? ` · ${totais.naLista} posto${totais.naLista > 1 ? 's' : ''} na lista` : ''}`}
           tom={nPorPedir ? 'red' : 'ok'} onClick={() => ir('inicio-comprar')}
           ajuda={<>É a <b>lista de compras</b>. Entra sozinho todo insumo com estoque igual ou abaixo do mínimo, e entra também o que você puser na lista. Fica separada por fornecedor, com a quantidade já sugerida, para mandar o pedido.</>} />
-        <Bloco icone="ri-scales-3-line" n={nContar} rotulo="Contar" detalhe={nContar ? (hoje.devidos.length ? 'contagem do dia' : 'conferir') : 'em dia'}
+        <Bloco icone="ri-scales-3-line" n={nContar} rotulo="Contar" detalhe={nContar ? (!podeContar ? 'com quem faz o inventário' : hoje.devidos.length ? 'contagem do dia' : 'conferir') : 'em dia'}
           tom={nContar ? 'dark' : 'ok'} onClick={() => ir('inicio-contar')}
           ajuda={<>O que contar agora: os itens da <b>contagem programada</b> de hoje (geral do mês, semanal…) e os insumos com <b>número impossível</b> no sistema (estoque negativo). Quem programa as contagens é o supervisor ou o dono.</>} />
         <Bloco icone="ri-hourglass-line" n={vaiFaltar.length} rotulo="Vai faltar" detalhe={`em até ${cfg.diasPrevisao} dias`}

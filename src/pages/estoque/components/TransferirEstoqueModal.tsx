@@ -15,21 +15,28 @@ export default function TransferirEstoqueModal({ onClose }: Props) {
   const [lojaDestino, setLojaDestino] = useState('');
   const [obs, setObs] = useState('');
   const [done, setDone] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState('');
 
   const insumoSel = insumos.find((i) => i.id === insumoId);
   const lojaOrigem = user?.loja || '—';
   const qtd = parseFloat(quantidade) || 0;
   const valid = insumoId && qtd > 0 && lojaDestino.trim().length > 0;
 
-  const handleConfirmar = () => {
-    if (!valid || !insumoSel) return;
-    addMovimentacao({
+  // Espera o servidor: antes mostrava "registrada" sem saber se gravou.
+  const handleConfirmar = async () => {
+    if (!valid || !insumoSel || salvando) return;
+    setSalvando(true);
+    setErro('');
+    const r = await addMovimentacao({
       insumoId,
       tipo: 'saida_manual',
       quantidade: qtd,
       unidade: insumoSel.unidade,
       motivo: `Transferência para ${lojaDestino.trim()}${obs ? ` — ${obs}` : ''}`,
     });
+    setSalvando(false);
+    if (!r.ok) { setErro(r.erro ? `Não foi possível registrar a transferência: ${r.erro}` : 'Não foi possível registrar a transferência. Tente de novo.'); return; }
     setDone(true);
   };
 
@@ -146,14 +153,21 @@ export default function TransferirEstoqueModal({ onClose }: Props) {
               )}
             </div>
 
+            {erro && (
+              <div className="flex items-center gap-2 px-3 py-2.5 mt-3 bg-red-50 border border-red-200 rounded-xl">
+                <i className="ri-error-warning-line text-red-500 text-sm flex-shrink-0" />
+                <p className="text-xs text-red-600">{erro}</p>
+              </div>
+            )}
+
             <div className="flex gap-2 mt-5">
               <button onClick={onClose} className="flex-1 py-2 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-xl hover:bg-zinc-200 transition-colors cursor-pointer whitespace-nowrap">Cancelar</button>
               <button
                 onClick={handleConfirmar}
-                disabled={!valid}
+                disabled={!valid || salvando}
                 className="flex-1 py-2 text-sm font-semibold text-white bg-sky-500 hover:bg-sky-600 disabled:opacity-40 disabled:cursor-not-allowed rounded-xl transition-colors cursor-pointer whitespace-nowrap"
               >
-                Confirmar Transferência
+                {salvando ? 'Registrando...' : 'Confirmar Transferência'}
               </button>
             </div>
           </>

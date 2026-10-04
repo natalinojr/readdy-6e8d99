@@ -5,10 +5,12 @@ import { useEstoque } from '@/contexts/EstoqueContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency, formatCurrencyPreciso, formatPercent } from '@/lib/formatters';
 import { convertUnit } from '@/lib/unitConversion';
+import { todayBrasilia, somarDias } from '@/lib/dateUtils';
 import FichaProducaoModal from './FichaProducaoModal';
 import RegistroProducaoModal from './RegistroProducaoModal';
 import DetalheBatchModal from './DetalheBatchModal';
 import ConfirmModal from '@/components/base/ConfirmModal';
+import { useToast } from '@/contexts/ToastContext';
 import type { ProductionRecipe, ProductionBatch } from '@/types/estoque';
 import { KpiCard, Segmented } from '../../financeiro/components/dreUi';
 
@@ -283,6 +285,7 @@ function ListaProducoes({
   setDateTo: (v: string) => void;
 }) {
   const { batches, deleteBatch } = useProducao();
+  const toast = useToast();
   const [busca, setBusca] = useState('');
   const [ordenacao, setOrdenacao] = useState<OrdenacaoProducoes>('data_desc');
   const [confirmBatchId, setConfirmBatchId] = useState<string | null>(null);
@@ -328,14 +331,28 @@ function ListaProducoes({
       <ConfirmModal
         isOpen={!!confirmBatchId}
         title="Excluir registro de produção?"
-        message={`O registro "${confirmBatchName}" será excluído permanentemente. Esta ação não pode ser desfeita.`}
+        message={`O registro "${confirmBatchName}" será excluído e o estoque volta ao que era antes dele: os insumos usados voltam e o que foi produzido sai. Insumo contado depois desta produção fica como está.`}
         icon="ri-delete-bin-6-line"
         confirmLabel="Excluir"
         danger
-        onConfirm={() => {
-          if (confirmBatchId) deleteBatch(confirmBatchId);
+        onConfirm={async () => {
+          const id = confirmBatchId;
           setConfirmBatchId(null);
           setConfirmBatchName('');
+          if (!id) return;
+          // Antes não esperava nem mostrava erro (e o estoque não voltava).
+          try {
+            const r = await deleteBatch(id);
+            toast.success('Produção excluída', r.estornados === 0 && !r.pulados.length
+              ? 'Não havia movimento de estoque para desfazer.'
+              : r.pulados.length
+                ? `Estoque devolvido. Ficaram como estão (contados depois): ${r.pulados.join(', ')}.`
+                : 'Estoque devolvido ao que era antes dela.');
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (msg.includes('já foi excluída')) toast.info('Produção já excluída', 'Nada mudou no estoque.');
+            else toast.error('Não foi possível excluir a produção', msg);
+          }
         }}
         onCancel={() => {
           setConfirmBatchId(null);
@@ -402,18 +419,15 @@ function ListaProducoes({
                 <button
                   key={label}
                   onClick={() => {
-                    const today = new Date();
-                    const todayStr = today.toISOString().split('T')[0];
+                    // Dia de Brasília (toISOString é UTC: depois das 21h já virava amanhã).
+                    const todayStr = todayBrasilia();
                     if (days === 0) {
                       setDateFrom(todayStr); setDateTo(todayStr);
                     } else if (days === -1) {
-                      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-                      setDateFrom(firstDay.toISOString().split('T')[0]);
+                      setDateFrom(todayStr.slice(0, 8) + '01');
                       setDateTo(todayStr);
                     } else {
-                      const from = new Date(today);
-                      from.setDate(from.getDate() - days);
-                      setDateFrom(from.toISOString().split('T')[0]);
+                      setDateFrom(somarDias(todayStr, -days));
                       setDateTo(todayStr);
                     }
                   }}

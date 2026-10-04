@@ -11,6 +11,8 @@ interface InventarioDraft {
   fatores?: Record<string, number>;
   /** Insumos que a pessoa já conferiu (digitou ou deu "próximo" no campo). */
   conferidos?: string[];
+  /** Insumos mexidos (digitados ou conferidos): só o número deles volta ao retomar; os outros nascem do teórico atual. */
+  mexidos?: string[];
   /** Insumos mexidos neste aparelho que ainda não chegaram ao banco (ex.: sem internet). */
   pendentes?: string[];
   /** Horário da contagem (datetime-local); vazio = agora. */
@@ -67,25 +69,37 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
 
   const getDraftKey = () => `erpos_inventario_draft_${tenantId}`;
 
-  // Tenta carregar rascunho do localStorage (a menos que startFresh)
-  const carregarRascunho = (): Record<string, string> | null => {
+  // Tenta carregar rascunho do localStorage (a menos que startFresh).
+  // Só volta o número dos insumos mexidos; o resto acompanha o teórico de agora (vendas no meio da contagem).
+  const carregarRascunho = (): { contagens: Record<string, string>; mexidos: string[] } | null => {
     if (!tenantId) return null;
     try {
       const raw = localStorage.getItem(getDraftKey());
       if (!raw) return null;
       const draft: InventarioDraft = JSON.parse(raw);
       if (!draft.contagens || Object.keys(draft.contagens).length === 0) return null;
+      // Rascunho sem `mexidos` (antes de 2026-10-04): mexidos = conferidos + pendentes, porque desde o ✓
+      // (02/10) todo número digitado entra em `conferidos`. Só no rascunho ainda mais antigo, sem `conferidos`,
+      // vale como mexido o número diferente do teórico atual (lá o digitado não ficava marcado).
+      const mexidos = new Set(draft.mexidos ?? [...(draft.conferidos ?? []), ...(draft.pendentes ?? [])]);
+      if (!draft.mexidos && !draft.conferidos) {
+        for (const [id, valor] of Object.entries(draft.contagens)) {
+          const ins = insumos.find((i) => i.id === id);
+          if (!ins || valor !== preenchido(ins)) mexidos.add(id);
+        }
+      }
       // Se a unidade de contagem mudou desde que o rascunho foi salvo, reconverte o número
       // (ex.: salvo em kg, agora conta em pacote) para não gravar pacote como se fosse kg.
       const convertido: Record<string, string> = {};
       for (const [id, valor] of Object.entries(draft.contagens)) {
+        if (!mexidos.has(id)) continue;
         const ins = insumos.find((i) => i.id === id);
         const fatorAntes = draft.fatores?.[id] ?? 1;
         const n = parseFloat(valor);
         if (!ins || valor === '' || isNaN(n) || fatorAntes === fatorDe(ins)) { convertido[id] = valor; continue; }
         convertido[id] = String(arred((n * fatorAntes) / fatorDe(ins), 3));
       }
-      return convertido;
+      return { contagens: convertido, mexidos: Array.from(mexidos) };
     } catch {
       return null;
     }
@@ -95,8 +109,9 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
     if (!tenantId || encerrado.current) return;
     try {
       const draft: InventarioDraft = {
-        contagens,
+        contagens: Object.fromEntries(insumos.map((i) => [i.id, valorDe(i)])),
         conferidos: Array.from(conferidos),
+        mexidos: Array.from(mexidos),
         pendentes: Array.from(pendentes.current),
         contadoEm,
         fatores: Object.fromEntries(insumos.map((i) => [i.id, fatorDe(i)])),
@@ -114,27 +129,18 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
     try { localStorage.removeItem(getDraftKey()); } catch { /* ignore */ }
   };
 
-  // Mapa: insumoId → quantidade digitada (string para permitir vazio/decimal)
+  // Mapa: insumoId → quantidade digitada (string para permitir vazio/decimal), só dos insumos mexidos.
+  // Campo que ninguém mexeu mostra o teórico do momento (valorDe) e acompanha as vendas que o Realtime traz;
+  // antes nascia com o teórico da abertura e, depois de uma venda, gravava o número velho (desfazia a baixa).
   const [contagens, setContagens] = useState<Record<string, string>>(() => {
     if (startFresh) {
       if (tenantId) { try { localStorage.removeItem(getDraftKey()); } catch { /* ignore */ } }
-      const init: Record<string, string> = {};
-      insumos.forEach((i) => { init[i.id] = preenchido(i); });
-      return init;
+      return {};
     }
-    const draft = carregarRascunho();
-    if (draft) {
-      // Garante que novos insumos (não presentes no rascunho) tenham valor padrão
-      const merged: Record<string, string> = {};
-      insumos.forEach((i) => {
-        merged[i.id] = draft[i.id] ?? preenchido(i);
-      });
-      return merged;
-    }
-    const init: Record<string, string> = {};
-    insumos.forEach((i) => { init[i.id] = preenchido(i); });
-    return init;
+    return carregarRascunho()?.contagens ?? {};
   });
+  // Insumos que a pessoa mexeu (digitou ou conferiu): só eles valem como contados.
+  const [mexidos, setMexidos] = useState<Set<string>>(() => new Set(startFresh ? [] : carregarRascunho()?.mexidos ?? []));
 
   // Rascunho que já existia ao abrir a tela (o salvamento automático não conta).
   const [temRascunhoCarregado, setTemRascunhoCarregado] = useState(() => !startFresh && carregarRascunho() !== null);
@@ -176,6 +182,12 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
           ? l.valor
           : String(arred((n * fatorAntes) / fatorDe(ins), 3));
       }
+      return novo;
+    });
+    // No banco só vai insumo mexido: todas as linhas valem como contadas.
+    setMexidos((prev) => {
+      const novo = new Set(prev);
+      validas.forEach((l) => novo.add(l.ingredient_id));
       return novo;
     });
     setConferidos((prev) => {
@@ -282,6 +294,8 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
   const depoisDe = (i: Insumo, mapa: Record<string, number> = depois) => (contadoEm ? mapa[i.id] ?? 0 : 0);
   const teoricoDe = (i: Insumo) => arred(i.estoqueAtual - depoisDe(i), 4);
   const preenchidoDe = (i: Insumo) => String(arred(teoricoDe(i) / fatorDe(i), 3));
+  /** Valor do campo: o digitado/conferido; sem ninguém mexer, o teórico de agora. */
+  const valorDe = (i: Insumo) => (mexidos.has(i.id) ? contagens[i.id] ?? '' : preenchidoDe(i));
 
   const buscarDepois = async (valor: string) => {
     if (!valor || !tenantId) { setDepois({}); return {}; }
@@ -294,23 +308,13 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
     return mapa;
   };
 
-  /** Troca o horário: campos ainda não conferidos passam a mostrar o teórico do novo horário. */
+  /** Troca o horário: campos que ninguém mexeu passam sozinhos a mostrar o teórico do novo horário (valorDe). */
   const aplicarContadoEm = async (valor: string) => {
-    const antes = Object.fromEntries(insumos.map((i) => [i.id, preenchidoDe(i)]));
     setContadoEm(valor);
     setEditado(true);
     const mapa = valor ? await buscarDepois(valor) : {};
     if (mapa === null) return;
     setDepois(mapa);
-    setContagens((prev) => {
-      const novo = { ...prev };
-      for (const i of insumos) {
-        if (conferidosRef.current.has(i.id) || prev[i.id] !== antes[i.id]) continue;
-        const teor = arred(i.estoqueAtual - (valor ? mapa[i.id] ?? 0 : 0), 4);
-        novo[i.id] = String(arred(teor / fatorDe(i), 3));
-      }
-      return novo;
-    });
   };
 
   // Rascunho com horário salvo: carrega os movimentos depois dele quando os insumos chegam.
@@ -320,8 +324,9 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [insumos.length > 0]);
 
-  /** Contado convertido para a unidade do ESTOQUE (NaN = vazio/inválido). Campo intocado = teórico exato. */
+  /** Contado convertido para a unidade do ESTOQUE (NaN = vazio/inválido). Campo intocado = teórico exato de agora. */
   const contadoEstoque = (i: Insumo): number => {
+    if (!mexidos.has(i.id)) return teoricoDe(i);
     const raw = contagens[i.id] ?? '';
     if (raw === '') return NaN;
     if (raw === preenchidoDe(i)) return teoricoDe(i);
@@ -353,11 +358,17 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
     const tBanco = setTimeout(enviarParaBanco, 800);
     return () => { clearTimeout(tLocal); clearTimeout(tBanco); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [contagens, conferidos, editado, contadoEm]);
+  }, [contagens, conferidos, mexidos, editado, contadoEm]);
 
   const marcarConferido = (id: string) => {
     setEditado(true);
     pendentes.current.add(id);
+    if (!mexidos.has(id)) {
+      // Conferido sem digitar: passa a valer o número que estava na tela.
+      const ins = insumos.find((i) => i.id === id);
+      if (ins) setContagens((prev) => (id in prev ? prev : { ...prev, [id]: preenchidoDe(ins) }));
+      setMexidos((prev) => new Set(prev).add(id));
+    }
     setConferidos((prev) => (prev.has(id) ? prev : new Set(prev).add(id)));
   };
 
@@ -400,7 +411,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
       })
       .filter((i) => !apenasComDiff || temDiferenca(i));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [insumos, categoriaFiltro, busca, apenasComDiff, contagens]);
+  }, [insumos, categoriaFiltro, busca, apenasComDiff, contagens, mexidos, depois, contadoEm]);
 
   // Contagem em sequência: insumos da mesma categoria sempre juntos (categoria em ordem
   // alfabética, "Sem categoria" por último; nome em ordem alfabética dentro dela).
@@ -429,12 +440,12 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
   const itensComDiferenca = useMemo(() => {
     return insumos.filter(temDiferenca);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [insumos, contagens]);
+  }, [insumos, contagens, mexidos, depois, contadoEm]);
 
   const valorImpacto = useMemo(() => {
     return itensComDiferenca.reduce((s, i) => s + (contadoEstoque(i) - teoricoDe(i)) * i.precoUnitario, 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [itensComDiferenca, contagens]);
+  }, [itensComDiferenca, contagens, mexidos, depois, contadoEm]);
 
   // Monta a lista final de itens para confirmar
   const itensParaConfirmar: InventarioItemContado[] = useMemo(() => {
@@ -449,12 +460,16 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
         qtdContada,
         diferenca: parseFloat((qtdContada - teoricoDe(i)).toFixed(4)),
         precoUnitario: i.precoUnitario,
+        // Ninguém mexeu (ou apagou o número): o servidor usa o teórico da hora de gravar (venda entre a tela e o Confirmar não é desfeita).
+        semMudanca: !mexidos.has(i.id) || isNaN(contado),
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [insumos, contagens]);
+  }, [insumos, contagens, mexidos, depois, contadoEm]);
 
   const [confirmando, setConfirmando] = useState(false);
+  // Ajustes desta confirmação (depois de gravar o estoque já bate e itensComDiferenca zera).
+  const [ajustesFeitos, setAjustesFeitos] = useState(0);
   const [erroConfirmar, setErroConfirmar] = useState('');
 
   const handleConfirmar = async () => {
@@ -472,6 +487,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
     limparRascunho();
     apagarDoBanco();
     setShowConfirmar(false);
+    setAjustesFeitos(itensComDiferenca.length);
     setConfirmado(true);
     setTimeout(() => onConcluido(), 2000);
   };
@@ -509,7 +525,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
           <i className="ri-check-double-line text-3xl text-emerald-500" />
         </div>
         <h3 className="text-base font-bold text-zinc-800 mb-1">Inventário Confirmado!</h3>
-        <p className="text-sm text-zinc-500">Estoque atualizado · {itensComDiferenca.length} ajuste{itensComDiferenca.length !== 1 ? 's' : ''} registrado{itensComDiferenca.length !== 1 ? 's' : ''}</p>
+        <p className="text-sm text-zinc-500">Estoque atualizado · {ajustesFeitos} ajuste{ajustesFeitos !== 1 ? 's' : ''} registrado{ajustesFeitos !== 1 ? 's' : ''}</p>
         <div className="flex items-center gap-2 mt-4 text-zinc-400 text-xs">
           <i className="ri-loader-4-line animate-spin" />
           Voltando ao histórico...
@@ -654,7 +670,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
               <span className="flex-1 h-px bg-zinc-200" />
             </li>
         {itens.map((insumo) => {
-          const rawVal = contagens[insumo.id] ?? '';
+          const rawVal = valorDe(insumo);
           const contado = contadoEstoque(insumo);
           const diff = isNaN(contado) ? 0 : parseFloat((contado - teoricoDe(insumo)).toFixed(4));
           const temDiff = temDiferenca(insumo);
@@ -760,7 +776,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                     </td>
                   </tr>
               {itens.map((insumo) => {
-                const rawVal = contagens[insumo.id] ?? '';
+                const rawVal = valorDe(insumo);
                 const contado = contadoEstoque(insumo);
                 const diff = isNaN(contado) ? 0 : parseFloat((contado - teoricoDe(insumo)).toFixed(4));
                 const temDiff = temDiferenca(insumo);
