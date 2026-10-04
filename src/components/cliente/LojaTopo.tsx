@@ -123,8 +123,13 @@ function capaDevePassarSozinha(): boolean {
   return true;
 }
 
-// Fotos empilhadas que trocam com fade. Só a 1ª baixa junto com a página; cada
-// próxima só é pedida quando chega perto da vez dela — quem sai rápido não baixa as 10.
+/** Vídeo que não termina (rede travou) não prende o carrossel para sempre */
+const VIDEO_MAX_MS = 30000;
+
+// Fotos e vídeos empilhados que trocam com fade. Só o 1º slide baixa junto com a página;
+// cada próximo só é pedido quando chega perto da vez dele — quem sai rápido não baixa tudo.
+// Vídeo: só o slide da vez tem <video> (o próximo baixa só o quadro de capa); toca mudo
+// até o fim e aí passa. Em economia de dados / reduzir movimento fica só o quadro de capa.
 function CarrosselCapa(props: { capas: CapaLoja[] }) {
   const capas = props.capas;
   const total = capas.length;
@@ -140,7 +145,7 @@ function CarrosselCapa(props: { capas: CapaLoja[] }) {
   const idx = total > 0 ? atual % total : 0;
 
   // Troca de loja/lista (Configurações salvou outra ordem): recomeça do início
-  const chave = capas.map(function (c) { return c.url; }).join('|');
+  const chave = capas.map(function (c) { return c.video || c.url; }).join('|');
   const chaveRef = useRef(chave);
   useEffect(function () {
     if (chaveRef.current === chave) return;
@@ -168,11 +173,33 @@ function CarrosselCapa(props: { capas: CapaLoja[] }) {
     return function () { document.removeEventListener('visibilitychange', aoMudar); };
   }, []);
 
+  // 1º slide sem imagem (vídeo sem quadro de capa): não há o que esperar carregar
+  const primeiroSemImagem = total > 0 && !capas[0].url;
+  useEffect(function () { if (primeiroSemImagem) setPrimeiraPronta(true); }, [primeiroSemImagem]);
+
+  // Vídeo que deu erro (404, codec que o aparelho não abre) vira foto (fica o quadro de capa).
+  // Sem isso, vários vídeos quebrados trocariam de slide sem parar, baixando de novo a cada volta.
+  const [falhos, setFalhos] = useState<string[]>([]);
+  const slideEhVideo = total > 0 && !!capas[idx].video && falhos.indexOf(capas[idx].video as string) < 0;
+  const tocaVideo = slideEhVideo && autoplay && visivel;
+
   useEffect(function () {
     if (total < 2 || !autoplay || !visivel || !primeiraPronta) return;
-    const t = setTimeout(function () { setAtual(function (a) { return (a + 1) % total; }); }, INTERVALO_CAPA_MS);
+    // Vídeo passa sozinho no fim (onEnded); o tempo aqui é só a trava de segurança
+    const espera = slideEhVideo ? VIDEO_MAX_MS : INTERVALO_CAPA_MS;
+    const t = setTimeout(function () { setAtual(function (a) { return (a + 1) % total; }); }, espera);
     return function () { clearTimeout(t); };
-  }, [idx, total, autoplay, visivel, primeiraPronta, rodada]);
+  }, [idx, total, autoplay, visivel, primeiraPronta, rodada, slideEhVideo]);
+
+  function proximoSlide() {
+    if (total < 2) return;
+    setAtual(function (a) { return (a + 1) % total; });
+  }
+
+  function videoFalhou(url: string) {
+    setFalhos(function (f) { return f.indexOf(url) >= 0 ? f : f.concat([url]); });
+    setRodada(function (r) { return r + 1; }); // o slide segue como foto, com os 5 s contando de agora
+  }
 
   function irPara(n: number) {
     const destino = ((n % total) + total) % total;
@@ -207,17 +234,34 @@ function CarrosselCapa(props: { capas: CapaLoja[] }) {
     >
       {capas.map(function (c, i) {
         if (liberadas.indexOf(i) < 0) return null;
+        const pronto = i === 0 ? function () { setPrimeiraPronta(true); } : undefined;
         return (
-          <img
-            key={c.url + i}
-            src={c.url}
-            alt=""
-            draggable={false}
-            onLoad={i === 0 ? function () { setPrimeiraPronta(true); } : undefined}
-            onError={i === 0 ? function () { setPrimeiraPronta(true); } : undefined}
-            className={'absolute inset-0 w-full h-full object-cover select-none transition-opacity duration-700 ' + (i === idx ? 'opacity-100' : 'opacity-0')}
-            style={c.posicao ? { objectPosition: c.posicao } : undefined}
-          />
+          <div
+            key={(c.video || c.url) + i}
+            data-slide={c.video ? 'video' : 'foto'}
+            className={'absolute inset-0 transition-opacity duration-700 ' + (i === idx ? 'opacity-100' : 'opacity-0')}
+          >
+            {c.url ? (
+              <img
+                src={c.url}
+                alt=""
+                draggable={false}
+                onLoad={pronto}
+                onError={pronto}
+                className="absolute inset-0 w-full h-full object-cover select-none"
+                style={c.posicao ? { objectPosition: c.posicao } : undefined}
+              />
+            ) : null}
+            {c.video && i === idx && tocaVideo ? (
+              <VideoMudo
+                src={c.video}
+                loop={total < 2}
+                onEnded={proximoSlide}
+                onError={function () { videoFalhou(c.video as string); }}
+                className="absolute inset-0 w-full h-full object-cover"
+              />
+            ) : null}
+          </div>
         );
       })}
       {/* z-10: o bloco da logo sobe 40px por cima da capa e roubaria o toque */}
@@ -226,9 +270,9 @@ function CarrosselCapa(props: { capas: CapaLoja[] }) {
           {capas.map(function (c, i) {
             return (
               <button
-                key={c.url + i}
+                key={(c.video || c.url) + i}
                 type="button"
-                aria-label={'Foto ' + (i + 1) + ' de ' + total}
+                aria-label={(c.video ? 'Vídeo ' : 'Foto ') + (i + 1) + ' de ' + total}
                 aria-current={i === idx ? 'true' : undefined}
                 onClick={function () { irPara(i); }}
                 className="w-5 h-6 flex items-center justify-center cursor-pointer"
@@ -240,6 +284,38 @@ function CarrosselCapa(props: { capas: CapaLoja[] }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * <video> mudo que toca sozinho. O React não escreve o atributo `muted` no DOM, e o
+ * Safari do iPhone só deixa tocar sem toque se o vídeo já nasce mudo — por isso o ref.
+ */
+export function VideoMudo(props: { src: string; loop?: boolean; onEnded?: () => void; onError?: () => void; className?: string; preload?: 'auto' | 'metadata' | 'none' }) {
+  const ref = useRef<HTMLVideoElement | null>(null);
+  useEffect(function () {
+    const v = ref.current;
+    if (!v) return;
+    v.muted = true;
+    v.defaultMuted = true;
+    v.setAttribute('muted', '');
+    const p = v.play();
+    if (p && typeof p.catch === 'function') p.catch(function () { /* autoplay negado: fica o quadro de capa */ });
+  }, [props.src]);
+  return (
+    <video
+      ref={ref}
+      src={props.src}
+      muted
+      autoPlay
+      playsInline
+      loop={props.loop}
+      preload={props.preload || 'auto'}
+      onEnded={props.onEnded}
+      onError={props.onError}
+      disablePictureInPicture
+      className={props.className}
+    />
   );
 }
 

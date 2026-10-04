@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Store, Camera, Save } from 'lucide-react';
 import { supabase, invokeWithAuth, uploadMenuImage } from '@/lib/supabase';
 import { COR_LOJA_PADRAO } from '@/lib/corLoja';
 import EditorPosicaoCapa from './EditorPosicaoCapa';
-import { lerCapasLoja, MAX_CAPAS, type CapaLoja } from '@/lib/capasLoja';
+import { lerFotosLoja, lerVideosLoja, MAX_CAPAS, MAX_VIDEOS, VIDEO_MAX_BYTES, VIDEO_MAX_SEGUNDOS, type CapaLoja, type VideoLoja } from '@/lib/capasLoja';
+import { enviarVideoLoja } from '@/lib/videoLoja';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { avisar } from '@/components/base/Dialogos';
@@ -88,14 +89,19 @@ export default function LojaTab() {
   const [salvo, setSalvo] = useState(false);
   const [erro, setErro] = useState('');
 
+  // Loja aberta agora: envio que termina depois de trocar de loja é descartado
+  const lojaAtualRef = useRef(user?.tenantId);
+  lojaAtualRef.current = user?.tenantId;
+
   useEffect(() => {
     // Troca de loja: não deixa a capa da loja anterior na tela (um Salvar a gravaria nesta)
     setCapas([]);
     setCapaSel(0);
+    setVideos([]);
     if (!user?.tenantId) { setLoading(false); return; }
     supabase
       .from('tenants')
-      .select('name, cnpj, address, phone, email, city, state, zip_code, logo_url, cover_url, brand_color, cover_position, cover_images')
+      .select('name, cnpj, address, phone, email, city, state, zip_code, logo_url, cover_url, brand_color, cover_position, cover_images, cover_videos')
       .eq('id', user.tenantId)
       .maybeSingle()
       .then(({ data }) => {
@@ -112,7 +118,8 @@ export default function LojaTab() {
             logoUrl: data.logo_url ?? '',
             corLoja: (data as { brand_color?: string | null }).brand_color ?? '',
           });
-          setCapas(lerCapasLoja(data as { cover_images?: unknown; cover_url?: string | null; cover_position?: string | null }));
+          setCapas(lerFotosLoja(data as { cover_images?: unknown; cover_url?: string | null; cover_position?: string | null }));
+          setVideos(lerVideosLoja(data as { cover_videos?: unknown }));
         }
         setLoading(false);
       });
@@ -133,14 +140,16 @@ export default function LojaTab() {
     const grandes = files.filter((f) => f.size > 8 * 1024 * 1024);
     const validos = files.filter((f) => f.size <= 8 * 1024 * 1024).slice(0, vagas);
     setEnviandoCapa(true);
+    const loja = user.tenantId;
     const novas: CapaLoja[] = [];
     let falhas = 0;
     for (const file of validos) {
-      const { url, error } = await uploadMenuImage(file, user.tenantId, 'capa-loja');
+      const { url, error } = await uploadMenuImage(file, loja, 'capa-loja');
       if (error || !url) { falhas++; continue; }
       novas.push({ url, posicao: '' });
     }
     setEnviandoCapa(false);
+    if (lojaAtualRef.current !== loja) return;
     if (novas.length > 0) {
       // Abre no editor a 1ª foto recém-enviada (mover/remover ficam travados durante o envio)
       setCapaSel(Math.min(capas.length, MAX_CAPAS - 1));
@@ -168,10 +177,38 @@ export default function LojaTab() {
     setCapas((atual) => atual.filter((_, j) => j !== i));
     setCapaSel((sel) => Math.max(0, sel > i ? sel - 1 : Math.min(sel, capas.length - 2)));
   };
+
+  // Vídeos (até 3): tocam no topo do delivery/QR e em loop na tela de espera do totem
+  const [videos, setVideos] = useState<VideoLoja[]>([]);
+  const [enviandoVideo, setEnviandoVideo] = useState(false);
+  const enviando = enviandoCapa || enviandoVideo;
+
+  const enviarVideo = async (file: File | undefined) => {
+    if (!file || !user?.tenantId) return;
+    if (videos.length >= MAX_VIDEOS) { void avisar('Já são ' + MAX_VIDEOS + ' vídeos. Remova um para enviar outro.'); return; }
+    setEnviandoVideo(true);
+    const loja = user.tenantId;
+    const { video, erro } = await enviarVideoLoja(file, loja);
+    setEnviandoVideo(false);
+    if (lojaAtualRef.current !== loja) return;
+    if (erro || !video) { void avisar(erro || 'Não foi possível enviar o vídeo.'); return; }
+    setVideos((atual) => [...atual, video].slice(0, MAX_VIDEOS));
+  };
+
+  const moverVideo = (de: number, para: number) => {
+    if (para < 0 || para >= videos.length) return;
+    setVideos((atual) => {
+      const lista = [...atual];
+      const [item] = lista.splice(de, 1);
+      lista.splice(para, 0, item);
+      return lista;
+    });
+  };
+
   const corValida = /^#[0-9A-Fa-f]{6}$/.test(form.corLoja);
 
   const handleSalvar = async () => {
-    if (!user?.tenantId || enviandoCapa) return;
+    if (!user?.tenantId || enviando) return;
     setSaving(true);
     setErro('');
 
@@ -198,6 +235,7 @@ export default function LojaTab() {
         zip_code: form.cep,
         // A 1ª foto vira cover_url/cover_position no config-write
         cover_images: capas.map((c) => ({ url: c.url, position: c.posicao })),
+        cover_videos: videos,
         brand_color: /^#[0-9A-Fa-f]{6}$/.test(form.corLoja) ? form.corLoja : '',
       },
     });
@@ -441,6 +479,57 @@ export default function LojaTab() {
               <p className="text-[10px] text-zinc-400 mt-1.5">Usada nos botões, no "+" dos itens e nos destaques.</p>
             )}
           </div>
+
+          {/* Vídeos */}
+          <div className="sm:col-span-2 border-t border-zinc-100 pt-4">
+            <div className="flex items-baseline justify-between mb-2">
+              <p className="text-xs font-semibold text-zinc-600">Vídeos da loja</p>
+              <p className="text-[10px] text-zinc-400">{videos.length} de {MAX_VIDEOS}</p>
+            </div>
+            {videos.length > 0 ? (
+              <div className="flex flex-wrap gap-3 mb-2">
+                {videos.map((v, i) => (
+                  <div key={v.url} className="w-40">
+                    <div className="relative h-24 rounded-lg overflow-hidden bg-zinc-800">
+                      <video src={v.url} poster={v.poster || undefined} muted playsInline preload="metadata" controls className="w-full h-full object-cover" />
+                      <span className="absolute top-1 left-1 min-w-[16px] h-4 px-1 rounded bg-black/60 text-white text-[10px] font-bold leading-4 text-center pointer-events-none">{i + 1}</span>
+                    </div>
+                    <div className="flex items-center gap-1 mt-1">
+                      <button type="button" onClick={() => moverVideo(i, i - 1)} disabled={i === 0 || enviando} aria-label={'Mover vídeo ' + (i + 1) + ' para antes'} className="w-7 h-7 flex items-center justify-center rounded-md bg-zinc-100 text-zinc-600 hover:bg-zinc-200 cursor-pointer disabled:opacity-40 disabled:cursor-default">
+                        <i className="ri-arrow-left-s-line" />
+                      </button>
+                      <button type="button" onClick={() => moverVideo(i, i + 1)} disabled={i === videos.length - 1 || enviando} aria-label={'Mover vídeo ' + (i + 1) + ' para depois'} className="w-7 h-7 flex items-center justify-center rounded-md bg-zinc-100 text-zinc-600 hover:bg-zinc-200 cursor-pointer disabled:opacity-40 disabled:cursor-default">
+                        <i className="ri-arrow-right-s-line" />
+                      </button>
+                      <button type="button" onClick={() => setVideos((atual) => atual.filter((_, j) => j !== i))} disabled={enviando} className="ml-auto px-1.5 py-1 text-xs text-red-500 hover:text-red-700 cursor-pointer disabled:opacity-40 disabled:cursor-default">
+                        Remover
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {videos.length < MAX_VIDEOS ? (
+              <label className={'inline-flex items-center gap-2 px-3 py-2 bg-zinc-100 text-zinc-700 text-xs font-semibold rounded-lg hover:bg-zinc-200 transition-colors whitespace-nowrap ' + (enviando ? 'opacity-60 pointer-events-none' : 'cursor-pointer')}>
+                {enviandoVideo ? <i className="ri-loader-4-line animate-spin" /> : <i className="ri-video-add-line" />}
+                {enviandoVideo ? 'Enviando vídeo…' : 'Enviar vídeo'}
+                <input
+                  type="file"
+                  accept="video/mp4,video/webm,video/quicktime"
+                  className="hidden"
+                  disabled={enviando}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = '';
+                    void enviarVideo(file);
+                  }}
+                />
+              </label>
+            ) : null}
+            <p className="text-[10px] text-zinc-400 mt-1">
+              Até {MAX_VIDEOS} vídeos curtos (até {VIDEO_MAX_SEGUNDOS} s e {VIDEO_MAX_BYTES / 1024 / 1024} MB cada, MP4). Tocam sem som no topo do delivery e do QR, antes das fotos, e em sequência na tela de espera do totem. Quem está em economia de dados vê só a foto do vídeo.
+            </p>
+          </div>
         </div>
       </div>
 
@@ -509,7 +598,7 @@ export default function LojaTab() {
       <div className="flex justify-end">
         <button
           onClick={handleSalvar}
-          disabled={saving || enviandoCapa}
+          disabled={saving || enviando}
           className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 text-white text-sm font-bold rounded-lg hover:bg-amber-600 disabled:opacity-60 cursor-pointer transition-colors whitespace-nowrap"
         >
           <div className="w-4 h-4 flex items-center justify-center"><Save size={14} /></div>

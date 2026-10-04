@@ -4363,4 +4363,17 @@ Causa: `AprovacoesContext` (e o `NotificacoesContext`) eram só memória do apar
 - **Tela do cliente:** `CarrosselCapa` em `src/components/cliente/LojaTopo.tsx`. Só a 1ª foto baixa com a página; cada próxima entra no DOM quando chega a vez dela (quem sai rápido não baixa as 10). Troca a cada 5 s com fade; para em `prefers-reduced-motion`, `saveData` e aba oculta; arrasto horizontal (> 40 px e 1,5× o vertical; `touch-action: pan-y`) e bolinhas.
 - **Pegadinha:** o bloco da logo sobe 40 px por cima da capa (`-mt-10`) e rouba o toque de tudo que fica embaixo dela. As bolinhas precisam de `z-10`.
 - **Configurações › Loja:** envio de várias de uma vez (8 MB cada, comprimidas pelo `uploadMenuImage`), miniaturas numeradas, mover ←/→, remover, editor de posição por foto. Salvar, mover e remover ficam travados enquanto o envio corre, porque um Salvar no meio perderia as fotos novas.
-- **Armazenamento (medido em 2026-10-04):** plano Pro (100 GB incluídos); o Storage inteiro usa ~37 MB. O limite do bucket `menu-images` é 5 MB por arquivo e ele só aceita imagem. Vídeo exigiria um bucket próprio ou ampliar esse.
+- **Armazenamento (medido em 2026-10-04):** plano Pro (100 GB incluídos); o Storage inteiro usa ~37 MB. O bucket `menu-images` aceita só imagem, até 5 MB por arquivo. Os vídeos ficam no bucket próprio `loja-videos` (veja abaixo).
+
+### Vídeos da loja: topo do delivery/QR e tela de espera do totem (2026-10-04)
+- **Dado:** `tenants.cover_videos` jsonb `[{url, poster}]` (check: ≤ 3; grant anon). Bucket público `loja-videos` (10 MB; mp4/webm/quicktime), arquivos em `<tenant_id>/video-*.ext`.
+- **Envio** (`src/lib/videoLoja.ts`): o navegador confere tamanho, duração (≤ 20 s) e HEVC. O `config-write` `cover_video_upload_url` (admin/gerente) devolve uma URL assinada, e o vídeo vai direto ao Storage com PUT (10 MB pela Edge seria lento). O quadro de capa sai de um canvas e vai para o `menu-images` via `uploadMenuImage`. O `update_tenant` só aceita URL `loja-videos/<loja>/<nome>.(mp4|webm|mov)` e poster `menu-images/<loja>/<nome>`.
+- **Pegadinhas:**
+  - **HEVC:** a câmera do iPhone grava em HEVC, que fica preto em muito Android e no Chrome. O envio barra pela caixa `hvc1`/`hev1`, conferindo também o tamanho da caixa para não dar falso positivo.
+  - **`muted`:** o React não escreve o atributo `muted`, e o iOS só faz autoplay se o vídeo já nasce mudo. Por isso `VideoMudo` põe o atributo pelo ref.
+  - **Safari em pouca energia:** não dispara `loadeddata` sem toque; o envio espera só `loadedmetadata`.
+  - **Vídeo com erro:** sai da roda. No carrossel vira foto, só com o quadro de capa; no totem é pulado e, se todos falharem, entram as fotos. Sem isso, vários vídeos quebrados trocavam de slide sem parar e baixavam de novo a cada volta.
+  - **Cache:** o PUT manda `cache-control: max-age=31536000`, e o nome único garante URL nova a cada envio.
+- **Delivery/QR:** os vídeos vêm antes das fotos. Só o slide da vez tem `<video>`; ele passa no fim do vídeo, com trava de 30 s. Em economia de dados ou "reduzir movimento" fica só o quadro de capa.
+- **Totem** (`FundoMidiaKiosk`): os vídeos tocam em sequência (o próximo pré-carrega escondido), com um gradiente escuro por cima. Sem vídeo, passam as fotos de capa. Tocar em qualquer lugar da tela de espera inicia o pedido; os botões de dentro usam `stopPropagation`.
+- **Pendente:** remover um vídeo na tela não apaga o arquivo do bucket. É pouco espaço e fica para uma limpeza futura.

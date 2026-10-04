@@ -653,6 +653,32 @@ Deno.serve(async (req) => {
         updateData.cover_url = capas[0]?.url || null
         updateData.cover_position = capas[0]?.position || null
       }
+      // Vídeos da loja (até 3): só arquivos do bucket loja-videos desta loja
+      if (rest.cover_videos !== undefined) {
+        const lista = Array.isArray(rest.cover_videos) ? rest.cover_videos : null
+        if (!lista || lista.length > 3) {
+          return new Response(JSON.stringify({ success: false, error: 'Envie no máximo 3 vídeos' }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
+          })
+        }
+        const prefixo = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/loja-videos/${tenantIdFromBody}/`
+        const videos: { url: string; poster: string }[] = []
+        for (const item of lista) {
+          const url = String((item as Record<string, unknown>)?.url ?? '').trim()
+          const poster = String((item as Record<string, unknown>)?.poster ?? '').trim()
+          // Só arquivo direto na pasta da loja (sem ../ nem ?); quadro de capa só do menu-images da loja
+          const nomeArquivo = url.startsWith(prefixo) ? url.slice(prefixo.length) : ''
+          const prefixoPoster = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/menu-images/${tenantIdFromBody}/`
+          const posterOk = !poster || (poster.startsWith(prefixoPoster) && /^[A-Za-z0-9._-]+$/.test(poster.slice(prefixoPoster.length)))
+          if (!/^[A-Za-z0-9_-]+\.(mp4|webm|mov)$/.test(nomeArquivo) || !posterOk) {
+            return new Response(JSON.stringify({ success: false, error: 'Vídeo inválido' }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
+            })
+          }
+          videos.push({ url, poster })
+        }
+        updateData.cover_videos = videos
+      }
 
       if (Object.keys(updateData).length === 0) {
         return new Response(JSON.stringify({ success: false, error: 'Nenhum campo para atualizar' }), {
@@ -672,6 +698,30 @@ Deno.serve(async (req) => {
         })
       }
       return new Response(JSON.stringify({ success: true }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
+      })
+    }
+
+    // Upload de vídeo da loja: devolve URL assinada (vale 2 h) para o navegador mandar o
+    // arquivo direto ao Storage — 10 MB passando pela Edge seria lento e caro.
+    if (action === 'cover_video_upload_url') {
+      const tenantIdFromBody = tenant_id || active_tenant_id
+      const ext = String(rest.ext ?? '').toLowerCase()
+      if (!tenantIdFromBody || !['mp4', 'webm', 'mov'].includes(ext)) {
+        return new Response(JSON.stringify({ success: false, error: 'Use vídeo MP4, WebM ou MOV' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
+        })
+      }
+      const caminho = `${tenantIdFromBody}/video-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${ext}`
+      const { data, error } = await supabaseAdmin.storage.from('loja-videos').createSignedUploadUrl(caminho)
+      if (error || !data) {
+        console.error('[config-write] cover_video_upload_url error:', error)
+        return new Response(JSON.stringify({ success: false, error: error?.message || 'Falha ao preparar o envio' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500,
+        })
+      }
+      const { data: pub } = supabaseAdmin.storage.from('loja-videos').getPublicUrl(caminho)
+      return new Response(JSON.stringify({ success: true, signed_url: data.signedUrl, public_url: pub.publicUrl }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200,
       })
     }

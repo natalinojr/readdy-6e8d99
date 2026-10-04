@@ -6,6 +6,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { formasAceitasKiosk, type KioskPaymentMethodLite } from '@/lib/kioskFormasAceitas';
+import FundoMidiaKiosk from './FundoMidiaKiosk';
 
 interface WelcomeScreenProps {
   onIniciar: (nome: string) => void;
@@ -113,13 +114,19 @@ export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
     enter();
   };
 
+  // Vídeos/fotos da loja no fundo (Configurações › Loja); sem eles, o fundo decorativo
+  const [temMidia, setTemMidia] = useState(false);
+
   return (
-    <div className="fixed inset-0 bg-zinc-950 flex flex-col items-center justify-between p-10 [@media(max-height:820px)]:p-6 overflow-hidden">
-      {/* Fundo decorativo */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute -top-40 -right-40 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl" />
-        <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-amber-500/8 rounded-full blur-3xl" />
-      </div>
+    // Tocar em qualquer lugar começa o pedido — com vídeo passando, ninguém procura o botão
+    <div onClick={handleIniciar} className="fixed inset-0 bg-zinc-950 flex flex-col items-center justify-between p-10 [@media(max-height:820px)]:p-6 overflow-hidden cursor-pointer">
+      <FundoMidiaKiosk tenantId={tenantId} onTemMidia={setTemMidia} />
+      {!temMidia ? (
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          <div className="absolute -top-40 -right-40 w-96 h-96 bg-amber-500/10 rounded-full blur-3xl" />
+          <div className="absolute -bottom-40 -left-40 w-96 h-96 bg-amber-500/8 rounded-full blur-3xl" />
+        </div>
+      ) : null}
 
       {/* Logo + Nome da loja */}
       <div className="flex flex-col items-center gap-3 [@media(max-height:820px)]:gap-2 mt-8 [@media(max-height:820px)]:mt-2 relative z-10">
@@ -146,7 +153,7 @@ export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
 
         {/* Botão principal */}
         <button
-          onClick={handleIniciar}
+          onClick={(e) => { e.stopPropagation(); handleIniciar(); }}
           className="group flex items-center gap-4 bg-amber-500 hover:bg-amber-400 text-zinc-950 px-16 py-8 [@media(max-height:820px)]:px-12 [@media(max-height:820px)]:py-5 rounded-3xl transition-all active:scale-95 cursor-pointer"
         >
           <span className="text-4xl [@media(max-height:820px)]:text-3xl font-black">{t('cliente.toqueComecar')}</span>
@@ -158,7 +165,7 @@ export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
 
       {/* Footer */}
       <div className="flex flex-col items-center gap-2 [@media(max-height:820px)]:gap-1 mt-4 relative z-10 px-20">
-        <p className="min-h-[1.75rem] text-center text-zinc-600 text-lg [@media(max-height:820px)]:text-base font-medium">
+        <p className={'min-h-[1.75rem] text-center ' + (temMidia ? 'text-white/75' : 'text-zinc-600') + ' text-lg [@media(max-height:820px)]:text-base font-medium'}>
           {formasAceitas.length > 0 && <>{t('cliente.aceito')}: {formasAceitas.map(traduzForma).join(' • ')}</>}
         </p>
         <p className="text-zinc-700 text-base [@media(max-height:820px)]:text-sm">ERPOS</p>
@@ -166,7 +173,7 @@ export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
 
       {/* Botão Fullscreen — canto inferior direito */}
       <button
-        onClick={toggle}
+        onClick={(e) => { e.stopPropagation(); void toggle(); }}
         title={isFullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
         className="absolute bottom-5 right-5 z-20 w-14 h-14 flex items-center justify-center bg-zinc-800/60 hover:bg-zinc-700/80 text-zinc-500 hover:text-zinc-300 rounded-xl transition-all cursor-pointer"
       >
