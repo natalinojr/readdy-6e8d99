@@ -8,6 +8,8 @@
  *  - O que falta: a caixa de Pendências (usePendencias), só os tipos de dinheiro, cada um com a rota dele.
  * Ao abrir (2026-10-01): busca o saldo do Inter na hora (inter-bank › sync, a mesma busca da Conciliação,
  * pulada se outra busca rodou há menos de 2 min); o botão Atualizar força a busca e recarrega os quatro cartões.
+ * Mercado Pago (2026-10-04): busca as vendas no MP junto (mp-conciliation › sync); o saldo do MP vem do
+ * Relatório de Liberações + vendas liberadas depois (fn_mp_refresh_balance → synced_balance).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -64,9 +66,15 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
   const buscarSaldo = useCallback(async (forcar: boolean) => {
     if (!user?.tenantId) return;
     setBuscandoSaldo(true); setErroSaldo(false);
-    const r = await invokeWithAuth<{ success?: boolean; error?: string }>('inter-bank', {
-      body: { action: 'sync', tenant_id: user.tenantId, ...(forcar ? {} : { max_age_min: 2 }) },
-    });
+    const maxAge = forcar ? {} : { max_age_min: 2 };
+    const [r] = await Promise.all([
+      invokeWithAuth<{ success?: boolean; error?: string }>('inter-bank', {
+        body: { action: 'sync', tenant_id: user.tenantId, ...maxAge },
+      }),
+      // Mercado Pago: traz as vendas liberadas desde o último relatório; o saldo se recalcula no banco
+      // (fn_mp_refresh_balance). Loja sem MP volta not_configured; falha aqui não bloqueia o Inter.
+      invokeWithAuth('mp-conciliation', { body: { action: 'sync', tenant_id: user.tenantId, ...maxAge } }),
+    ]);
     const err = r.data?.error ?? r.error?.message;
     // Loja sem Inter integrado não é erro: só não há saldo do banco para buscar.
     if (err && !/não configurad|desativad|Configure a conta/i.test(err)) setErroSaldo(true);
@@ -149,7 +157,7 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
           {carregandoContas ? <Carregando /> : (<>
             <p className="text-2xl font-bold tabular-nums text-zinc-900">{brl(noBanco)}</p>
             {contas.map((a) => (
-              <Linha key={a.id} rotulo={`${a.name}${a.synced_balance != null ? ' (pelo banco)' : ''}`} valor={brl(saldoDe(a))} cor={saldoDe(a) < 0 ? 'text-red-600' : undefined} />
+              <Linha key={a.id} rotulo={`${a.name}${a.synced_balance != null && a.synced_provider !== 'mercadopago' ? ' (pelo banco)' : ''}`} valor={brl(saldoDe(a))} cor={saldoDe(a) < 0 ? 'text-red-600' : undefined} />
             ))}
             {contas.length === 0 && <p className="text-xs text-zinc-400">Nenhuma conta bancária cadastrada.</p>}
             {(() => {
