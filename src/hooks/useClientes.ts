@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -22,6 +22,8 @@ export interface ClienteCRM {
   notes: string | null;
   manualTags: string[];
   aceitaMarketing: boolean;
+  /** Quando pediu para não receber mensagens (opt-out do CRM, customers.crm_opt_out_at). */
+  optOut?: string | null;
   ultimoContato: string | null;
   primeiraVisita: string;
   ultimaVisita: string;
@@ -72,15 +74,21 @@ export function useClientes() {
   const [clientes, setClientes] = useState<ClienteCRM[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Só a resposta da última consulta vale: ao trocar de loja com uma consulta ainda
+  // no ar, a lista da loja anterior não pode aparecer na nova.
+  const seq = useRef(0);
 
-  const carregar = useCallback(async () => {
+  // `silencioso`: recarrega sem trocar a lista pelo spinner (depois de editar um cliente).
+  const carregar = useCallback(async (silencioso?: boolean) => {
     if (!user?.tenantId) return;
-    setLoading(true);
+    const minha = ++seq.current;
+    if (!silencioso) setLoading(true);
     setError(null);
     try {
       const { data, error: rpcError } = await supabase.rpc('fn_get_customers_list', {
         p_tenant_id: user.tenantId,
       });
+      if (minha !== seq.current) return;
       if (rpcError) throw rpcError;
 
       const lista: ClienteCRM[] = ((data as Record<string, unknown>[]) ?? []).map((c) => {
@@ -95,6 +103,7 @@ export function useClientes() {
           notes: (c.notes as string) ?? null,
           manualTags: (c.manualTags as string[]) ?? [],
           aceitaMarketing: !!c.aceitaMarketing,
+          optOut: (c.optOut as string) ?? null,
           ultimoContato: (c.ultimoContato as string) ?? null,
           primeiraVisita: c.primeiraVisita as string,
           ultimaVisita: c.ultimaVisita as string,
@@ -112,14 +121,16 @@ export function useClientes() {
 
       setClientes(lista);
     } catch (e) {
-      setError('Erro ao carregar clientes');
+      if (minha !== seq.current) return;
+      setError('Não consegui carregar os clientes. Confira a internet e tente de novo.');
       console.error(e);
     } finally {
-      setLoading(false);
+      if (minha === seq.current) setLoading(false);
     }
   }, [user?.tenantId]);
 
   useEffect(() => {
+    setClientes([]);
     carregar();
   }, [carregar]);
 
@@ -131,8 +142,8 @@ export function useClientes() {
     });
     if (invErr) throw new Error(typeof invErr === 'string' ? invErr : JSON.stringify(invErr));
     const resp = data as { error?: string };
-    if (resp?.error) throw new Error(resp.error);
-    await carregar();
+    if (resp?.error) throw new Error(mensagemDeErroCliente(resp.error));
+    await carregar(true);
   }, [user?.tenantId, carregar]);
 
   // Marca clientes como contatados agora (anti-spam). Não recarrega a lista.
@@ -150,21 +161,36 @@ export function useClientes() {
   return { clientes, loading, error, recarregar: carregar, atualizarCliente, registrarContato };
 }
 
+/** Erro do customer-write em português (o 23505 do banco = celular/CPF já usado por outro cliente). */
+function mensagemDeErroCliente(erro: string): string {
+  if (/23505|duplicate key|unique/i.test(erro)) {
+    if (/cpf/i.test(erro)) return 'Já existe outro cliente com este CPF nesta loja.';
+    return 'Já existe outro cliente com este celular nesta loja.';
+  }
+  return erro;
+}
+
 export function useClientePedidos(clienteId: string | null) {
   const { user } = useAuth();
   const [pedidos, setPedidos] = useState<PedidoCliente[]>([]);
   const [loading, setLoading] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [tentativa, setTentativa] = useState(0);
 
   useEffect(() => {
     if (!clienteId || !user?.tenantId) return;
+    let vivo = true;
     setLoading(true);
+    setErro(null);
 
     supabase
       .rpc('fn_get_customer_orders', {
         p_tenant_id: user.tenantId,
         p_customer_id: clienteId,
       })
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (!vivo) return;
+        if (error) { setErro('Não consegui carregar os pedidos deste cliente.'); setPedidos([]); return; }
         const lista: PedidoCliente[] = ((data as Record<string, unknown>[]) ?? []).map((p) => ({
           id: p.id as string,
           data: p.data as string,
@@ -175,8 +201,9 @@ export function useClientePedidos(clienteId: string | null) {
         }));
         setPedidos(lista);
       })
-      .finally(() => setLoading(false));
-  }, [clienteId, user?.tenantId]);
+      .then(() => { if (vivo) setLoading(false); }, () => { if (vivo) { setErro('Não consegui carregar os pedidos deste cliente.'); setLoading(false); } });
+    return () => { vivo = false; };
+  }, [clienteId, user?.tenantId, tentativa]);
 
-  return { pedidos, loading };
+  return { pedidos, loading, erro, tentarDeNovo: () => setTentativa((t) => t + 1) };
 }

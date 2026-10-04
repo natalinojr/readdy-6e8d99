@@ -118,7 +118,7 @@ export function configPadrao(): FidelidadeConfig {
     recompensas: [
       { id: 'rw_refri', nome: 'Refrigerante lata', tipo: 'produto', valor: 0, produto_id: null, custo_pontos: 120, custo_loja: 3, nivel_minimo: null, ativo: true },
       { id: 'rw_10reais', nome: 'R$ 10 de desconto', tipo: 'desconto_valor', valor: 10, produto_id: null, custo_pontos: 200, custo_loja: 10, nivel_minimo: null, ativo: true },
-      { id: 'rw_frete', nome: 'Entrega grátis', tipo: 'frete_gratis', valor: 0, produto_id: null, custo_pontos: 150, custo_loja: 7, nivel_minimo: null, ativo: true },
+      // "Entrega grátis" (frete_gratis) fica fora do padrão: nenhuma tela aplica esse desconto ainda.
     ],
     trilha: {
       ativo: true,
@@ -138,11 +138,10 @@ export function configPadrao(): FidelidadeConfig {
       aniversario: true,
       giro_validade_dias: 30,
       premios: [
-        { id: 'pz_nada', nome: 'Não foi dessa vez', tipo: 'nada', valor: 0, recompensa_id: null, peso: 40, custo_loja: 0, limite_dia: 0, cor: '#94a3b8' },
+        { id: 'pz_nada', nome: 'Não foi dessa vez', tipo: 'nada', valor: 0, recompensa_id: null, peso: 42, custo_loja: 0, limite_dia: 0, cor: '#94a3b8' },
         { id: 'pz_20pts', nome: '+20 pontos', tipo: 'pontos', valor: 20, recompensa_id: null, peso: 30, custo_loja: 0, limite_dia: 0, cor: '#f59e0b' },
         { id: 'pz_refri', nome: 'Refri grátis', tipo: 'recompensa', valor: 0, recompensa_id: 'rw_refri', peso: 18, custo_loja: 3, limite_dia: 0, cor: '#10b981' },
         { id: 'pz_10off', nome: '10% na próxima', tipo: 'desconto_percentual', valor: 10, recompensa_id: null, peso: 10, custo_loja: 5, limite_dia: 0, cor: '#3b82f6' },
-        { id: 'pz_frete', nome: 'Entrega grátis', tipo: 'recompensa', valor: 0, recompensa_id: 'rw_frete', peso: 2, custo_loja: 7, limite_dia: 5, cor: '#ec4899' },
       ],
     },
   };
@@ -295,30 +294,57 @@ export function chancesRoleta(premios: { id: string; peso: number; custo_loja?: 
   return { chances, custoGiro, soma };
 }
 
-/** Avisos de configuração que não impedem salvar, mas quase sempre são engano. */
-export function avisosConfig(cfg: FidelidadeConfig): string[] {
-  const av: string[] = [];
+/** Parte da tela (aba Fidelidade) a que o aviso se refere. */
+export type SecaoAviso = 'recompensas' | 'trilha' | 'roleta';
+export interface AvisoConfig { secao: SecaoAviso; texto: string }
+
+/** Avisos de configuração que não impedem salvar (rascunho), mas quase sempre são
+ *  engano — e por isso impedem LIGAR o programa. Cada um diz a que seção pertence. */
+export function avisosConfigPorSecao(cfg: FidelidadeConfig): AvisoConfig[] {
+  const av: AvisoConfig[] = [];
+  const add = (secao: SecaoAviso, texto: string) => { av.push({ secao, texto }); };
   const ids = new Set(cfg.recompensas.map((r) => r.id));
   const niveisIds = new Set(cfg.trilha.niveis.map((n) => n.id));
-  if (cfg.pontos.ativo && !cfg.recompensas.some((r) => r.ativo)) av.push('Pontos ligados sem nenhuma recompensa ativa: o cliente acumula e não tem no que trocar.');
+  if (cfg.pontos.ativo && !cfg.recompensas.some((r) => r.ativo)) add('recompensas', 'Pontos ligados sem nenhuma recompensa ativa: o cliente acumula e não tem no que trocar.');
   for (const r of cfg.recompensas) {
-    if (r.nivel_minimo && !niveisIds.has(r.nivel_minimo)) av.push(`"${r.nome}" pede um nível que não existe mais.`);
-    if (r.tipo === 'produto' && !r.produto_id) av.push(`"${r.nome}" é produto mas não está ligada a um item do cardápio.`);
+    if (r.nivel_minimo && !niveisIds.has(r.nivel_minimo)) add('recompensas', `"${r.nome}" pede um nível que não existe mais.`);
+    if (r.tipo === 'produto' && !r.produto_id) add('recompensas', `"${r.nome}" é produto mas não está ligada a um item do cardápio.`);
+    if (r.tipo === 'frete_gratis') add('recompensas', `A recompensa "${r.nome}" é do tipo Entrega grátis, que o delivery ainda não aplica — troque o tipo ou exclua.`);
+    if (r.tipo === 'desconto_percentual' && r.valor > 100) add('recompensas', `"${r.nome}" dá mais de 100% de desconto.`);
   }
   const mins = cfg.trilha.niveis.map((n) => n.min_compras);
-  if (new Set(mins).size !== mins.length) av.push('Dois níveis da trilha pedem o mesmo número de compras.');
+  if (new Set(mins).size !== mins.length) add('trilha', 'Dois níveis da trilha pedem o mesmo número de compras.');
   for (const n of cfg.trilha.niveis) {
-    if (n.presente_tipo === 'recompensa' && (!n.presente_recompensa_id || !ids.has(n.presente_recompensa_id))) av.push(`O presente do nível ${n.nome} aponta para uma recompensa que não existe.`);
+    if (n.presente_tipo === 'recompensa' && (!n.presente_recompensa_id || !ids.has(n.presente_recompensa_id))) add('trilha', `O presente do nível ${n.nome} aponta para uma recompensa que não existe.`);
   }
   if (cfg.roleta.ativo) {
-    if (cfg.roleta.premios.length < 2) av.push('A roleta precisa de pelo menos 2 prêmios.');
-    if (!cfg.roleta.a_cada_compras && !cfg.roleta.pedido_acima_de && !cfg.roleta.ao_subir_nivel && !cfg.roleta.aniversario) av.push('Roleta ligada, mas nenhuma regra dá giro ao cliente.');
-    if (!cfg.roleta.premios.some((p) => p.tipo === 'nada')) av.push('Sem "Não foi dessa vez", todo giro custa alguma coisa — confira o custo por giro.');
+    if (cfg.roleta.premios.length < 2) add('roleta', 'A roleta precisa de pelo menos 2 prêmios.');
+    if (cfg.roleta.premios.length > 0 && chancesRoleta(cfg.roleta.premios).soma <= 0) add('roleta', 'Roleta ligada com todos os pesos zero: nenhum prêmio pode sair.');
+    if (!cfg.roleta.a_cada_compras && !cfg.roleta.pedido_acima_de && !cfg.roleta.ao_subir_nivel && !cfg.roleta.aniversario) add('roleta', 'Roleta ligada, mas nenhuma regra dá giro ao cliente.');
+    if (!cfg.roleta.premios.some((p) => p.tipo === 'nada')) add('roleta', 'Sem "Não foi dessa vez", todo giro custa alguma coisa — confira o custo por giro.');
     for (const p of cfg.roleta.premios) {
-      if (p.tipo === 'recompensa' && (!p.recompensa_id || !ids.has(p.recompensa_id))) av.push(`Prêmio "${p.nome}" aponta para uma recompensa que não existe.`);
+      if (p.tipo === 'recompensa' && (!p.recompensa_id || !ids.has(p.recompensa_id))) add('roleta', `Prêmio "${p.nome}" aponta para uma recompensa que não existe.`);
+      if (p.tipo === 'desconto_percentual' && p.valor > 100) add('roleta', `Prêmio "${p.nome}" dá mais de 100% de desconto.`);
     }
   }
   return av;
+}
+
+/** Só os textos dos avisos (ver avisosConfigPorSecao). */
+export function avisosConfig(cfg: FidelidadeConfig): string[] {
+  return avisosConfigPorSecao(cfg).map((a) => a.texto);
+}
+
+/** Onde a recompensa `id` está em uso (presente de nível ou prêmio da roleta), ex.:
+ *  ["Nível Ouro", "Roleta (Refri grátis)"]. Vazio = pode excluir sem deixar ponta solta. */
+export function usosDaRecompensa(cfg: FidelidadeConfig, id: string): string[] {
+  const usos: string[] = [];
+  for (const n of cfg.trilha.niveis) {
+    if (n.presente_tipo === 'recompensa' && n.presente_recompensa_id === id) usos.push(`Nível ${n.nome}`);
+  }
+  const premios = cfg.roleta.premios.filter((p) => p.tipo === 'recompensa' && p.recompensa_id === id);
+  if (premios.length > 0) usos.push(`Roleta (${premios.map((p) => p.nome).join(', ')})`);
+  return usos;
 }
 
 // ── Clube no tablet ─────────────────────────────────────────────────────────

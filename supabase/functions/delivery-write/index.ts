@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { deductStockForSkipKdsItems, runStockInBackground } from "../_shared/stock.ts";
 import { descontoClubeServidor, idsValidos, sessaoDoClube, vincularClube } from "../_shared/clube-servidor.ts";
 import { activeLocales, normalizeLocale, loadTranslations, decorate, decorateHighlights, translationsPayload } from "../_shared/menu-i18n.ts";
+import { promoPrecosDeHoje } from "../_shared/promo-item.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1760,7 +1761,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         }
       }
 
-      const [menuItemsRes, combosRes, optionsRes, neighRes, settingsRes] = await Promise.all([
+      const [menuItemsRes, combosRes, optionsRes, neighRes, settingsRes, promoRes] = await Promise.all([
         itemIds.length > 0
           ? admin.from("menu_items").select("id, name, price, is_active, delivery_config, deleted_at, category_id").eq("tenant_id", tenant_id).in("id", itemIds)
           : Promise.resolve({ data: [], error: null }) as { data: Array<Record<string, unknown>>; error: unknown },
@@ -1774,12 +1775,20 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           ? admin.from("delivery_neighborhoods").select("id, delivery_fee, is_active").eq("tenant_id", tenant_id).eq("id", neighborhood_id).maybeSingle()
           : Promise.resolve({ data: null, error: null }) as { data: Record<string, unknown> | null; error: unknown },
         admin.from("system_settings").select("delivery_config").eq("tenant_id", tenant_id).maybeSingle(),
+        // Preço promocional do Cardápio: o cardápio do cliente (CardapioMesaQR › getPrecoEfetivo)
+        // mostra a promoção de hoje — o pedido cobra a mesma (mesmo filtro do get_delivery_config).
+        itemIds.length > 0
+          ? admin.from("item_promotions").select("item_id, promotional_price, days_of_week, is_recurring, specific_date").eq("tenant_id", tenant_id).eq("is_active", true).is("deleted_at", null).in("item_id", itemIds)
+          : Promise.resolve({ data: [], error: null }) as { data: Array<Record<string, unknown>>; error: unknown },
       ]);
 
       if (menuItemsRes.error) throw menuItemsRes.error;
       if (combosRes.error) throw combosRes.error;
       if (optionsRes.error) throw optionsRes.error;
       if (neighRes.error) throw neighRes.error;
+      if (promoRes.error) throw promoRes.error;
+      // item_id → preço promocional que vale hoje em Brasília (regra única com o mesa-write).
+      const promoHoje = promoPrecosDeHoje(promoRes.data as Array<Record<string, unknown>>);
 
       // Item apagado (deleted_at) ou de categoria apagada = indisponivel (regra do fn_get_full_menu).
       const orderCatIds = [...new Set((menuItemsRes.data as Array<Record<string, unknown>>).map((mi) => mi.category_id).filter(Boolean).map(String))];
@@ -1846,7 +1855,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           if (ip === undefined) {
             return jsonErr("Item indisponível: " + (item.item_name || iid), 400);
           }
-          realItemPrice = ip;
+          // Promoção de hoje SUBSTITUI o preço (inclusive o preço próprio do delivery), igual à tela.
+          const promo = promoHoje.get(iid);
+          realItemPrice = promo !== undefined ? promo : ip;
           realItemName = itemNameMap.get(iid) || realItemName;
         } else {
           return jsonErr("Item inválido (sem identificação)", 400);

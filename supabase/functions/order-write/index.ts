@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { deductStockForOrderItem, deductStockForSkipKdsItems, runStockInBackground } from "../_shared/stock.ts";
-import { isManagerRole } from "../_shared/tenant-auth.ts";
+import { temPermissao } from "../_shared/permissao-servidor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -499,12 +499,17 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       return new Response(JSON.stringify({ data }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Regras de promoção mexem no preço: só admin/gerente (2026-09-19; a tela /promocoes já exige
-    // cardapio_editar). Ações do PDV (caixa, sangria, pedidos) seguem liberadas a qualquer membro.
+    // Regras de promoção mexem no preço: mesma chave da tela (Clientes & Marketing › Promoções e
+    // /promocoes liberam por `gestao_promocoes`, com ajuste do cargo e da pessoa na loja). Antes o
+    // servidor exigia admin/gerente e a tela liberava pela chave — desencontro (2026-10-04).
+    // Ações do PDV (caixa, sangria, pedidos) seguem liberadas a qualquer membro.
     if (action === "create_promotion_rule" || action === "update_promotion_rule" || action === "delete_promotion_rule") {
       const { data: roleRow, error: roleErr } = await admin.from("user_tenants").select("role").eq("user_id", jwtUserId).eq("tenant_id", tenantId).maybeSingle();
       if (roleErr) { return new Response(JSON.stringify({ error: "Falha ao verificar o perfil do usuário" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
-      if (!isManagerRole(roleRow?.role)) { return new Response(JSON.stringify({ error: "Sem permissão: promoções são só para administrador ou supervisor da loja." }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+      let podePromocoes = false;
+      try { podePromocoes = await temPermissao(admin, tenantId, jwtUserId, roleRow?.role as string | null, "gestao_promocoes"); }
+      catch (permErr) { log("ERROR", action, "Falha ao ler permissões", { error: String(permErr) }); return new Response(JSON.stringify({ error: "Falha ao verificar as permissões do usuário" }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
+      if (!podePromocoes) { return new Response(JSON.stringify({ error: "Sem permissão: promoções exigem a permissão \"Promoções\" nesta loja." }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }); }
     }
 
     if (action === "create_promotion_rule") {

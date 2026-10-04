@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
@@ -13,7 +13,8 @@ const TYPES: { value: VoucherType; label: string; icon: string; desc: string }[]
   { value: 'gift_card', label: 'Gift Card', icon: 'ri-gift-line', desc: 'Saldo em dinheiro para usar em pedidos' },
   { value: 'discount', label: 'Desconto', icon: 'ri-discount-percent-line', desc: 'Percentual ou valor fixo de desconto' },
   { value: 'cashback', label: 'Cashback', icon: 'ri-refund-2-line', desc: 'Crédito de volta para o cliente' },
-  { value: 'free_item', label: 'Item Grátis', icon: 'ri-restaurant-line', desc: 'Um item específico sem custo' },
+  // "Item Grátis" fora (2026-10-04): a tela não escolhe o item, o servidor recusa sem ele e o
+  // caixa validava esse voucher com desconto R$ 0. Volta quando houver escolha do item + baixa no PDV.
 ];
 
 export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
@@ -44,12 +45,24 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
     setForm((prev) => ({ ...prev, [field]: value }));
   }
 
+  // Trava contra emissão em dobro: o clique duplo e a janela de 1,5 s depois do sucesso
+  // (o botão voltava ativo antes do modal fechar) emitiam outro voucher.
+  const enviandoRef = useRef(false);
+  const emitido = !!success;
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.original_amount && form.voucher_type !== 'free_item') {
-      setError('Informe o valor do voucher');
+    if (enviandoRef.current || emitido) return;
+    const valor = Number(form.voucher_type === 'discount' ? form.discount_value : form.original_amount);
+    if (!(valor > 0)) {
+      setError(form.voucher_type === 'discount' ? 'Informe um desconto maior que zero' : 'Informe um valor maior que zero');
       return;
     }
+    if (form.voucher_type === 'discount' && form.discount_type === 'percent' && valor > 100) {
+      setError('Desconto percentual não pode passar de 100%');
+      return;
+    }
+    enviandoRef.current = true;
     setSaving(true);
     setError('');
     setSuccess('');
@@ -120,6 +133,7 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
         : (typeof err === 'object' && err !== null && 'message' in err) ? String((err as { message: unknown }).message)
         : String(err);
       setError(msg);
+      enviandoRef.current = false; // só libera nova tentativa quando deu erro
     } finally {
       setSaving(false);
     }
@@ -349,13 +363,13 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
             </span>
           </label>
 
-          {/* Observações */}
+          {/* Observação — a página pública do voucher (/voucher/…) mostra este texto ao cliente */}
           <div>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1">Observações</label>
+            <label className="block text-xs font-semibold text-zinc-600 mb-1">Observação (o cliente vê no link)</label>
             <textarea
               value={form.notes}
               onChange={(e) => set('notes', e.target.value)}
-              placeholder="Motivo da emissão, campanha, etc."
+              placeholder="Ex.: Presente de aniversário — aproveite!"
               rows={2}
               maxLength={500}
               className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-400 resize-none"
@@ -369,11 +383,13 @@ export default function EmitirVoucherModal({ onClose, onSaved }: Props) {
             </button>
             <button
               type="submit"
-              disabled={saving}
-              className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-white bg-rose-500 hover:bg-rose-600 cursor-pointer transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              disabled={saving || emitido}
+              className="flex-1 py-2.5 rounded-lg text-sm font-semibold text-white bg-rose-500 hover:bg-rose-600 cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {saving ? (
                 <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> Emitindo...</>
+              ) : emitido ? (
+                <><i className="ri-check-line" /> Emitido</>
               ) : (
                 <><i className="ri-gift-line" /> Emitir Voucher</>
               )}

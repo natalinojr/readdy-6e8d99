@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cpfValido, descontoDasReservas, avisosConfig, chancesRoleta, configPadrao, distribuirNiveis, nivelPorCompras, normalizarConfig, retornoPercentual } from '@/lib/fidelidade';
+import { cpfValido, descontoDasReservas, avisosConfig, avisosConfigPorSecao, chancesRoleta, configPadrao, distribuirNiveis, nivelPorCompras, normalizarConfig, retornoPercentual, usosDaRecompensa } from '@/lib/fidelidade';
 
 describe('fidelidade', () => {
   it('config vazia vira o padrão e valores fora de faixa são cortados', () => {
@@ -24,7 +24,7 @@ describe('fidelidade', () => {
   });
 
   it('devolução usa a recompensa que mais custa por ponto', () => {
-    const c = configPadrao(); // refri 3/120, R$10 = 10/200 (0,05/pt), frete 7/150
+    const c = configPadrao(); // refri 3/120, R$10 = 10/200 (0,05/pt)
     expect(retornoPercentual(c)).toBeCloseTo(5, 5);
     expect(retornoPercentual(c, 2)).toBeCloseTo(10, 5);
     c.pontos.ativo = false;
@@ -34,7 +34,7 @@ describe('fidelidade', () => {
   it('roleta: chances somam 1 e custo esperado', () => {
     const { chances, custoGiro } = chancesRoleta(configPadrao().roleta.premios);
     expect(chances.reduce((s, x) => s + x.chance, 0)).toBeCloseTo(1, 9);
-    expect(custoGiro).toBeCloseTo(0.18 * 3 + 0.1 * 5 + 0.02 * 7, 9);
+    expect(custoGiro).toBeCloseTo(0.18 * 3 + 0.1 * 5, 9);
     expect(chancesRoleta([]).custoGiro).toBe(0);
   });
 
@@ -45,6 +45,50 @@ describe('fidelidade', () => {
     const av = avisosConfig(c);
     expect(av.some((a) => a.includes('não está ligada a um item'))).toBe(true);
     expect(av.some((a) => a.includes('nenhuma regra dá giro'))).toBe(true);
+  });
+
+  it('padrão não traz "Entrega grátis" (nenhuma tela aplica esse desconto)', () => {
+    const c = configPadrao();
+    expect(c.recompensas.some((r) => r.tipo === 'frete_gratis')).toBe(false);
+    // Nenhum prêmio ou presente aponta para recompensa que não está no catálogo.
+    const ids = new Set(c.recompensas.map((r) => r.id));
+    expect(c.roleta.premios.every((p) => p.tipo !== 'recompensa' || (p.recompensa_id && ids.has(p.recompensa_id)))).toBe(true);
+    expect(c.trilha.niveis.every((n) => n.presente_tipo !== 'recompensa' || (n.presente_recompensa_id && ids.has(n.presente_recompensa_id)))).toBe(true);
+    expect(chancesRoleta(c.roleta.premios).soma).toBe(100);
+  });
+
+  it('config salva com "Entrega grátis" continua valendo, mas gera aviso na seção de recompensas', () => {
+    const c = normalizarConfig({ recompensas: [{ id: 'rw_f', nome: 'Entrega grátis', tipo: 'frete_gratis', custo_pontos: 150 }] });
+    expect(c.recompensas[0].tipo).toBe('frete_gratis');
+    const av = avisosConfigPorSecao(c).filter((a) => a.texto.includes('Entrega grátis'));
+    expect(av).toHaveLength(1);
+    expect(av[0].secao).toBe('recompensas');
+  });
+
+  it('avisos: roleta com pesos zero e desconto acima de 100%', () => {
+    const c = configPadrao();
+    c.roleta.ativo = true;
+    c.roleta.premios.forEach((p) => { p.peso = 0; });
+    c.recompensas.push({ id: 'rw_x', nome: 'Desconto X', tipo: 'desconto_percentual', valor: 150, produto_id: null, custo_pontos: 100, custo_loja: 0, nivel_minimo: null, ativo: true });
+    c.roleta.premios.push({ id: 'pz_x', nome: 'Muito off', tipo: 'desconto_percentual', valor: 120, recompensa_id: null, peso: 0, custo_loja: 0, limite_dia: 0, cor: '#000000' });
+    const av = avisosConfigPorSecao(c);
+    expect(av.some((a) => a.secao === 'roleta' && a.texto.includes('pesos zero'))).toBe(true);
+    expect(av.some((a) => a.secao === 'recompensas' && a.texto.includes('"Desconto X" dá mais de 100%'))).toBe(true);
+    expect(av.some((a) => a.secao === 'roleta' && a.texto.includes('"Muito off" dá mais de 100%'))).toBe(true);
+    // Roleta desligada não acusa nada da roleta.
+    c.roleta.ativo = false;
+    expect(avisosConfigPorSecao(c).some((a) => a.secao === 'roleta')).toBe(false);
+  });
+
+  it('padrão tem só o aviso do refri sem item do cardápio (nada liga sozinho)', () => {
+    expect(avisosConfig(configPadrao())).toEqual(['"Refrigerante lata" é produto mas não está ligada a um item do cardápio.']);
+  });
+
+  it('onde a recompensa é usada (nível e roleta)', () => {
+    const c = configPadrao();
+    expect(usosDaRecompensa(c, 'rw_refri')).toEqual(['Nível Ouro', 'Roleta (Refri grátis)']);
+    expect(usosDaRecompensa(c, 'rw_10reais')).toEqual([]);
+    expect(usosDaRecompensa(c, 'nao_existe')).toEqual([]);
   });
 
   it('CPF: dígitos verificadores', () => {

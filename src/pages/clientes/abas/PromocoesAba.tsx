@@ -8,6 +8,11 @@
 //     venda chama essa ação ainda: a regra fica cadastrada e não desconta nada.
 //     Em 2026-09-26 havia 1 regra ativa com 0 usos. Ligar o motor no PDV/delivery é
 //     decisão do dono (mexe no valor cobrado) — até lá a tela avisa.
+// 2026-10-04: o delivery passou a cobrar o preço promocional no servidor (delivery-write, mesma
+// regra do mesa-write em _shared/promo-item.ts) — por isso o selo "vale no caixa, garçom, QR e
+// delivery" continua. As regras de desconto ficam recolhidas com o selo "Ainda não aplica nas
+// vendas"; o preço promocional é agrupado em "Valendo hoje" / "Outros dias", e a promoção de data
+// que já passou aparece marcada "Já passou" (só visual: nada é apagado).
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
@@ -16,6 +21,7 @@ import { useAuditoria } from '@/contexts/AuditoriaContext';
 import { useCardapio } from '@/contexts/CardapioContext';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { promoAtivaHoje } from '@/lib/promoUtils';
+import { todayBrasilia } from '@/lib/dateUtils';
 import type { PromotionRule, PromoType } from '@/types/promotions';
 import PromocaoModal from '@/pages/promocoes/components/PromocaoModal';
 import { confirmar } from '@/components/base/Dialogos';
@@ -102,12 +108,15 @@ export default function PromocoesAba() {
   const [editRule, setEditRule] = useState<PromotionRule | null>(null);
   const [duplicar, setDuplicar] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  // Regras de desconto não aplicam em nenhuma venda ainda: a seção nasce recolhida.
+  const [regrasAbertas, setRegrasAbertas] = useState(false);
 
   const podeCardapio = hasPermissao('cardapio_editar');
 
   const loadRules = useCallback(async () => {
     if (!user?.tenantId) return;
     setLoading(true);
+    setErro(''); // recarregar limpa o erro anterior (antes o aviso ficava para sempre)
     try {
       // Filtro explícito pela loja ativa: o RLS usa a última membership do
       // usuário, e um admin com várias lojas via as regras da loja errada.
@@ -129,22 +138,26 @@ export default function PromocoesAba() {
 
   // Preço promocional por item (o que vale no caixa/delivery hoje).
   const promosCardapio = useMemo(() => {
-    const out: { id: string; nome: string; preco: number; promo: number; quando: string; hoje: boolean; ativo: boolean }[] = [];
+    const out: { id: string; nome: string; preco: number; promo: number; quando: string; hoje: boolean; passou: boolean; ativo: boolean }[] = [];
+    const hojeBr = todayBrasilia();
     itens.forEach((item) => {
       if (item.status === 'inativo') return;
       const valeHoje = promoAtivaHoje(item.promocoes);
       item.promocoes.forEach((p) => {
         const quando = p.tipo === 'pontual'
-          ? (p.dataEspecifica ? `Só em ${new Date(p.dataEspecifica.slice(0, 10) + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}` : 'Data única')
+          ? (p.dataEspecifica ? `Só em ${new Date(p.dataEspecifica.slice(0, 10) + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' })}` : 'Data única')
           : (!p.diasSemana || p.diasSemana.length === 0 || p.diasSemana.length === 7 ? 'Todos os dias' : p.diasSemana.map((d) => DAYS[d]).join(', '));
-        // Pontual de data passada não interessa mais.
-        if (p.tipo === 'pontual' && p.dataEspecifica && p.dataEspecifica.slice(0, 10) < hojeISO()) return;
-        out.push({ id: p.id, nome: item.nome, preco: item.preco, promo: p.precoPromocional, quando, hoje: valeHoje?.id === p.id, ativo: p.ativo });
+        // Pontual de data passada: continua cadastrada (ligada) e aparece marcada "Já passou".
+        const passou = p.tipo === 'pontual' && !!p.dataEspecifica && p.dataEspecifica.slice(0, 10) < hojeBr;
+        out.push({ id: p.id, nome: item.nome, preco: item.preco, promo: p.precoPromocional, quando, hoje: valeHoje?.id === p.id, passou, ativo: p.ativo });
       });
     });
-    return out.filter((p) => p.ativo).sort((a, b) => Number(b.hoje) - Number(a.hoje) || a.nome.localeCompare(b.nome, 'pt-BR'));
+    return out.filter((p) => p.ativo).sort((a, b) => Number(a.passou) - Number(b.passou) || a.nome.localeCompare(b.nome, 'pt-BR'));
   }, [itens]);
-  const valendoHoje = promosCardapio.filter((p) => p.hoje).length;
+  const promosHoje = promosCardapio.filter((p) => p.hoje);
+  const promosOutrosDias = promosCardapio.filter((p) => !p.hoje);
+  const valendoHoje = promosHoje.length;
+  const jaPassaram = promosCardapio.filter((p) => p.passou).length;
 
   async function toggleActive(rule: PromotionRule) {
     setTogglingId(rule.id);
@@ -205,9 +218,42 @@ export default function PromocoesAba() {
 
   const activeCount = rules.filter((r) => r.is_active).length;
 
+  function renderPromoCardapio(p: (typeof promosCardapio)[number]) {
+    const desconto = p.preco > 0 ? Math.round((1 - p.promo / p.preco) * 100) : 0;
+    return (
+      <div key={p.id} className={`bg-white border rounded-xl px-3 py-2.5 flex items-center gap-3 ${p.hoje ? 'border-green-200' : 'border-zinc-100'} ${p.passou ? 'opacity-60' : ''}`}>
+        <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-xs font-black ${p.hoje ? 'bg-green-50 text-green-700' : 'bg-zinc-50 text-zinc-400'}`}>
+          {desconto > 0 ? `-${desconto}%` : <i className="ri-price-tag-3-line" />}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-zinc-800 truncate">{p.nome}</p>
+          <p className="text-[11px] text-zinc-400 truncate">{p.quando}</p>
+        </div>
+        <div className="text-right flex-shrink-0">
+          <p className="text-sm font-bold text-zinc-800">{fmtMoeda(p.promo)}</p>
+          <p className="text-[10px] text-zinc-400 line-through">{fmtMoeda(p.preco)}</p>
+        </div>
+        {p.hoje && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-500 text-white flex-shrink-0">hoje</span>}
+        {p.passou && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-500 flex-shrink-0 whitespace-nowrap">Já passou</span>}
+      </div>
+    );
+  }
+
   return (
     <div className="p-4 md:p-6 space-y-6">
-      {erro && <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">{erro}</div>}
+      {erro && (
+        <div className="flex items-start gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
+          <i className="ri-error-warning-line text-red-500 text-sm mt-0.5" />
+          <p className="flex-1 min-w-0 text-xs text-red-700 break-words">{erro}</p>
+          <button
+            onClick={() => { void loadRules(); }}
+            disabled={loading}
+            className="flex-shrink-0 flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border border-red-200 bg-white text-red-700 hover:bg-red-100 cursor-pointer whitespace-nowrap disabled:opacity-50"
+          >
+            <i className={`ri-refresh-line ${loading ? 'animate-spin' : ''}`} /> Tentar de novo
+          </button>
+        </div>
+      )}
 
       {/* ── Preço promocional do cardápio ── */}
       <section className="space-y-3">
@@ -218,7 +264,7 @@ export default function PromocoesAba() {
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-green-50 text-green-700">vale no caixa, garçom, QR e delivery</span>
             </h2>
             <p className="text-xs text-zinc-400 mt-0.5">
-              {cardapioLoading ? 'Carregando o cardápio…' : `${valendoHoje} valendo hoje · ${promosCardapio.length} cadastrada${promosCardapio.length !== 1 ? 's' : ''}`}
+              {cardapioLoading ? 'Carregando o cardápio…' : `${valendoHoje} valendo hoje · ${promosCardapio.length} cadastrada${promosCardapio.length !== 1 ? 's' : ''}${jaPassaram > 0 ? ` · ${jaPassaram} já passou${jaPassaram !== 1 ? 'aram' : ''}` : ''}`}
             </p>
           </div>
           {podeCardapio && (
@@ -237,39 +283,51 @@ export default function PromocoesAba() {
             <p className="text-[11px] text-zinc-400 mt-0.5">No Cardápio, abra o item e cadastre a promoção (por dia da semana ou numa data).</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
-            {promosCardapio.map((p) => {
-              const desconto = p.preco > 0 ? Math.round((1 - p.promo / p.preco) * 100) : 0;
-              return (
-                <div key={p.id} className={`bg-white border rounded-xl px-3 py-2.5 flex items-center gap-3 ${p.hoje ? 'border-green-200' : 'border-zinc-100'}`}>
-                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 text-xs font-black ${p.hoje ? 'bg-green-50 text-green-700' : 'bg-zinc-50 text-zinc-400'}`}>
-                    {desconto > 0 ? `-${desconto}%` : <i className="ri-price-tag-3-line" />}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-zinc-800 truncate">{p.nome}</p>
-                    <p className="text-[11px] text-zinc-400 truncate">{p.quando}</p>
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <p className="text-sm font-bold text-zinc-800">{fmtMoeda(p.promo)}</p>
-                    <p className="text-[10px] text-zinc-400 line-through">{fmtMoeda(p.preco)}</p>
-                  </div>
-                  {p.hoje && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-green-500 text-white flex-shrink-0">hoje</span>}
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <h3 className="text-[11px] font-bold uppercase tracking-wide text-green-700">Valendo hoje ({promosHoje.length})</h3>
+              {promosHoje.length === 0 ? (
+                <p className="text-xs text-zinc-400">{cardapioLoading ? 'Carregando…' : 'Nenhum preço promocional vale hoje.'}</p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
+                  {promosHoje.map(renderPromoCardapio)}
                 </div>
-              );
-            })}
+              )}
+            </div>
+            {promosOutrosDias.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-[11px] font-bold uppercase tracking-wide text-zinc-500">Outros dias ({promosOutrosDias.length})</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
+                  {promosOutrosDias.map(renderPromoCardapio)}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </section>
 
-      {/* ── Regras de desconto ── */}
+      {/* ── Regras de desconto (recolhida: ainda não aplica em nenhuma venda) ── */}
       <section className="space-y-3">
-        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-bold text-zinc-900 flex items-center gap-2">
-              <i className="ri-price-tag-3-line text-rose-500" /> Regras de desconto e cupons
+        <button
+          type="button"
+          onClick={() => setRegrasAbertas((v) => !v)}
+          aria-expanded={regrasAbertas}
+          className="w-full flex items-center justify-between gap-3 px-4 py-3 bg-white border border-zinc-200 rounded-xl text-left cursor-pointer hover:bg-zinc-50 transition-colors"
+        >
+          <div className="min-w-0">
+            <h2 className="text-sm font-bold text-zinc-900 flex items-center gap-2 flex-wrap">
+              <i className="ri-price-tag-3-line text-zinc-400" /> Regras de desconto e cupons
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">Ainda não aplica nas vendas</span>
             </h2>
-            <p className="text-xs text-zinc-400 mt-0.5">{activeCount} ligada{activeCount !== 1 ? 's' : ''} de {rules.length} regra{rules.length !== 1 ? 's' : ''}</p>
+            <p className="text-xs text-zinc-400 mt-0.5">
+              {loading ? 'Carregando…' : `${activeCount} ligada${activeCount !== 1 ? 's' : ''} de ${rules.length} regra${rules.length !== 1 ? 's' : ''}`}
+            </p>
           </div>
+          <i className={`ri-arrow-down-s-line text-lg text-zinc-400 flex-shrink-0 transition-transform ${regrasAbertas ? 'rotate-180' : ''}`} />
+        </button>
+
+        {regrasAbertas && (<>
+        <div className="flex flex-col lg:flex-row lg:items-center justify-end gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[160px] sm:flex-none">
               <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
@@ -297,7 +355,7 @@ export default function PromocoesAba() {
             </div>
             <button
               onClick={() => abrirModal(null)}
-              className="flex items-center gap-1.5 px-3 py-2 bg-rose-500 hover:bg-rose-600 text-white text-sm font-semibold rounded-lg cursor-pointer transition-colors whitespace-nowrap"
+              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-600 text-xs font-semibold rounded-lg cursor-pointer transition-colors whitespace-nowrap"
             >
               <i className="ri-add-line" /> Nova regra
             </button>
@@ -405,6 +463,7 @@ export default function PromocoesAba() {
             })}
           </div>
         )}
+        </>)}
       </section>
 
       {modalOpen && (

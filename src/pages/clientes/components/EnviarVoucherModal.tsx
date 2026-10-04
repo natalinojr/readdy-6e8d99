@@ -7,6 +7,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useAuditoria } from '@/contexts/AuditoriaContext';
 import type { ClienteCRM } from '@/hooks/useClientes';
 import type { Voucher } from '@/types/vouchers';
+import { AVISO_OPT_OUT, abrirWhatsApp as abrirConversa, celularComDDI } from '../clienteUtils';
 
 interface Props {
   cliente: ClienteCRM;
@@ -159,11 +160,11 @@ export default function EnviarVoucherModal({ cliente, onClose, onSent, onEnviado
     onEnviado?.(voucherCriado, mensagemFinal);
   };
 
+  const podeMensagem = !!celularComDDI(cliente.celular) && !cliente.optOut;
   const abrirWhatsApp = () => {
-    if (!cliente.celular) return;
+    if (!podeMensagem) return;
     avisarEnvio();
-    const numero = cliente.celular.replace(/\D/g, '');
-    window.open(`https://wa.me/55${numero}?text=${encodeURIComponent(mensagemFinal)}`, '_blank');
+    abrirConversa(cliente.celular, mensagemFinal);
   };
 
   const copiarLink = () => {
@@ -376,7 +377,8 @@ export default function EnviarVoucherModal({ cliente, onClose, onSent, onEnviado
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={abrirWhatsApp}
-                disabled={!cliente.celular}
+                disabled={!podeMensagem}
+                title={cliente.optOut ? AVISO_OPT_OUT : undefined}
                 className="flex items-center justify-center gap-2 px-3 py-2.5 bg-green-500 hover:bg-green-600 rounded-xl text-xs font-bold text-white cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <i className="ri-whatsapp-line text-base" />
@@ -392,6 +394,9 @@ export default function EnviarVoucherModal({ cliente, onClose, onSent, onEnviado
             </div>
             {!cliente.celular && (
               <p className="text-[10px] text-zinc-400 text-center">Cliente sem telefone — copie a mensagem e envie por outro canal</p>
+            )}
+            {cliente.optOut && (
+              <p className="text-[10px] text-zinc-400 text-center">{AVISO_OPT_OUT} — entregue o código pessoalmente.</p>
             )}
 
             <button

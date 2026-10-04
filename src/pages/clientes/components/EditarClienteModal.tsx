@@ -3,11 +3,15 @@
 // relacionamento (anotações, tags manuais, aceite de marketing/LGPD).
 import { useState } from 'react';
 import type { ClienteCRM, ClientePatch } from '@/hooks/useClientes';
+import { invokeWithAuth } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Props {
   cliente: ClienteCRM;
   onClose: () => void;
   onSave: (patch: ClientePatch) => Promise<void>;
+  /** Depois de desfazer o "não quer mensagens" (recarrega a lista). */
+  onOptOutDesfeito?: () => void;
 }
 
 const GENEROS = [
@@ -17,7 +21,10 @@ const GENEROS = [
   { value: 'outro', label: 'Outro' },
 ];
 
-export default function EditarClienteModal({ cliente, onClose, onSave }: Props) {
+export default function EditarClienteModal({ cliente, onClose, onSave, onOptOutDesfeito }: Props) {
+  const { user } = useAuth();
+  const [optOut, setOptOut] = useState(cliente.optOut ?? null);
+  const [desfazendo, setDesfazendo] = useState(false);
   const [nome, setNome] = useState(cliente.nome ?? '');
   const [celular, setCelular] = useState(cliente.celular ?? '');
   const [nascimento, setNascimento] = useState(cliente.dataNascimento ?? '');
@@ -43,6 +50,8 @@ export default function EditarClienteModal({ cliente, onClose, onSave }: Props) 
     setErro('');
     if (!nome.trim()) { setErro('O nome é obrigatório.'); return; }
     if (celular.replace(/\D/g, '').length < 10) { setErro('Celular inválido (mínimo 10 dígitos com DDD).'); return; }
+    if (cpf.trim() && cpf.replace(/\D/g, '').length !== 11) { setErro('CPF precisa ter 11 dígitos (ou deixe em branco).'); return; }
+    if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setErro('E-mail inválido.'); return; }
     setSaving(true);
     try {
       await onSave({
@@ -61,6 +70,26 @@ export default function EditarClienteModal({ cliente, onClose, onSave }: Props) 
       setErro(e instanceof Error ? e.message : 'Erro ao salvar');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // "Não perturbe" marcado por engano no Funil: o cliente pediu de volta.
+  const desfazerOptOut = async () => {
+    if (!user?.tenantId) return;
+    setDesfazendo(true);
+    setErro('');
+    try {
+      const { data, error } = await invokeWithAuth('crm-funnel', {
+        body: { action: 'set_opt_out', tenant_id: user.tenantId, customer_id: cliente.id, opt_out: false },
+      });
+      const resp = data as { error?: string; message?: string } | null;
+      if (error || resp?.error) throw new Error(resp?.message || resp?.error || 'Não consegui desfazer.');
+      setOptOut(null);
+      onOptOutDesfeito?.();
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Não consegui desfazer.');
+    } finally {
+      setDesfazendo(false);
     }
   };
 
@@ -157,6 +186,23 @@ export default function EditarClienteModal({ cliente, onClose, onSave }: Props) 
               <p className="text-[10px] text-zinc-400">Consentimento (LGPD). Usado para respeitar quem não quer ser contatado.</p>
             </div>
           </label>
+
+          {optOut && (
+            <div className="flex items-center justify-between gap-3 px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-lg">
+              <p className="text-xs text-zinc-600">
+                <i className="ri-chat-off-line mr-1" />
+                Pediu para não receber mensagens em {new Date(optOut).toLocaleDateString('pt-BR')}.
+              </p>
+              <button
+                onClick={desfazerOptOut}
+                disabled={desfazendo}
+                className="flex-shrink-0 px-2.5 py-1.5 rounded-lg border border-zinc-200 bg-white text-xs font-semibold text-zinc-600 hover:bg-zinc-100 cursor-pointer disabled:opacity-50"
+                title="Use só se o próprio cliente pediu para voltar a receber"
+              >
+                {desfazendo ? 'Desfazendo…' : 'Voltar a permitir'}
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="flex gap-2 px-5 py-4 border-t border-zinc-100 flex-shrink-0">

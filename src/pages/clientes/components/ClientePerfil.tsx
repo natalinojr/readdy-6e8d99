@@ -4,6 +4,7 @@ import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Voucher } from '@/types/vouchers';
 import EnviarVoucherModal from './EnviarVoucherModal';
+import { AVISO_OPT_OUT, abrirWhatsApp as abrirConversa, celularComDDI, diasDesde, mensagemWhatsApp } from '../clienteUtils';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -11,6 +12,12 @@ import {
 interface Props {
   cliente: ClienteCRM;
   onClose: () => void;
+  /** Abre o modal de edição do cadastro (anotações, tags, aceite). */
+  onEditar?: () => void;
+  /** Marca o cliente como contatado agora (anti-spam), ao abrir o WhatsApp. */
+  onContato?: () => void;
+  /** Pode emitir voucher (gestao_vouchers). */
+  podeVoucher?: boolean;
 }
 
 function fmtData(d: string) {
@@ -19,8 +26,11 @@ function fmtData(d: string) {
 function fmtMoeda(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
-function diasSemVisita(ultima: string) {
-  return Math.floor((Date.now() - new Date(ultima).getTime()) / (1000 * 60 * 60 * 24));
+const diasSemVisita = diasDesde;
+/** Mês local (YYYY-MM) — o slice da ISO em UTC jogava pedido das 22h do dia 31 no mês seguinte. */
+function mesLocal(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
 const TAG_STYLE: Record<string, string> = {
@@ -56,26 +66,40 @@ function voucherValorLabel(v: Voucher): string {
   return 'Item grátis';
 }
 
-export default function ClientePerfil({ cliente, onClose }: Props) {
+export default function ClientePerfil({ cliente, onClose, onEditar, onContato, podeVoucher = true }: Props) {
   const { user } = useAuth();
+  const comprou = cliente.totalVisitas > 0;
   const dias = diasSemVisita(cliente.ultimaVisita);
-  const { pedidos, loading: loadingPedidos } = useClientePedidos(cliente.id);
+  const podeMensagem = !!celularComDDI(cliente.celular) && !cliente.optOut;
+  const { pedidos, loading: loadingPedidos, erro: erroPedidos, tentarDeNovo } = useClientePedidos(cliente.id);
   const [aba, setAba] = useState<Aba>('historico');
   const [msgCopiada, setMsgCopiada] = useState(false);
   const [showEnviarVoucher, setShowEnviarVoucher] = useState(false);
   const [vouchers, setVouchers] = useState<Voucher[]>([]);
   const [loadingVouchers, setLoadingVouchers] = useState(false);
   const [vouchersCarregados, setVouchersCarregados] = useState(false);
+  const [erroVouchers, setErroVouchers] = useState('');
+
+  // Esc fecha o painel.
+  useEffect(() => {
+    const tecla = (e: KeyboardEvent) => { if (e.key === 'Escape' && !showEnviarVoucher) onClose(); };
+    window.addEventListener('keydown', tecla);
+    return () => window.removeEventListener('keydown', tecla);
+  }, [onClose, showEnviarVoucher]);
 
   const loadVouchers = useCallback(async () => {
     if (!user?.tenantId) return;
     setLoadingVouchers(true);
+    setErroVouchers('');
     try {
       const { data, error } = await invokeWithAuth('voucher-write', {
         body: { action: 'list_customer_vouchers', active_tenant_id: user.tenantId, customer_id: cliente.id },
       });
-      if (!error && data) {
-        setVouchers(((data as { data?: Voucher[] }).data ?? []) as Voucher[]);
+      const resp = data as { data?: Voucher[]; error?: string } | null;
+      if (error || resp?.error) {
+        setErroVouchers('Não consegui carregar os vouchers deste cliente.');
+      } else {
+        setVouchers((resp?.data ?? []) as Voucher[]);
       }
       setVouchersCarregados(true);
     } finally {
@@ -92,7 +116,7 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
   const frequenciaMensal = useMemo(() => {
     const map = new Map<string, { visitas: number; gasto: number }>();
     pedidos.forEach((p) => {
-      const key = p.data.slice(0, 7); // YYYY-MM
+      const key = mesLocal(p.data);
       const prev = map.get(key) ?? { visitas: 0, gasto: 0 };
       map.set(key, { visitas: prev.visitas + 1, gasto: prev.gasto + p.valor });
     });
@@ -110,18 +134,15 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
       });
   }, [pedidos]);
 
-  // Mensagem WhatsApp pré-formatada
+  // Mensagem WhatsApp — a mesma da lista: muda conforme a relação do cliente
+  // (antes era sempre "Sentimos sua falta", até para quem comprou ontem).
   const abrirWhatsApp = () => {
-    if (!cliente.celular) return;
-    const numero = cliente.celular.replace(/\D/g, '');
-    const msg = encodeURIComponent(
-      `Olá, ${cliente.nome.split(' ')[0]}! Tudo bem? Sentimos sua falta por aqui. Venha nos visitar e aproveite nossas novidades! 😊`
-    );
-    window.open(`https://wa.me/55${numero}?text=${msg}`, '_blank');
+    if (!podeMensagem) return;
+    if (abrirConversa(cliente.celular, mensagemWhatsApp(cliente))) onContato?.();
   };
 
   const copiarMensagem = () => {
-    const msg = `Olá, ${cliente.nome.split(' ')[0]}! Tudo bem? Sentimos sua falta por aqui. Venha nos visitar e aproveite nossas novidades! 😊`;
+    const msg = mensagemWhatsApp(cliente);
     navigator.clipboard.writeText(msg).then(() => {
       setMsgCopiada(true);
       setTimeout(() => setMsgCopiada(false), 2000);
@@ -156,9 +177,8 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
   }
 
   function abrirWhatsAppVoucher(v: Voucher) {
-    if (!cliente.celular) return;
-    const numero = cliente.celular.replace(/\D/g, '');
-    window.open(`https://wa.me/55${numero}?text=${encodeURIComponent(mensagemVoucher(v))}`, '_blank');
+    if (!podeMensagem) return;
+    if (abrirConversa(cliente.celular, mensagemVoucher(v))) onContato?.();
   }
 
   function copiarMensagemVoucher(v: Voucher) {
@@ -168,11 +188,15 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
     });
   }
 
+  // O banco devolve o item como "Chopp x2": separa a quantidade para "Chopp" e "Chopp x2" somarem juntos.
   const itensMaisComprados = useMemo(() => {
     const map = new Map<string, number>();
     pedidos.forEach((p) => {
       p.itens?.forEach((item) => {
-        map.set(item, (map.get(item) ?? 0) + 1);
+        const m = /^(.*?)\s+x(\d+)$/.exec(item);
+        const nome = m ? m[1] : item;
+        const qtd = m ? Number(m[2]) || 1 : 1;
+        map.set(nome, (map.get(nome) ?? 0) + qtd);
       });
     });
     return Array.from(map.entries())
@@ -188,17 +212,31 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
           <div className="w-11 h-11 flex items-center justify-center bg-amber-100 rounded-full flex-shrink-0">
             <span className="text-base font-bold text-amber-700">{cliente.nome.charAt(0)}</span>
           </div>
-          <div>
-            <p className="text-sm font-bold text-zinc-900">{cliente.nome}</p>
-            <p className="text-xs text-zinc-400">{cliente.celular || 'Sem telefone'}</p>
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-zinc-900 truncate">{cliente.nome}</p>
+            <p className="text-xs text-zinc-400 truncate">
+              {cliente.celular || 'Sem telefone'}{cliente.email ? ` · ${cliente.email}` : ''}
+            </p>
           </div>
         </div>
-        <button
-          onClick={onClose}
-          className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 cursor-pointer transition-colors"
-        >
-          <i className="ri-close-line text-lg" />
-        </button>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {onEditar && (
+            <button
+              onClick={onEditar}
+              title="Editar cadastro, anotações e tags"
+              className="h-9 px-2.5 flex items-center gap-1 rounded-lg hover:bg-zinc-100 text-zinc-500 text-xs font-semibold cursor-pointer transition-colors"
+            >
+              <i className="ri-pencil-line text-base" /> Editar
+            </button>
+          )}
+          <button
+            onClick={onClose}
+            aria-label="Fechar"
+            className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 cursor-pointer transition-colors"
+          >
+            <i className="ri-close-line text-lg" />
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -209,17 +247,34 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
               {tag}
             </span>
           ))}
-          {dias > 30 && !cliente.tags.includes('inativo') && (
+          {cliente.manualTags.map((tag) => (
+            <span key={`m-${tag}`} className="text-xs font-semibold px-2.5 py-1 rounded-full bg-violet-50 text-violet-700 border border-violet-200">
+              {tag}
+            </span>
+          ))}
+          {comprou && dias > 30 && !cliente.tags.includes('inativo') && (
             <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-red-50 text-red-600 border border-red-200">
-              {dias}d sem visitar
+              {dias}d sem comprar
+            </span>
+          )}
+          {cliente.optOut && (
+            <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-zinc-100 text-zinc-500 border border-zinc-200">
+              <i className="ri-chat-off-line" /> {AVISO_OPT_OUT}
             </span>
           )}
         </div>
 
+        {/* Anotações — quem atende precisa ver (ex.: alergia), não só passar o mouse no ícone */}
+        {cliente.notes && (
+          <div className="mx-6 mt-3 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 whitespace-pre-line">
+            <i className="ri-sticky-note-line text-amber-500 mr-1" />{cliente.notes}
+          </div>
+        )}
+
         {/* Métricas */}
         <div className="grid grid-cols-3 gap-3 px-6 pt-4">
           {[
-            { label: 'Visitas', value: String(cliente.totalVisitas), icon: 'ri-map-pin-line', color: 'text-amber-600' },
+            { label: 'Compras', value: String(cliente.totalVisitas), icon: 'ri-shopping-bag-3-line', color: 'text-amber-600' },
             { label: 'Total gasto', value: fmtMoeda(cliente.valorTotal), icon: 'ri-money-dollar-circle-line', color: 'text-green-600' },
             { label: 'Ticket médio', value: fmtMoeda(cliente.ticketMedio), icon: 'ri-receipt-line', color: 'text-sky-600' },
           ].map((m) => (
@@ -235,14 +290,23 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
 
         {/* Datas */}
         <div className="mx-6 mt-4 p-4 bg-zinc-50 rounded-xl space-y-2">
-          <div className="flex justify-between text-xs">
-            <span className="text-zinc-500">Primeira visita</span>
-            <span className="font-semibold text-zinc-700">{fmtData(cliente.primeiraVisita)}</span>
-          </div>
-          <div className="flex justify-between text-xs">
-            <span className="text-zinc-500">Última visita</span>
-            <span className="font-semibold text-zinc-700">{fmtData(cliente.ultimaVisita)}</span>
-          </div>
+          {comprou ? (
+            <>
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-500">Primeira compra</span>
+                <span className="font-semibold text-zinc-700">{fmtData(cliente.primeiraVisita)}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-500">Última compra</span>
+                <span className="font-semibold text-zinc-700">{fmtData(cliente.ultimaVisita)}</span>
+              </div>
+            </>
+          ) : (
+            <div className="flex justify-between text-xs">
+              <span className="text-zinc-500">Cadastrado em</span>
+              <span className="font-semibold text-zinc-700">{fmtData(cliente.primeiraVisita)} · ainda sem compras</span>
+            </div>
+          )}
           {cliente.dataNascimento ? (
             <div className="flex justify-between text-xs">
               <span className="text-zinc-500">Nascimento</span>
@@ -255,28 +319,43 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
               <span className="font-semibold text-zinc-700 capitalize">{cliente.genero}</span>
             </div>
           ) : null}
+          {comprou && (
+            <div className="flex justify-between text-xs">
+              <span className="text-zinc-500">Dias desde a última compra</span>
+              <span className={`font-semibold ${dias > 30 ? 'text-red-500' : dias > 14 ? 'text-amber-500' : 'text-green-600'}`}>
+                {dias} dia{dias === 1 ? '' : 's'}
+              </span>
+            </div>
+          )}
+          {cliente.ultimoContato && (
+            <div className="flex justify-between text-xs">
+              <span className="text-zinc-500">Último contato da loja</span>
+              <span className="font-semibold text-zinc-700">{fmtData(cliente.ultimoContato)}</span>
+            </div>
+          )}
           <div className="flex justify-between text-xs">
-            <span className="text-zinc-500">Dias desde última visita</span>
-            <span className={`font-semibold ${dias > 30 ? 'text-red-500' : dias > 14 ? 'text-amber-500' : 'text-green-600'}`}>
-              {dias} dias
-            </span>
+            <span className="text-zinc-500">Aceita marketing</span>
+            <span className="font-semibold text-zinc-700">{cliente.optOut ? 'Não — pediu para sair' : cliente.aceitaMarketing ? 'Sim' : 'Não informado'}</span>
           </div>
         </div>
 
         {/* Ações rápidas */}
         <div className="px-6 mt-4">
           <p className="text-xs font-bold text-zinc-700 uppercase tracking-wider mb-2.5">Ações Rápidas</p>
-          <button
-            onClick={() => setShowEnviarVoucher(true)}
-            className="w-full flex items-center justify-center gap-2 px-3 py-2.5 mb-2 bg-amber-500 hover:bg-amber-600 rounded-xl text-xs font-bold text-white cursor-pointer transition-colors"
-          >
-            <i className="ri-coupon-3-line text-base" />
-            Enviar Voucher com link de ativação
-          </button>
+          {podeVoucher && (
+            <button
+              onClick={() => setShowEnviarVoucher(true)}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2.5 mb-2 bg-amber-600 hover:bg-amber-700 rounded-xl text-xs font-bold text-white cursor-pointer transition-colors"
+            >
+              <i className="ri-coupon-3-line text-base" />
+              Enviar Voucher com link de ativação
+            </button>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <button
               onClick={abrirWhatsApp}
-              disabled={!cliente.celular}
+              disabled={!podeMensagem}
+              title={cliente.optOut ? AVISO_OPT_OUT : undefined}
               className="flex items-center gap-2 px-3 py-2.5 bg-green-50 border border-green-200 rounded-xl text-xs font-semibold text-green-700 hover:bg-green-100 cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <i className="ri-whatsapp-line text-base text-green-600" />
@@ -284,7 +363,7 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
             </button>
             <button
               onClick={copiarMensagem}
-              disabled={!cliente.celular}
+              disabled={!podeMensagem}
               className="flex items-center gap-2 px-3 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-semibold text-zinc-600 hover:bg-zinc-100 cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <i className={`${msgCopiada ? 'ri-check-line text-emerald-600' : 'ri-file-copy-line'} text-base`} />
@@ -293,6 +372,9 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
           </div>
           {!cliente.celular && (
             <p className="text-[10px] text-zinc-400 mt-1.5 text-center">Sem telefone cadastrado para este cliente</p>
+          )}
+          {cliente.optOut && (
+            <p className="text-[10px] text-zinc-400 mt-1.5 text-center">{AVISO_OPT_OUT} — o WhatsApp fica desligado para este cliente.</p>
           )}
         </div>
 
@@ -343,6 +425,11 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
               {loadingPedidos ? (
                 <div className="flex items-center justify-center py-8">
                   <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : erroPedidos ? (
+                <div className="text-center py-6 text-xs text-red-600">
+                  {erroPedidos}
+                  <button onClick={tentarDeNovo} className="block mx-auto mt-2 px-3 py-1.5 rounded-lg border border-red-200 font-semibold hover:bg-red-50 cursor-pointer">Tentar de novo</button>
                 </div>
               ) : pedidos.length === 0 ? (
                 <div className="text-center py-8 text-zinc-400 text-xs">
@@ -476,6 +563,11 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
                 <div className="flex items-center justify-center py-8">
                   <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
                 </div>
+              ) : erroVouchers ? (
+                <div className="text-center py-6 text-xs text-red-600">
+                  {erroVouchers}
+                  <button onClick={loadVouchers} className="block mx-auto mt-2 px-3 py-1.5 rounded-lg border border-red-200 font-semibold hover:bg-red-50 cursor-pointer">Tentar de novo</button>
+                </div>
               ) : vouchers.length === 0 ? (
                 <div className="text-center py-8 text-zinc-400 text-xs">
                   Nenhum voucher emitido para este cliente ainda
@@ -534,9 +626,9 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
                           <div className="flex items-center gap-2 mt-2.5 pt-2.5 border-t border-zinc-200/70">
                             <button
                               onClick={() => abrirWhatsAppVoucher(v)}
-                              disabled={!cliente.celular}
+                              disabled={!podeMensagem}
                               className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 bg-green-500 hover:bg-green-600 rounded-lg text-xs font-bold text-white cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                              title={cliente.celular ? 'Enviar este voucher pelo WhatsApp' : 'Cliente sem telefone'}
+                              title={cliente.optOut ? AVISO_OPT_OUT : cliente.celular ? 'Enviar este voucher pelo WhatsApp' : 'Cliente sem telefone'}
                             >
                               <i className="ri-whatsapp-line text-sm" />
                               Enviar no WhatsApp
@@ -561,7 +653,7 @@ export default function ClientePerfil({ cliente, onClose }: Props) {
       </div>
 
       {/* Modal Enviar Voucher */}
-      {showEnviarVoucher && (
+      {showEnviarVoucher && podeVoucher && (
         <EnviarVoucherModal
           cliente={cliente}
           onClose={() => setShowEnviarVoucher(false)}

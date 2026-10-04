@@ -5,7 +5,7 @@
 // /vouchers continuam funcionando (redirecionam para cá) e links do assistente
 // abrem direto na aba certa. Cada aba respeita a sua permissão de antes:
 // clientes_ver (Clientes e Funil), gestao_promocoes e gestao_vouchers.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes, type PermissaoKey } from '@/hooks/usePermissoes';
@@ -47,6 +47,9 @@ export default function ClientesMarketingPage() {
   const [params, setParams] = useSearchParams();
   const [voucherAlvo, setVoucherAlvo] = useState<VoucherAlvo | null>(null);
 
+  // Emitir voucher (Clientes e Funil) é da aba Vouchers.
+  const podeVoucher = (!!user && PAPEIS_ADMIN.includes(user.perfil)) || hasPermissao('gestao_vouchers');
+
   const abasLiberadas = useMemo(
     () => ABAS.filter((a) => (user && PAPEIS_ADMIN.includes(user.perfil)) || hasPermissao(a.permissao)),
     [user, hasPermissao],
@@ -55,6 +58,13 @@ export default function ClientesMarketingPage() {
   const pedida = params.get('aba') as Aba | null;
   const aba: Aba = abasLiberadas.find((a) => a.id === pedida)?.id ?? abasLiberadas[0]?.id ?? 'clientes';
   const abaAtual = ABAS.find((a) => a.id === aba)!;
+
+  // No celular as 6 abas não cabem: a ativa rola para a vista (Vouchers ficava escondida à direita).
+  const navRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const el = navRef.current?.querySelector<HTMLElement>('[aria-selected="true"]');
+    el?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+  }, [aba, abasLiberadas.length]);
 
   const irPara = (id: Aba) => {
     const p = new URLSearchParams(params);
@@ -79,7 +89,11 @@ export default function ClientesMarketingPage() {
           </div>
         </div>
 
-        <nav className="flex items-center gap-1 mt-3 -mb-px overflow-x-auto" role="tablist">
+        <nav
+          ref={navRef}
+          className="flex items-center gap-1 mt-3 -mb-px overflow-x-auto scrollbar-hide -mx-4 px-4 md:mx-0 md:px-0 [mask-image:linear-gradient(to_right,transparent_0,#000_16px,#000_calc(100%-28px),transparent_100%)] md:[mask-image:none]"
+          role="tablist"
+        >
           {abasLiberadas.map((a) => {
             const ativa = a.id === aba;
             return (
@@ -110,7 +124,7 @@ export default function ClientesMarketingPage() {
         {aba === 'clientes' && (
           <ClientesAba onEnviarVoucher={(c) => abrirVoucher(c)} onAbrirFunil={() => irPara('funil')} />
         )}
-        {aba === 'funil' && <FunilAba onEnviarVoucher={abrirVoucher} />}
+        {aba === 'funil' && <FunilAba onEnviarVoucher={abrirVoucher} podeVoucher={podeVoucher} />}
         {aba === 'fidelidade' && <FidelidadeAba />}
         {aba === 'jogos' && <JogosAba />}
         {aba === 'promocoes' && <PromocoesAba />}
@@ -118,7 +132,7 @@ export default function ClientesMarketingPage() {
         </>}
       </div>
 
-      {voucherAlvo && (
+      {voucherAlvo && podeVoucher && (
         <EnviarVoucherModal
           cliente={voucherAlvo.cliente}
           oferta={voucherAlvo.oferta}

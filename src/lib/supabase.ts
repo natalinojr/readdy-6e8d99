@@ -507,6 +507,12 @@ export const NON_IDEMPOTENT_ACTIONS = new Set([
   'enviar_guia', // contabilidade: repetir pode preparar o pagamento da guia duas vezes
   'enviar_xml_mes', // contabilidade-xml: repetir manda o e-mail dos XMLs duas vezes
   'testar_email',
+  // voucher-write: repetir após erro de rede baixava o voucher / emitia o gift card duas vezes
+  'redeem_voucher',
+  'issue_voucher',
+  'refund_voucher_redemption',
+  'cancel_voucher',
+  'generate_birthday_vouchers',
 ]);
 
 /**

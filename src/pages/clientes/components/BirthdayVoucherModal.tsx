@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { ClienteCRM } from '@/hooks/useClientes';
+import { abrirWhatsApp } from '../clienteUtils';
 
 interface BirthdayConfig {
   enabled: boolean;
@@ -47,16 +48,25 @@ export default function BirthdayVoucherModal({ aniversariantesMes, onClose, onGe
   const [erro, setErro] = useState('');
   const [okMsg, setOkMsg] = useState('');
   const [resultado, setResultado] = useState<{ created: number; skipped: number; items: GeradoItem[] } | null>(null);
+  // Sem a config real carregada, salvar/gerar gravaria os padrões por cima (desligando a automação).
+  const [erroCarga, setErroCarga] = useState('');
 
   const carregar = useCallback(async () => {
     if (!user?.tenantId) return;
     setLoading(true);
+    setErroCarga('');
     try {
-      const { data } = await invokeWithAuth('voucher-write', {
+      const { data, error } = await invokeWithAuth('voucher-write', {
         body: { action: 'get_birthday_config', active_tenant_id: user.tenantId },
       });
-      const c = (data as { data?: BirthdayConfig })?.data;
-      if (c) setCfg({ ...DEFAULTS, ...c });
+      const resp = data as { data?: BirthdayConfig; error?: string } | null;
+      if (error || resp?.error) {
+        setErroCarga(resp?.error || 'Não consegui carregar a configuração de aniversário.');
+        return;
+      }
+      if (resp?.data) setCfg({ ...DEFAULTS, ...resp.data });
+    } catch {
+      setErroCarga('Não consegui carregar a configuração de aniversário.');
     } finally {
       setLoading(false);
     }
@@ -91,10 +101,14 @@ export default function BirthdayVoucherModal({ aniversariantesMes, onClose, onGe
     setErro(''); setOkMsg(''); setResultado(null);
     setGerando(true);
     try {
+      if (cfg.discount_value <= 0) throw new Error('O valor do desconto deve ser maior que zero.');
+      if (cfg.discount_type === 'percent' && cfg.discount_value > 100) throw new Error('Percentual não pode passar de 100%.');
       // Salva a config antes de gerar, para usar os valores atuais da tela.
-      await invokeWithAuth('voucher-write', {
+      const salvo = await invokeWithAuth('voucher-write', {
         body: { action: 'set_birthday_config', active_tenant_id: user?.tenantId, config: cfg },
       });
+      const salvoResp = salvo.data as { error?: string } | null;
+      if (salvo.error || salvoResp?.error) throw new Error(salvoResp?.error || 'Não consegui salvar a configuração antes de gerar.');
       const { data, error } = await invokeWithAuth('voucher-write', {
         body: { action: 'generate_birthday_vouchers', active_tenant_id: user?.tenantId, scope: 'month' },
       });
@@ -111,16 +125,14 @@ export default function BirthdayVoucherModal({ aniversariantesMes, onClose, onGe
   };
 
   const enviarWhatsApp = (item: GeradoItem) => {
-    const numero = (item.phone ?? '').replace(/\D/g, '');
-    if (!numero) return;
     const primeiro = item.name.split(' ')[0];
     const validade = cfg.validity_days;
-    const msg = encodeURIComponent(
+    abrirWhatsApp(
+      item.phone,
       `Olá, ${primeiro}! \u{1F382} Feliz aniversário! Preparamos um presente pra você: use o código *${item.code}* e ganhe ${labelDesconto(cfg)}`
       + (cfg.min_order_amount > 0 ? ` (em pedidos acima de ${fmtMoeda(cfg.min_order_amount)})` : '')
       + `. Válido por ${validade} dias. Te esperamos! \u{1F973}`,
     );
-    window.open(`https://wa.me/55${numero}?text=${msg}`, '_blank');
   };
 
   const inputCls = 'w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 text-zinc-700 focus:outline-none focus:border-amber-400 transition-colors';
@@ -148,6 +160,11 @@ export default function BirthdayVoucherModal({ aniversariantesMes, onClose, onGe
           {loading ? (
             <div className="flex items-center justify-center py-8">
               <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : erroCarga ? (
+            <div className="px-3 py-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 text-center">
+              {erroCarga}
+              <button onClick={carregar} className="block mx-auto mt-2 px-3 py-1.5 rounded-lg bg-white border border-red-200 font-semibold hover:bg-red-100 cursor-pointer">Tentar de novo</button>
             </div>
           ) : (
             <>
@@ -188,7 +205,7 @@ export default function BirthdayVoucherModal({ aniversariantesMes, onClose, onGe
                 <input type="checkbox" checked={cfg.enabled} onChange={(e) => set('enabled', e.target.checked)} className="w-4 h-4 accent-amber-500 cursor-pointer" />
                 <div>
                   <p className="text-xs font-semibold text-amber-800">Automação diária</p>
-                  <p className="text-[10px] text-amber-600">Todo dia gera o voucher para quem faz aniversário naquela data, automaticamente.</p>
+                  <p className="text-[10px] text-amber-600">Todo dia, às 9h, gera o voucher de quem faz aniversário naquela data. Só gera — a mensagem você manda pelo perfil do cliente (aba Vouchers).</p>
                 </div>
               </label>
 
@@ -222,7 +239,7 @@ export default function BirthdayVoucherModal({ aniversariantesMes, onClose, onGe
           )}
         </div>
 
-        {!loading && (
+        {!loading && !erroCarga && (
           <div className="flex gap-2 px-5 py-4 border-t border-zinc-100 flex-shrink-0">
             <button onClick={salvarConfig} disabled={salvando || gerando} className="px-4 py-2.5 rounded-xl border border-zinc-200 text-zinc-600 text-sm font-semibold hover:bg-zinc-50 cursor-pointer disabled:opacity-50">
               {salvando ? 'Salvando…' : 'Salvar config'}

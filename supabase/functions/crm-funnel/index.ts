@@ -15,6 +15,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { CRM_TEMPLATES, graph, renderTemplate, waConfig, WaError, waSendTemplate } from "../_shared/wa.ts";
 import { celularBR, FRASE_AUTO, lojaInfo } from "../_shared/crm-auto.ts";
+import { temPermissao } from "../_shared/permissao-servidor.ts";
 
 const OWNER_EMAIL = "natalinojr.engel@gmail.com";
 
@@ -36,6 +37,13 @@ function ok(payload: Record<string, unknown>) {
   return new Response(JSON.stringify({ _v: V, ...payload }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+/** Quebra uma lista em blocos: .in() com centenas de ids estoura a URL do PostgREST. */
+function emBlocos<T>(lista: T[], tamanho = 200): T[][] {
+  const blocos: T[][] = [];
+  for (let i = 0; i < lista.length; i += tamanho) blocos.push(lista.slice(i, i + tamanho));
+  return blocos;
 }
 
 function fmtPhone(digits: string): string {
@@ -199,8 +207,17 @@ Deno.serve(async (req: Request) => {
         .eq("user_id", userId).eq("tenant_id", tenantId).limit(1).maybeSingle();
       if (!membership) return jsonErr("Sem acesso a esta loja.", 403);
       // Escrita de configuração é só de admin.
-      if ((action === "save_rules" || action === "auto_tick") && membership.role !== "admin") {
+      const soAdmin = action === "save_rules" || action === "auto_tick";
+      if (soAdmin && membership.role !== "admin") {
         return jsonErr("Só o admin da loja altera as regras do funil.", 403);
+      }
+      // O resto (ver o funil, abordar, "não perturbe", recalcular) pede a permissão de
+      // Clientes da matriz (cargo → ajuste da loja → ajuste da pessoa), a mesma da tela.
+      // Estar na loja não basta: garçom/tablet lia a base de clientes chamando a Edge direto.
+      // Se a leitura da matriz falhar, temPermissao lança e cai no 500 (nega, não libera).
+      if (!soAdmin) {
+        const pode = await temPermissao(admin, tenantId, userId, String(membership.role ?? ""), "clientes_ver");
+        if (!pode) return jsonErr("Você não tem permissão para ver ou abordar os clientes do funil nesta loja.", 403);
       }
     }
 
@@ -371,28 +388,40 @@ Deno.serve(async (req: Request) => {
       const ids = (linhas ?? []).map((l) => String(l.customer_id));
       if (ids.length === 0) return { clientes: [], regra };
 
-      const { data: cadastros } = await admin
-        .from("customers")
-        .select("id, name, phone, accepts_marketing, last_contacted_at, crm_opt_out_at")
-        .eq("tenant_id", tenantId)
-        .in("id", ids);
+      // Em blocos de 200 e SEM engolir erro: se o cadastro (opt-out) ou o histórico de
+      // envios não carregar, a lista falha em vez de liberar todo mundo para abordagem.
       const porId = new Map<string, Record<string, unknown>>();
-      for (const c of cadastros ?? []) porId.set(String(c.id), c);
+      for (const bloco of emBlocos(ids)) {
+        const { data: cadastros, error: cadErr } = await admin
+          .from("customers")
+          .select("id, name, phone, accepts_marketing, last_contacted_at, crm_opt_out_at")
+          .eq("tenant_id", tenantId)
+          .in("id", bloco);
+        if (cadErr) throw cadErr;
+        for (const c of cadastros ?? []) porId.set(String(c.id), c);
+      }
 
       // Histórico de abordagens: cooldown da regra + teto de frequência.
       const janelaSemana = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      const { data: sends } = await admin
-        .from("crm_sends")
-        .select("customer_id, stage, sent_at")
-        .eq("tenant_id", tenantId)
-        .eq("status", "sent")
-        .in("customer_id", ids)
-        .order("sent_at", { ascending: false })
-        .limit(2000);
+      const sends: Array<Record<string, unknown>> = [];
+      for (const bloco of emBlocos(ids)) {
+        const { data: lote, error: sendsErr } = await admin
+          .from("crm_sends")
+          .select("customer_id, stage, sent_at")
+          .eq("tenant_id", tenantId)
+          .eq("status", "sent")
+          .in("customer_id", bloco)
+          .order("sent_at", { ascending: false })
+          .limit(2000);
+        if (sendsErr) throw sendsErr;
+        sends.push(...(lote ?? []));
+      }
+      // Mais recente primeiro também entre os blocos (o "último do estágio" lê o primeiro que achar).
+      sends.sort((a, b) => String(b.sent_at).localeCompare(String(a.sent_at)));
 
       const ultimoPorEstagio = new Map<string, string>();
       const naSemana = new Map<string, number>();
-      for (const s of sends ?? []) {
+      for (const s of sends) {
         const chave = String(s.customer_id) + "|" + String(s.stage);
         if (!ultimoPorEstagio.has(chave)) ultimoPorEstagio.set(chave, String(s.sent_at));
         if (String(s.sent_at) >= janelaSemana) {
@@ -435,6 +464,9 @@ Deno.serve(async (req: Request) => {
           entered_at: l.entered_at,
           ultimo_contato: cad?.last_contacted_at ?? null,
           aceita_marketing: cad?.accepts_marketing === true,
+          // Campo próprio: "bloqueio" mostra só o 1º motivo (sem telefone vem antes do opt-out).
+          opt_out: !!cad?.crm_opt_out_at,
+          opt_out_at: cad?.crm_opt_out_at ?? null,
           pode_abordar: bloqueio === null,
           bloqueio,
         };
@@ -471,6 +503,9 @@ Deno.serve(async (req: Request) => {
         const tipo = ["percentual", "valor", "nenhum"].includes(String(r.voucher_type)) ? String(r.voucher_type) : "nenhum";
         let valor = Math.max(0, Number(r.voucher_value ?? 0) || 0);
         // Trava de margem: desconto em % nunca passa do teto da loja.
+        // TODO: o teto vale só para %. Voucher em R$ (tipo "valor") segue sem limite porque não
+        // há como comparar R$ com um teto em % sem o total do pedido; precisa de um teto em R$
+        // (ex.: crm_settings.desconto_max_valor) para fechar essa brecha do envio automático.
         if (tipo === "percentual") valor = Math.min(valor, tetoDesconto);
         // Envio automático só com a oferta ligada. Ligar grava quem e quando (a tela
         // pede confirmação antes); desligar é imediato.
@@ -578,10 +613,14 @@ Deno.serve(async (req: Request) => {
       // Início = fim fecha o automático (na tela manual é "sem restrição"; marketing às 3 h, não).
       const dentroDoHorario = ini !== fim && (ini < fim ? hora >= ini && hora < fim : hora >= ini || hora < fim);
 
-      const { count: jaHoje } = await admin
+      // As leituras de crm_sends abaixo são TRAVAS (teto diário, falha recente, 1 mensagem por
+      // celular por semana). Erro nelas aborta a rodada: sem a leitura, o automático mandaria
+      // além do teto ou repetiria para quem já recebeu/falhou.
+      const { count: jaHoje, error: jaHojeErr } = await admin
         .from("crm_sends").select("id", { count: "exact", head: true })
         .eq("tenant_id", tenantId).eq("auto", true).eq("status", "sent")
         .gte("sent_at", `${hojeBR}T00:00:00-03:00`);
+      if (jaHojeErr) throw jaHojeErr;
       const restante = Math.max(0, Number(settings.max_auto_por_dia ?? 30) - (jaHoje ?? 0));
 
       if (ligadas.size === 0) return ok({ enviados: 0, motivo: "nenhum estágio com envio automático", fila: [], total: 0 });
@@ -602,18 +641,21 @@ Deno.serve(async (req: Request) => {
 
       // Falhou no automático nos últimos 7 dias (número sem WhatsApp etc.): fica fora, senão
       // volta toda hora no topo da fila, trava o lote e cria/cancela voucher a cada rodada.
-      const { data: falhas7 } = await admin.from("crm_sends").select("customer_id")
+      const { data: falhas7, error: falhas7Err } = await admin.from("crm_sends").select("customer_id")
         .eq("tenant_id", tenantId).eq("auto", true).eq("status", "failed").gte("sent_at", semana);
+      if (falhas7Err) throw falhas7Err;
       const falhouRecente = new Set((falhas7 ?? []).map((x) => String(x.customer_id)));
 
       // O número que envia é um só para todas as lojas: o mesmo celular não recebe duas
       // mensagens automáticas na semana, venham de que loja vierem.
-      const { data: autoSemana } = await admin.from("crm_sends").select("customer_id")
+      const { data: autoSemana, error: autoSemanaErr } = await admin.from("crm_sends").select("customer_id")
         .eq("auto", true).eq("status", "sent").gte("sent_at", semana).limit(5000);
+      if (autoSemanaErr) throw autoSemanaErr;
       const celularesSemana = new Set<string>();
       const idsSemana = Array.from(new Set((autoSemana ?? []).map((x) => String(x.customer_id))));
-      for (let i = 0; i < idsSemana.length; i += 200) {
-        const { data: tel } = await admin.from("customers").select("phone").in("id", idsSemana.slice(i, i + 200));
+      for (const bloco of emBlocos(idsSemana)) {
+        const { data: tel, error: telErr } = await admin.from("customers").select("phone").in("id", bloco);
+        if (telErr) throw telErr;
         for (const t of tel ?? []) { const cc = celularBR(t.phone); if (cc) celularesSemana.add(cc); }
       }
 

@@ -11,9 +11,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { invokeWithAuth } from '@/lib/supabase';
 import RoletaSvg, { rotacaoParaFatia } from '@/components/fidelidade/RoletaSvg';
+import { avisar, confirmar } from '@/components/base/Dialogos';
 import {
-  CORES, avisosConfig, chancesRoleta, custoPorPonto, distribuirNiveis, novoId, retornoPercentual,
-  type FaixaHistograma, type FidelidadeConfig, type Nivel, type Premio, type Recompensa,
+  CORES, avisosConfigPorSecao, chancesRoleta, custoPorPonto, distribuirNiveis, novoId, retornoPercentual, usosDaRecompensa,
+  type AvisoConfig, type FaixaHistograma, type FidelidadeConfig, type Nivel, type Premio, type Recompensa,
   type TipoPremio, type TipoPresente, type TipoRecompensa,
 } from '@/lib/fidelidade';
 
@@ -38,8 +39,21 @@ const TIPOS_RECOMPENSA: { id: TipoRecompensa; label: string }[] = [
   { id: 'produto', label: 'Produto grátis' },
   { id: 'desconto_valor', label: 'Desconto em R$' },
   { id: 'desconto_percentual', label: 'Desconto em %' },
-  { id: 'frete_gratis', label: 'Entrega grátis' },
+  // 'frete_gratis' (Entrega grátis) não é oferecido: nenhuma tela aplica esse desconto ainda.
+  // Config antiga que já tenha o tipo continua aparecendo no cartão, com aviso (ver recompensas).
 ];
+
+const AVISO_ROLETA = 'Prêmio por sorte pode precisar de autorização (Lei 5.768/71). Confirme com o contador antes de ligar. Brinde certo (ex.: 10º pedido) não tem essa exigência.';
+
+// Mudou alguma regra que muda o saldo de todo mundo quando o programa já está ligado?
+const assinaturaNiveis = (c: FidelidadeConfig) => c.trilha.niveis.map((n) => `${n.id}:${n.min_compras}`).sort().join('|');
+function mudancasQueRecalculam(base: FidelidadeConfig, cfg: FidelidadeConfig): string[] {
+  const m: string[] = [];
+  if (base.pontos.pontos_por_real !== cfg.pontos.pontos_por_real) m.push('os pontos por real');
+  if (base.pontos.validade_meses !== cfg.pontos.validade_meses) m.push('a validade dos pontos');
+  if (assinaturaNiveis(base) !== assinaturaNiveis(cfg)) m.push('o mínimo de compras dos níveis');
+  return m;
+}
 
 const TIPOS_PREMIO: { id: TipoPremio; label: string }[] = [
   { id: 'nada', label: 'Não foi dessa vez' },
@@ -70,6 +84,8 @@ interface RespostaGet {
   started_at?: string | null;
   salvo?: boolean;
   editavel?: boolean;
+  /** Endereço da loja para o link /clube/<slug>. */
+  slug?: string | null;
   updated_at?: string | null;
   janela_dias?: number;
   histograma?: FaixaHistograma[];
@@ -96,7 +112,7 @@ function Campo({ label, dica, children }: { label: string; dica?: string; childr
 }
 
 function Numero({ value, onChange, min = 0, step = 1, disabled, prefixo, sufixo }: {
-  value: number; onChange: (v: number) => void; min?: number; step?: number; disabled?: boolean; prefixo?: string; sufixo?: string;
+  value: number; onChange: (v: number) => void; min?: number; step?: number; disabled?: boolean; prefixo?: string; sufixo?: React.ReactNode;
 }) {
   return (
     <div className="flex items-center gap-1.5">
@@ -139,6 +155,17 @@ function Cartao({ titulo, desc, acao, children }: { titulo: string; desc?: strin
   );
 }
 
+function AvisosDaSecao({ avisos, id }: { avisos: AvisoConfig[]; id?: string }) {
+  if (avisos.length === 0) return null;
+  return (
+    <div id={id} role="alert" className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-1">
+      {avisos.map((a, i) => (
+        <div key={i} className="text-xs text-amber-800 flex gap-1.5"><i className="ri-error-warning-line mt-px" /> {a.texto}</div>
+      ))}
+    </div>
+  );
+}
+
 function Kpi({ label, valor, sub, tom = 'zinc' }: { label: string; valor: string; sub?: string; tom?: 'zinc' | 'amber' | 'emerald' | 'rose' }) {
   const cor = { zinc: 'text-zinc-900', amber: 'text-amber-600', emerald: 'text-emerald-600', rose: 'text-rose-600' }[tom];
   return (
@@ -155,6 +182,8 @@ export default function FidelidadeAba() {
   const tenantId = user?.tenantId;
   const [secao, setSecao] = useState<Secao>('resumo');
   const [cfg, setCfg] = useState<FidelidadeConfig | null>(null);
+  // Config como está gravada (carregada ou salva por último): serve para saber o que mudou.
+  const [cfgBase, setCfgBase] = useState<FidelidadeConfig | null>(null);
   const [salvo, setSalvo] = useState(false);
   const [ligado, setLigado] = useState(false);
   const [ligadoSalvo, setLigadoSalvo] = useState(false);
@@ -162,6 +191,7 @@ export default function FidelidadeAba() {
   const [membros, setMembros] = useState<Membro[] | null>(null);
   const [buscaMembro, setBuscaMembro] = useState('');
   const [editavel, setEditavel] = useState(false);
+  const [slug, setSlug] = useState<string | null>(null);
   const [atualizadoEm, setAtualizadoEm] = useState<string | null>(null);
   const [hist, setHist] = useState<FaixaHistograma[]>([]);
   const [hist90, setHist90] = useState<FaixaHistograma[]>([]);
@@ -172,6 +202,8 @@ export default function FidelidadeAba() {
   const [alterado, setAlterado] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState('');
+  // Erro do último Salvar: fica até a próxima tentativa (mexer num campo não apaga).
+  const [erroSalvar, setErroSalvar] = useState('');
   const [rotacao, setRotacao] = useState(0);
   const [resultadoGiro, setResultadoGiro] = useState<Premio | null>(null);
   const girando = useRef(false);
@@ -193,11 +225,14 @@ export default function FidelidadeAba() {
       setJanelaHist(d.janela_dias ?? null);
       if (soHistograma) return;
       setCfg(d.config ?? null);
+      setCfgBase(d.config ? structuredClone(d.config) : null);
+      setErroSalvar('');
       setSalvo(!!d.salvo);
       setLigado(!!d.enabled);
       setLigadoSalvo(!!d.enabled);
       setInicio(d.started_at ?? null);
       setEditavel(!!d.editavel);
+      setSlug(d.slug ?? null);
       setAtualizadoEm(d.updated_at ?? null);
       setHist90(d.histograma_90d ?? []);
       setProdutos(d.produtos ?? []);
@@ -220,23 +255,63 @@ export default function FidelidadeAba() {
     setMsg('');
   };
 
-  const salvar = () => {
-    if (!tenantId || !cfg) return;
-    if (ligado && !ligadoSalvo && !window.confirm(
-      `Ligar o ${cfg.nome_programa}?\n\n• Pedidos pagos a partir de agora dão pontos (não é retroativo).\n• O nível já considera as compras anteriores.\n• O tablet passa a pedir o CPF do clube no começo do pedido.`,
-    )) return;
+  const avisos = useMemo(() => (cfg ? avisosConfigPorSecao(cfg) : []), [cfg]);
+
+  const avisarNaoLiga = () => avisar(
+    `Enquanto houver aviso o programa não liga. Corrija e tente de novo — dá para salvar como rascunho (desligado) enquanto isso.\n\n${avisos.map((a) => `• ${a.texto}`).join('\n')}`,
+    { erro: true, titulo: `Ainda não dá para ligar (${avisos.length} aviso${avisos.length > 1 ? 's' : ''})` },
+  );
+
+  // Ligar o programa só com a configuração sem aviso; desligar volta ao normal sem checar nada.
+  const alternarPrograma = async (v: boolean) => {
+    if (v && !ligadoSalvo && avisos.length > 0) { await avisarNaoLiga(); return; }
+    setLigado(v); setAlterado(true); setMsg('');
+  };
+
+  const salvar = async () => {
+    if (!tenantId || !cfg || salvando) return;
+    setErroSalvar('');
+    const ligando = ligado && !ligadoSalvo;
+    const desligando = !ligado && ligadoSalvo;
+    if (ligando && avisos.length > 0) { await avisarNaoLiga(); return; }
     setSalvando(true);
-    invokeWithAuth<{ config?: FidelidadeConfig; started_at?: string | null; recalculados?: number; error?: string; message?: string }>('fidelidade', {
-      body: { action: 'save', tenant_id: tenantId, config: cfg, enabled: ligado },
-    }).then((res) => {
-      setSalvando(false);
+    let seguir = true;
+    if (ligando) {
+      seguir = await confirmar({
+        titulo: `Ligar o ${cfg.nome_programa}?`,
+        mensagem: '• Pedidos pagos a partir de agora dão pontos (não é retroativo).\n• O nível já considera as compras anteriores.\n• Vale no tablet, no delivery, na mesa (QR) e no caixa: o cliente se identifica com o CPF do clube.',
+        confirmarLabel: 'Ligar o programa',
+      });
+    } else if (desligando) {
+      seguir = await confirmar({
+        titulo: `Desligar o ${cfg.nome_programa}?`,
+        mensagem: '• O clube some do tablet, do delivery, da mesa (QR) e do caixa, e os pedidos deixam de pontuar pelo programa.\n• Os saldos dos clientes passam a ser calculados pela regra antiga (1 ponto por real gasto).\n• A configuração fica guardada; ao ligar de novo vale a data de início original.',
+        confirmarLabel: 'Desligar',
+        perigo: true,
+      });
+    } else if (ligado && cfgBase) {
+      const mudou = mudancasQueRecalculam(cfgBase, cfg);
+      if (mudou.length > 0) {
+        seguir = await confirmar({
+          titulo: 'Salvar e recalcular os saldos?',
+          mensagem: `Você mudou ${mudou.join(', ')}.\n\nO saldo de todos os clientes é recalculado desde o início do programa${inicio ? ` (${new Date(inicio).toLocaleDateString('pt-BR')})` : ''} com a regra nova. Quem já trocou pontos pode ficar com saldo menor.`,
+          confirmarLabel: 'Salvar e recalcular',
+        });
+      }
+    }
+    if (!seguir) { setSalvando(false); return; }
+    try {
+      const res = await invokeWithAuth<{ config?: FidelidadeConfig; started_at?: string | null; recalculados?: number; error?: string; message?: string }>('fidelidade', {
+        body: { action: 'save', tenant_id: tenantId, config: cfg, enabled: ligado },
+      });
       const d = res.data;
       if (res.error || !d || d.error) {
-        setMsg(res.error?.message || d?.message || d?.error || 'Erro ao salvar.');
+        setErroSalvar(res.error?.message || d?.message || d?.error || 'Erro ao salvar.');
         return;
       }
       // Mostra o que o servidor gravou (valores fora de faixa são ajustados lá).
       if (d.config) setCfg(d.config);
+      setCfgBase(structuredClone(d.config ?? cfg));
       setInicio(d.started_at ?? inicio);
       setLigadoSalvo(ligado);
       setAlterado(false);
@@ -244,7 +319,17 @@ export default function FidelidadeAba() {
       setAtualizadoEm(new Date().toISOString());
       setMsg(d.recalculados ? `Salvo. ${d.recalculados} clientes recalculados.` : 'Salvo.');
       setMembros(null);
-    });
+    } catch (e) {
+      setErroSalvar(e instanceof Error && e.message ? e.message : 'Erro ao salvar.');
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  // Do aviso na barra de salvar até a lista no Resumo.
+  const verAvisos = () => {
+    setSecao('resumo');
+    setTimeout(() => document.getElementById('fid-avisos')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
   };
 
   // ── Números da simulação ────────────────────────────────────────────────────
@@ -275,8 +360,6 @@ export default function FidelidadeAba() {
       custoPonto: custoPorPonto(cfg.recompensas),
     };
   }, [cfg, hist, hist90]);
-
-  const avisos = useMemo(() => (cfg ? avisosConfig(cfg) : []), [cfg]);
 
   // Membros: carrega ao abrir a seção.
   useEffect(() => {
@@ -321,6 +404,19 @@ export default function FidelidadeAba() {
   const niveisOrdenados = [...cfg.trilha.niveis].sort((a, b) => a.min_compras - b.min_compras);
   const maxNivel = Math.max(1, ...niveisOrdenados.map((n) => sim.porNivel.get(n.id)?.clientes ?? 0));
 
+  // Recompensa em uso (presente de nível ou prêmio da roleta) não sai: deixaria o nível/prêmio apontando para o nada.
+  const excluirRecompensa = (r: Recompensa) => {
+    const usos = usosDaRecompensa(cfg, r.id);
+    if (usos.length > 0) {
+      void avisar(`Usada em: ${usos.join(', ')}.\n\nTroque ou tire o presente/prêmio que usa essa recompensa e depois exclua.`, { erro: true, titulo: 'Ainda não dá para excluir' });
+      return;
+    }
+    mudar((c) => ({ ...c, recompensas: c.recompensas.filter((x) => x.id !== r.id) }));
+  };
+  const alternarRoleta = async (v: boolean) => {
+    if (v && !(await confirmar({ titulo: 'Ligar a roleta?', mensagem: AVISO_ROLETA, confirmarLabel: 'Ligar a roleta' }))) return;
+    mudar((c) => ({ ...c, roleta: { ...c.roleta, ativo: v } }));
+  };
   const setRecompensa = (id: string, patch: Partial<Recompensa>) =>
     mudar((c) => ({ ...c, recompensas: c.recompensas.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
   const setNivel = (id: string, patch: Partial<Nivel>) =>
@@ -342,17 +438,22 @@ export default function FidelidadeAba() {
           </Campo>
         </div>
         <div className={`md:w-[26rem] rounded-lg p-3 border flex items-start gap-3 ${ligado ? 'bg-emerald-50 border-emerald-200' : 'bg-white/70 border-amber-200'}`}>
-          <Chave label="Programa ligado" ligado={ligado} disabled={ro} onChange={(v) => { setLigado(v); setAlterado(true); setMsg(''); }} />
+          <Chave label="Programa ligado" ligado={ligado} disabled={ro} onChange={(v) => { void alternarPrograma(v); }} />
           <div className="text-xs leading-snug min-w-0">
             {ligado ? (
               <p className="text-emerald-800">
                 <b>Programa ligado{ligado !== ligadoSalvo ? ' (salve para valer)' : ''}.</b> Pedido pago dá pontos
-                {inicio ? <> desde {new Date(inicio).toLocaleDateString('pt-BR')}</> : ' a partir de hoje'}; o tablet pede o CPF do clube.
+                {inicio ? <> desde {new Date(inicio).toLocaleDateString('pt-BR')}</> : ' a partir de hoje'}; o clube vale no tablet, delivery, mesa (QR) e caixa.
+                {slug && ligadoSalvo && (
+                  <a href={`/clube/${slug}`} target="_blank" rel="noopener noreferrer" className="ml-1 font-semibold text-emerald-700 underline whitespace-nowrap">
+                    Ver página do clube <i className="ri-external-link-line" />
+                  </a>
+                )}
               </p>
             ) : (
               <p className="text-amber-800">
                 <b>Programa desligado{ligado !== ligadoSalvo ? ' (salve para valer)' : ''}.</b> Configure e simule à vontade; ao ligar,
-                os pedidos pagos a partir daquele dia dão pontos e o tablet passa a pedir o CPF.
+                os pedidos pagos a partir daquele dia dão pontos e o clube passa a valer no tablet, delivery, mesa (QR) e caixa.
               </p>
             )}
           </div>
@@ -360,17 +461,27 @@ export default function FidelidadeAba() {
       </div>
 
       {/* Navegação das seções */}
-      <nav className="flex gap-1 overflow-x-auto bg-white border border-zinc-200 rounded-xl p-1" role="tablist">
-        {SECOES.map((s) => (
-          <button
-            key={s.id} role="tab" aria-selected={secao === s.id} onClick={() => setSecao(s.id)}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold whitespace-nowrap cursor-pointer transition-colors ${
-              secao === s.id ? 'bg-amber-500 text-white' : 'text-zinc-500 hover:bg-zinc-100'
-            }`}
-          >
-            <i className={s.icon} /> {s.label}
-          </button>
-        ))}
+      <nav className="flex gap-1 overflow-x-auto scrollbar-hide bg-white border border-zinc-200 rounded-xl p-1" role="tablist">
+        {SECOES.map((s) => {
+          // Quantos avisos de configuração moram nesta seção (Resumo/Pontos/Membros não têm).
+          const nAvisos = avisos.filter((a) => a.secao === s.id).length;
+          return (
+            <button
+              key={s.id} role="tab" aria-selected={secao === s.id} onClick={() => setSecao(s.id)}
+              title={nAvisos > 0 ? `${nAvisos} aviso${nAvisos > 1 ? 's' : ''} nesta seção` : undefined}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-semibold whitespace-nowrap cursor-pointer transition-colors ${
+                secao === s.id ? 'bg-amber-600 text-white' : 'text-zinc-500 hover:bg-zinc-100'
+              }`}
+            >
+              <i className={s.icon} /> {s.label}
+              {nAvisos > 0 && (
+                <span className="inline-flex items-center justify-center min-w-[1.15rem] h-[1.15rem] px-1 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold leading-none">
+                  {nAvisos}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </nav>
 
       {/* ── RESUMO ─────────────────────────────────────────────────────────── */}
@@ -386,17 +497,11 @@ export default function FidelidadeAba() {
             <Kpi
               label="Roleta" tom={cfg.roleta.ativo ? 'amber' : 'zinc'}
               valor={cfg.roleta.ativo ? `${brl(sim.custoGiro)}/giro` : 'Desligada'}
-              sub={cfg.roleta.ativo && sim.girosMes > 0 ? `≈ ${inteiro(sim.girosMes)} giros/mês · ${brl(sim.custoRoletaMes)}` : 'custo médio de cada giro'}
+              sub={cfg.roleta.ativo && sim.girosMes > 0 ? `≈ ${inteiro(sim.girosMes)} ${Math.round(sim.girosMes) === 1 ? 'giro' : 'giros'}/mês · ${brl(sim.custoRoletaMes)}` : 'custo médio de cada giro'}
             />
           </div>
 
-          {avisos.length > 0 && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-1">
-              {avisos.map((a) => (
-                <div key={a} className="text-xs text-amber-800 flex gap-1.5"><i className="ri-error-warning-line mt-px" /> {a}</div>
-              ))}
-            </div>
-          )}
+          <AvisosDaSecao id="fid-avisos" avisos={avisos} />
 
           <div className="grid lg:grid-cols-2 gap-4">
             <Cartao titulo="Como a base ficaria na trilha" desc={`Contando as compras ${JANELAS.find((j) => j.dias === cfg.trilha.janela_dias)?.label.toLowerCase() ?? `dos últimos ${cfg.trilha.janela_dias} dias`}.`}>
@@ -410,7 +515,7 @@ export default function FidelidadeAba() {
                       <div key={n.id}>
                         <div className="flex items-center justify-between text-xs mb-0.5">
                           <span className="font-semibold text-zinc-700">{n.emoji} {n.nome} <span className="font-normal text-zinc-400">· {n.min_compras}+ compras</span></span>
-                          <span className="tabular-nums text-zinc-600">{inteiro(v.clientes)} clientes · {brl(v.gasto)}</span>
+                          <span className="tabular-nums text-zinc-600">{inteiro(v.clientes)} cliente{v.clientes === 1 ? '' : 's'} · {brl(v.gasto)}</span>
                         </div>
                         <div className="h-2 bg-zinc-100 rounded-full overflow-hidden">
                           <div className="h-full rounded-full" style={{ width: `${(v.clientes / maxNivel) * 100}%`, background: n.cor }} />
@@ -418,7 +523,7 @@ export default function FidelidadeAba() {
                       </div>
                     );
                   })}
-                  {sim.fora > 0 && <p className="text-[11px] text-zinc-400">{inteiro(sim.fora)} clientes ainda não chegaram ao primeiro nível.</p>}
+                  {sim.fora > 0 && <p className="text-[11px] text-zinc-400">{inteiro(sim.fora)} cliente{sim.fora === 1 ? ' ainda não chegou' : 's ainda não chegaram'} ao primeiro nível.</p>}
                 </div>
               )}
             </Cartao>
@@ -511,13 +616,15 @@ export default function FidelidadeAba() {
 
       {/* ── RECOMPENSAS ────────────────────────────────────────────────────── */}
       {secao === 'recompensas' && (
+        <>
+        <AvisosDaSecao avisos={avisos.filter((a) => a.secao === 'recompensas')} />
         <Cartao
           titulo="Catálogo de recompensas"
           desc="O que o cliente pode trocar com os pontos. Produto grátis costuma valer mais para o cliente e custar menos para a loja."
           acao={!ro && (
             <button
               onClick={() => mudar((c) => ({ ...c, recompensas: [...c.recompensas, { id: novoId('rw'), nome: 'Nova recompensa', tipo: 'produto', valor: 0, produto_id: null, custo_pontos: 100, custo_loja: 0, nivel_minimo: null, ativo: true }] }))}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm font-semibold text-white bg-amber-500 hover:bg-amber-600 rounded-lg cursor-pointer whitespace-nowrap"
+              className="flex items-center gap-1 px-3 py-1.5 text-sm font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-lg cursor-pointer whitespace-nowrap"
             >
               <i className="ri-add-line" /> Recompensa
             </button>
@@ -539,6 +646,7 @@ export default function FidelidadeAba() {
                       <Campo label="Tipo">
                         <select value={r.tipo} disabled={ro} onChange={(e) => setRecompensa(r.id, { tipo: e.target.value as TipoRecompensa })} className={INPUT}>
                           {TIPOS_RECOMPENSA.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                          {r.tipo === 'frete_gratis' && <option value="frete_gratis">Entrega grátis (não aplicada)</option>}
                         </select>
                       </Campo>
                     </div>
@@ -565,6 +673,11 @@ export default function FidelidadeAba() {
                       <Campo label="Custo p/ loja"><Numero value={r.custo_loja} step={0.5} disabled={ro} prefixo="R$" onChange={(v) => setRecompensa(r.id, { custo_loja: v })} /></Campo>
                     </div>
                   </div>
+                  {r.tipo === 'frete_gratis' && (
+                    <p className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 flex gap-1.5">
+                      <i className="ri-error-warning-line mt-px" /> Entrega grátis ainda não é aplicada no delivery — troque o tipo.
+                    </p>
+                  )}
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2.5">
                     <label className="flex items-center gap-1.5 text-xs text-zinc-600">
                       Só a partir do nível
@@ -582,7 +695,7 @@ export default function FidelidadeAba() {
                       <Chave label="Recompensa ativa" ligado={r.ativo} disabled={ro} onChange={(v) => setRecompensa(r.id, { ativo: v })} />
                       {!ro && (
                         <button
-                          onClick={() => mudar((c) => ({ ...c, recompensas: c.recompensas.filter((x) => x.id !== r.id) }))}
+                          onClick={() => excluirRecompensa(r)}
                           className="w-8 h-8 flex items-center justify-center text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer" aria-label="Remover recompensa"
                         ><i className="ri-delete-bin-line" /></button>
                       )}
@@ -593,11 +706,13 @@ export default function FidelidadeAba() {
             })}
           </div>
         </Cartao>
+        </>
       )}
 
       {/* ── TRILHA ─────────────────────────────────────────────────────────── */}
       {secao === 'trilha' && (
         <div className="space-y-4">
+          <AvisosDaSecao avisos={avisos.filter((a) => a.secao === 'trilha')} />
           <Cartao
             titulo="Trilha do cliente"
             desc="O nível sobe conforme o número de compras. Cada nível multiplica os pontos e pode dar um presente na subida."
@@ -618,7 +733,7 @@ export default function FidelidadeAba() {
                     const ult = Math.max(0, ...c.trilha.niveis.map((n) => n.min_compras));
                     return { ...c, trilha: { ...c.trilha, niveis: [...c.trilha.niveis, { id: novoId('lv'), nome: 'Novo nível', emoji: '⭐', cor: CORES[c.trilha.niveis.length % CORES.length], min_compras: ult + 5, multiplicador: 1, beneficios: '', presente_tipo: 'nenhum', presente_valor: 0, presente_recompensa_id: null }] } };
                   })}
-                  className="flex items-center gap-1 px-3 py-1.5 text-sm font-semibold text-white bg-amber-500 hover:bg-amber-600 rounded-lg cursor-pointer ml-auto"
+                  className="flex items-center gap-1 px-3 py-1.5 text-sm font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-lg cursor-pointer ml-auto"
                 >
                   <i className="ri-add-line" /> Nível
                 </button>
@@ -637,7 +752,7 @@ export default function FidelidadeAba() {
                           <div className="text-2xl leading-none">{n.emoji}</div>
                           <div className="text-sm font-bold mt-1" style={{ color: n.cor }}>{n.nome}</div>
                           <div className="text-[11px] text-zinc-500">{n.min_compras}+ compras · {n.multiplicador}× pts</div>
-                          <div className="text-xs font-semibold text-zinc-800 mt-1.5 tabular-nums">{inteiro(v.clientes)} clientes</div>
+                          <div className="text-xs font-semibold text-zinc-800 mt-1.5 tabular-nums">{inteiro(v.clientes)} cliente{v.clientes === 1 ? '' : 's'}</div>
                         </div>
                         {i < niveisOrdenados.length - 1 && <i className="ri-arrow-right-line text-zinc-300 text-xl mx-1" />}
                       </div>
@@ -694,7 +809,7 @@ export default function FidelidadeAba() {
                         <Campo label="Qual recompensa">
                           <select value={n.presente_recompensa_id ?? ''} disabled={ro} onChange={(e) => setNivel(n.id, { presente_recompensa_id: e.target.value || null })} className={INPUT}>
                             <option value="">Escolher…</option>
-                            {cfg.recompensas.map((r) => <option key={r.id} value={r.id}>{r.nome}</option>)}
+                            {cfg.recompensas.filter((r) => r.tipo !== 'frete_gratis' || r.id === n.presente_recompensa_id).map((r) => <option key={r.id} value={r.id}>{r.nome}</option>)}
                           </select>
                         </Campo>
                       ) : n.presente_tipo === 'pontos' || n.presente_tipo === 'giro' ? (
@@ -713,11 +828,16 @@ export default function FidelidadeAba() {
 
       {/* ── ROLETA ─────────────────────────────────────────────────────────── */}
       {secao === 'roleta' && (
+        <>
+        <div className="flex gap-2 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl p-3 text-xs leading-snug">
+          <i className="ri-scales-3-line mt-px text-base leading-none" /> <span>{AVISO_ROLETA}</span>
+        </div>
+        <AvisosDaSecao avisos={avisos.filter((a) => a.secao === 'roleta')} />
         <div className="grid lg:grid-cols-5 gap-4">
           <div className="lg:col-span-3 space-y-4">
             <Cartao
               titulo="Quando o cliente ganha um giro"
-              acao={<Chave label="Roleta ligada" ligado={cfg.roleta.ativo} disabled={ro} onChange={(v) => mudar((c) => ({ ...c, roleta: { ...c.roleta, ativo: v } }))} />}
+              acao={<Chave label="Roleta ligada" ligado={cfg.roleta.ativo} disabled={ro} onChange={(v) => { void alternarRoleta(v); }} />}
             >
               <div className="grid sm:grid-cols-2 gap-3">
                 <Campo label="A cada N compras" dica="0 = não dá giro por quantidade.">
@@ -742,7 +862,7 @@ export default function FidelidadeAba() {
               acao={!ro && cfg.roleta.premios.length < 12 && (
                 <button
                   onClick={() => mudar((c) => ({ ...c, roleta: { ...c.roleta, premios: [...c.roleta.premios, { id: novoId('pz'), nome: 'Novo prêmio', tipo: 'pontos', valor: 10, recompensa_id: null, peso: 10, custo_loja: 0, limite_dia: 0, cor: CORES[c.roleta.premios.length % CORES.length] }] } }))}
-                  className="flex items-center gap-1 px-3 py-1.5 text-sm font-semibold text-white bg-amber-500 hover:bg-amber-600 rounded-lg cursor-pointer whitespace-nowrap"
+                  className="flex items-center gap-1 px-3 py-1.5 text-sm font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-lg cursor-pointer whitespace-nowrap"
                 ><i className="ri-add-line" /> Prêmio</button>
               )}
             >
@@ -750,7 +870,7 @@ export default function FidelidadeAba() {
                 {cfg.roleta.premios.map((p, i) => (
                   <div key={p.id} className="border border-zinc-200 rounded-xl p-2.5" style={{ borderLeft: `4px solid ${p.cor}` }}>
                     <div className="grid grid-cols-2 md:grid-cols-12 gap-2 items-end">
-                      <div className="col-span-2 md:col-span-4">
+                      <div className="col-span-2 md:col-span-3">
                         <Campo label="Nome"><input value={p.nome} disabled={ro} maxLength={40} onChange={(e) => setPremio(p.id, { nome: e.target.value })} className={INPUT} /></Campo>
                       </div>
                       <div className="md:col-span-3">
@@ -774,7 +894,7 @@ export default function FidelidadeAba() {
                               }}
                             >
                               <option value="">Escolher…</option>
-                              {cfg.recompensas.map((r) => <option key={r.id} value={r.id}>{r.nome}</option>)}
+                              {cfg.recompensas.filter((r) => r.tipo !== 'frete_gratis' || r.id === p.recompensa_id).map((r) => <option key={r.id} value={r.id}>{r.nome}</option>)}
                             </select>
                           </Campo>
                         ) : p.tipo === 'pontos' || p.tipo === 'desconto_percentual' ? (
@@ -783,12 +903,16 @@ export default function FidelidadeAba() {
                           </Campo>
                         ) : <div />}
                       </div>
-                      <div className="md:col-span-2">
-                        <Campo label="Peso"><Numero value={p.peso} disabled={ro} onChange={(v) => setPremio(p.id, { peso: v })} /></Campo>
+                      <div className="md:col-span-3">
+                        <Campo label="Peso">
+                          <Numero
+                            value={p.peso} disabled={ro} onChange={(v) => setPremio(p.id, { peso: v })}
+                            sufixo={<b className="tabular-nums text-zinc-700" title="Chance de sair neste giro">= {pct((sim.chances[i]?.chance ?? 0) * 100)}</b>}
+                          />
+                        </Campo>
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2">
-                      <span className="text-xs font-bold tabular-nums" style={{ color: p.cor }}>{pct((sim.chances[i]?.chance ?? 0) * 100)} de chance</span>
                       <label className="flex items-center gap-1.5 text-xs text-zinc-600">
                         Custo p/ loja
                         <input type="number" min={0} step={0.5} disabled={ro || p.tipo === 'nada'} value={p.custo_loja} onChange={(e) => setPremio(p.id, { custo_loja: Number(e.target.value) || 0 })} className="w-20 px-2 py-1 text-xs border border-zinc-200 rounded-md tabular-nums" />
@@ -838,6 +962,7 @@ export default function FidelidadeAba() {
             </Cartao>
           </div>
         </div>
+        </>
       )}
 
       {/* ── MEMBROS ────────────────────────────────────────────────────────── */}
@@ -902,22 +1027,29 @@ export default function FidelidadeAba() {
       {editavel ? (
         <div className="fixed bottom-0 inset-x-0 md:left-auto md:right-24 md:bottom-4 md:inset-x-auto z-30">
           <div className="bg-white border-t md:border md:rounded-xl border-zinc-200 shadow-lg pl-4 pr-24 md:pr-4 py-3 flex items-center gap-3">
-            <span className="text-xs text-zinc-500 flex-1 md:flex-none">
-              {msg || (alterado ? 'Alterações não salvas' : salvo && atualizadoEm ? `Salvo em ${new Date(atualizadoEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}` : 'Padrão sugerido — ainda não salvo')}
-            </span>
+            <div className="flex-1 md:flex-none min-w-0 md:max-w-sm">
+              <span className={`block text-xs leading-snug ${erroSalvar ? 'text-rose-600 font-semibold' : 'text-zinc-500'}`} role={erroSalvar ? 'alert' : undefined}>
+                {erroSalvar || msg || (alterado ? 'Alterações não salvas' : salvo && atualizadoEm ? `Salvo em ${new Date(atualizadoEm).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}` : 'Padrão sugerido — ainda não salvo')}
+              </span>
+              {avisos.length > 0 && (
+                <button onClick={verAvisos} className="block text-xs font-semibold text-amber-700 hover:text-amber-900 underline cursor-pointer">
+                  {avisos.length} aviso{avisos.length > 1 ? 's' : ''} — ver
+                </button>
+              )}
+            </div>
             {alterado && (
               <button onClick={() => carregar()} disabled={salvando} className="px-3 py-2 text-sm font-semibold text-zinc-600 hover:bg-zinc-100 rounded-lg cursor-pointer">Descartar</button>
             )}
             <button
               onClick={salvar} disabled={salvando || (!alterado && salvo)}
-              className="px-4 py-2 text-sm font-bold text-white bg-amber-500 hover:bg-amber-600 rounded-lg cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-4 py-2 text-sm font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {salvando ? 'Salvando…' : 'Salvar'}
             </button>
           </div>
         </div>
       ) : (
-        <p className="text-xs text-zinc-400 text-center">Só leitura: quem altera o programa é admin, supervisor ou quem tem a permissão de Promoções.</p>
+        <p className="text-xs text-zinc-400 text-center">Só leitura: quem altera o programa é o admin ou quem tem a permissão de Promoções.</p>
       )}
     </div>
   );

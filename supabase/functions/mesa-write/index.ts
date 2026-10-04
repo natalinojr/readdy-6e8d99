@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { deductStockForSkipKdsItems, runStockInBackground } from "../_shared/stock.ts";
 import { descontoClubeServidor, idsValidos, sessaoDoClube, vincularClube } from "../_shared/clube-servidor.ts";
 import { activeLocales, normalizeLocale, loadTranslations, decorate, decorateHighlights, translationsPayload } from "../_shared/menu-i18n.ts";
+import { promoPrecosDeHoje } from "../_shared/promo-item.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -280,19 +281,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       for (const o of optRes.data ?? []) if (o.is_active) optMap.set(String(o.id), o);
 
       // Promoção válida HOJE em Brasília (mesma regra de rawPromoAtivaHoje do front; menor preço vence).
-      const brParts = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Sao_Paulo", year: "numeric", month: "2-digit", day: "2-digit", weekday: "short" }).formatToParts(new Date());
-      const bp = (t: string) => brParts.find((p) => p.type === t)?.value ?? "";
-      const hojeBR = `${bp("year")}-${bp("month")}-${bp("day")}`;
-      const diaSemanaBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(bp("weekday"));
-      const promoMap = new Map<string, number>();
-      for (const p of promoRes.data ?? []) {
-        let valida: boolean;
-        if (p.specific_date && !p.is_recurring) valida = String(p.specific_date).slice(0, 10) === hojeBR;
-        else valida = !Array.isArray(p.days_of_week) || p.days_of_week.length === 0 || (p.days_of_week as number[]).includes(diaSemanaBR);
-        if (!valida) continue;
-        const k = String(p.item_id); const v = Number(p.promotional_price ?? 0);
-        if (!promoMap.has(k) || v < (promoMap.get(k) as number)) promoMap.set(k, v);
-      }
+      // Regra em _shared/promo-item.ts (o delivery-write usa a mesma).
+      const promoMap = promoPrecosDeHoje(promoRes.data ?? []);
       const highlightPrices = new Map<string, number[]>();
       for (const h of hlRes.data ?? []) {
         if (h.custom_price == null) continue;
