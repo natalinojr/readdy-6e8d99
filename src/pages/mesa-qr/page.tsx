@@ -308,8 +308,7 @@ export default function MesaQRPage() {
               <LojaTopo
                 nome={tenantName || 'Estabelecimento'}
                 logoUrl={data.logoUrl}
-                capaUrl={data.capaUrl}
-                capaPosicao={data.capaPosicao}
+                capas={data.capas}
                 situacao={{ tipo: 'aberto', texto: t('cliente.aberto') }}
                 subtitulo={!data.queueMode && table ? t('cliente.mesaN', { n: table.number }) : null}
                 acoes={seletorIdiomaCapa}

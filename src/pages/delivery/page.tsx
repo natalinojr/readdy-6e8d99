@@ -179,7 +179,7 @@ export default function DeliveryPage() {
   }
 
   // Capa e cor da loja (Configurações); sem elas, faixa e botões na cor padrão
-  const capaLoja = data.tenant?.cover_url || null;
+  const capasLoja = data.tenant?.capas || [];
   const estiloLoja = corLojaVars(data.tenant?.brand_color || null);
 
   // Topo da loja: situação (aberto/fechado + horário) e o que decide a compra
@@ -541,8 +541,7 @@ export default function DeliveryPage() {
             <LojaTopo
               nome={tenant?.name || 'Delivery'}
               logoUrl={lojaLogo}
-              capaUrl={capaLoja}
-              capaPosicao={data.tenant?.cover_position || null}
+              capas={capasLoja}
               situacao={situacao}
               subtitulo={city || null}
               metas={metasLoja}
@@ -652,8 +651,7 @@ export default function DeliveryPage() {
             <LojaTopo
               nome={tenant?.name || 'Delivery'}
               logoUrl={lojaLogo}
-              capaUrl={capaLoja}
-              capaPosicao={data.tenant?.cover_position || null}
+              capas={capasLoja}
               situacao={situacao}
               subtitulo={customerName ? 'Olá, ' + (customerName || '').split(' ')[0] : (city || null)}
               metas={metasLoja}

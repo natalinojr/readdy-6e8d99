@@ -8,6 +8,7 @@ import { trackPixel } from '@/lib/metaPixel';
 import { formatPhoneBR, readSavedDeliveryPhone, saveDeliveryPhone, clearSavedDeliveryPhone } from '@/lib/deliveryPhone';
 import { idsForaDoHorario, normalizarHorario } from '@/lib/horarioExibicao';
 import { useRelogioMinuto } from '@/hooks/useRelogioMinuto';
+import { COLUNAS_MARCA_LOJA, lerCapasLoja, type CapaLoja } from '@/lib/capasLoja';
 
 // Origem do pedido (campanha): lê utm_source da URL na 1ª visita e persiste na sessão,
 // pois o cliente navega vários passos antes de fechar o pedido (a query pode se perder).
@@ -105,6 +106,8 @@ type TenantInfo = {
   cover_url?: string | null;
   brand_color?: string | null;
   cover_position?: string | null;
+  /** Fotos de capa (até 10) — já normalizadas, inclusive para lojas só com cover_url */
+  capas?: CapaLoja[];
 };
 
 type Neighborhood = {
@@ -534,15 +537,15 @@ async function fetchDeliveryConfig(
       // Junto com a logo: capa e cor do cardápio online (Configurações › Loja)
       const logoPromise = supabase
         .from('tenants')
-        .select('logo_url, cover_url, brand_color, cover_position')
+        .select(COLUNAS_MARCA_LOJA)
         .eq('id', data.tenant.id)
         .maybeSingle()
         .then(function (r) { return r.data || null; });
       const timeoutPromise = new Promise<null>(function (resolve) {
         setTimeout(function () { resolve(null); }, 2000);
       });
-      const marca = await Promise.race([logoPromise, timeoutPromise]) as { logo_url?: string | null; cover_url?: string | null; brand_color?: string | null; cover_position?: string | null } | null;
-      tenantInfo = { ...data.tenant, logo_url: marca?.logo_url || null, cover_url: marca?.cover_url || null, brand_color: marca?.brand_color || null, cover_position: marca?.cover_position || null };
+      const marca = await Promise.race([logoPromise, timeoutPromise]) as { logo_url?: string | null; cover_url?: string | null; brand_color?: string | null; cover_position?: string | null; cover_images?: unknown } | null;
+      tenantInfo = { ...data.tenant, logo_url: marca?.logo_url || null, cover_url: marca?.cover_url || null, brand_color: marca?.brand_color || null, cover_position: marca?.cover_position || null, capas: lerCapasLoja(marca) };
     } catch (_e) { /* segue sem logo */ }
 
     setters.setTenant(tenantInfo);

@@ -9,6 +9,7 @@ import { loadPixMemo, clearPixMemo } from './pixMemo';
 import { idsForaDoHorario, normalizarHorario } from '@/lib/horarioExibicao';
 import { useRelogioMinuto } from '@/hooks/useRelogioMinuto';
 import { supabase } from '@/lib/supabase';
+import { COLUNAS_MARCA_LOJA, lerCapasLoja, type CapaLoja } from '@/lib/capasLoja';
 
 // Nome que o cliente usou da última vez neste aparelho (preenche "Como chamamos você?")
 const NOME_CLIENTE_KEY = 'qr_nome_cliente';
@@ -313,9 +314,8 @@ export function useMesaQRData() {
   // Logo da loja (tenants.logo_url) — a mesa-write não devolve; leitura pública direta
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
   // Capa e cor do cardápio online (Configurações › Loja)
-  const [capaUrl, setCapaUrl] = useState<string | null>(null);
+  const [capas, setCapas] = useState<CapaLoja[]>([]);
   const [corLoja, setCorLoja] = useState<string | null>(null);
-  const [capaPosicao, setCapaPosicao] = useState<string | null>(null);
   const [participant, setParticipant] = useState<Participant | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -501,16 +501,15 @@ export function useMesaQRData() {
 
         // Logo: secundário — com timeout, porque o supabase-js pode travar no lock de sessão
         Promise.race([
-          supabase.from('tenants').select('logo_url, cover_url, brand_color, cover_position').eq('id', currentTenantId).maybeSingle()
+          supabase.from('tenants').select(COLUNAS_MARCA_LOJA).eq('id', currentTenantId).maybeSingle()
             .then(function (r) { return r.data || null; }),
           new Promise<null>(function (resolve) { setTimeout(function () { resolve(null); }, 2500); }),
         ]).then(function (m) {
-          const marca = m as { logo_url?: string | null; cover_url?: string | null; brand_color?: string | null; cover_position?: string | null } | null;
+          const marca = m as { logo_url?: string | null; cover_url?: string | null; brand_color?: string | null; cover_position?: string | null; cover_images?: unknown } | null;
           if (cancelled || !marca) return;
           if (marca.logo_url) setLogoUrl(marca.logo_url);
-          if (marca.cover_url) setCapaUrl(marca.cover_url);
+          setCapas(lerCapasLoja(marca));
           if (marca.brand_color) setCorLoja(marca.brand_color);
-          if (marca.cover_position) setCapaPosicao(marca.cover_position);
         }).catch(function () { /* segue sem logo */ });
 
         if (!isFila && currentSessionToken && !urlSessionToken) {
@@ -924,9 +923,8 @@ export function useMesaQRData() {
     error: errorMsg,
     tenantName: tenantName,
     logoUrl: logoUrl,
-    capaUrl: capaUrl,
+    capas: capas,
     corLoja: corLoja,
-    capaPosicao: capaPosicao,
     nomeSalvo: lerNomeSalvo(),
     garantirParticipante: garantirParticipante,
     categories: categories,

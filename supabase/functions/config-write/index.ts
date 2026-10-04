@@ -617,12 +617,41 @@ Deno.serve(async (req) => {
       // Parte da capa que aparece (object-position "X% Y%"); vazio = centro
       if (updateData.cover_position !== undefined) {
         const pos = String(updateData.cover_position ?? '').trim()
-        if (pos && !/^(100|[0-9]{1,2})(\.[0-9]+)?% (100|[0-9]{1,2})(\.[0-9]+)?%$/.test(pos)) {
+        if (pos && !/^(100|[0-9]{1,2})(\.\d+)?% (100|[0-9]{1,2})(\.\d+)?%$/.test(pos)) {
           return new Response(JSON.stringify({ success: false, error: 'Posição da capa inválida' }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
           })
         }
         updateData.cover_position = pos || null
+      }
+      // Fotos de capa que passam sozinhas (até 10). A 1ª vira cover_url/cover_position,
+      // que é o que telas antigas leem.
+      if (rest.cover_images !== undefined) {
+        const lista = Array.isArray(rest.cover_images) ? rest.cover_images : null
+        if (!lista || lista.length > 10) {
+          return new Response(JSON.stringify({ success: false, error: 'Envie no máximo 10 fotos de capa' }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
+          })
+        }
+        const capas: { url: string; position: string }[] = []
+        for (const item of lista) {
+          const url = String((item as Record<string, unknown>)?.url ?? '').trim()
+          const position = String((item as Record<string, unknown>)?.position ?? '').trim()
+          if (!/^https:\/\//.test(url) || url.length > 1000) {
+            return new Response(JSON.stringify({ success: false, error: 'Foto de capa inválida' }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
+            })
+          }
+          if (position && !/^(100|[0-9]{1,2})(\.\d+)?% (100|[0-9]{1,2})(\.\d+)?%$/.test(position)) {
+            return new Response(JSON.stringify({ success: false, error: 'Posição da capa inválida' }), {
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
+            })
+          }
+          capas.push({ url, position })
+        }
+        updateData.cover_images = capas
+        updateData.cover_url = capas[0]?.url || null
+        updateData.cover_position = capas[0]?.position || null
       }
 
       if (Object.keys(updateData).length === 0) {

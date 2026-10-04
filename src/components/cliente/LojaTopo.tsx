@@ -1,7 +1,8 @@
 // Topo da loja nas telas do cliente (delivery e QR): capa, logo, nome, situação
 // (aberto/fechado) e as informações que decidem a compra (tempo, taxa, mínimo).
 // Rola junto com o cardápio — quem fica preso no topo é a barra de categorias.
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import type { CapaLoja } from '@/lib/capasLoja';
 
 export interface LojaTopoMeta {
   icone: string;
@@ -14,10 +15,8 @@ export type LojaTopoSituacao = 'aberto' | 'fechando' | 'fechado';
 interface Props {
   nome: string;
   logoUrl?: string | null;
-  /** Foto de capa da loja. Sem capa, a faixa usa a cor da loja. */
-  capaUrl?: string | null;
-  /** Parte da capa que aparece ("X% Y%", Configurações › Loja). Vazio = centro. */
-  capaPosicao?: string | null;
+  /** Fotos de capa (até 10, passam sozinhas). Sem capa, a faixa usa a cor da loja. */
+  capas?: CapaLoja[];
   situacao?: { tipo: LojaTopoSituacao; texto: string } | null;
   /** Texto curto ao lado da situação (ex.: cidade). */
   subtitulo?: string | null;
@@ -49,19 +48,14 @@ export default function LojaTopo(props: Props) {
     .join('')
     .toUpperCase();
 
+  const capas = props.capas || [];
+
   return (
     <div>
       <div
-        className={'relative ' + (props.capaUrl ? 'h-36 bg-zinc-800' : 'h-24 bg-[var(--cor-loja)]')}
+        className={'relative ' + (capas.length > 0 ? 'h-36 bg-zinc-800' : 'h-24 bg-[var(--cor-loja)]')}
       >
-        {props.capaUrl ? (
-          <img
-            src={props.capaUrl}
-            alt=""
-            className="absolute inset-0 w-full h-full object-cover"
-            style={props.capaPosicao ? { objectPosition: props.capaPosicao } : undefined}
-          />
-        ) : null}
+        {capas.length > 0 ? <CarrosselCapa capas={capas} /> : null}
         {props.acoes ? (
           <div className="absolute top-3 right-3 flex items-center gap-2">{props.acoes}</div>
         ) : null}
@@ -113,6 +107,138 @@ export default function LojaTopo(props: Props) {
       </div>
 
       {props.children}
+    </div>
+  );
+}
+
+const INTERVALO_CAPA_MS = 5000;
+
+/** Celular em economia de dados ou com "reduzir movimento": a capa fica parada na 1ª foto. */
+function capaDevePassarSozinha(): boolean {
+  try {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+    const conn = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
+    if (conn && conn.saveData) return false;
+  } catch { /* segue passando */ }
+  return true;
+}
+
+// Fotos empilhadas que trocam com fade. Só a 1ª baixa junto com a página; cada
+// próxima só é pedida quando chega perto da vez dela — quem sai rápido não baixa as 10.
+function CarrosselCapa(props: { capas: CapaLoja[] }) {
+  const capas = props.capas;
+  const total = capas.length;
+  const [atual, setAtual] = useState(0);
+  // Índices que já podem ter <img> no DOM (= já foram/estão sendo baixados)
+  const [liberadas, setLiberadas] = useState<number[]>([0]);
+  const [primeiraPronta, setPrimeiraPronta] = useState(false);
+  const [autoplay] = useState(capaDevePassarSozinha);
+  const [visivel, setVisivel] = useState(true);
+  const [rodada, setRodada] = useState(0); // reinicia o tempo depois de um toque/arrasto
+  const toqueRef = useRef<{ x: number; y: number } | null>(null);
+
+  const idx = total > 0 ? atual % total : 0;
+
+  // Troca de loja/lista (Configurações salvou outra ordem): recomeça do início
+  const chave = capas.map(function (c) { return c.url; }).join('|');
+  const chaveRef = useRef(chave);
+  useEffect(function () {
+    if (chaveRef.current === chave) return;
+    chaveRef.current = chave;
+    setAtual(0); setLiberadas([0]);
+  }, [chave]);
+
+  // Libera a foto atual e a próxima (a próxima baixa enquanto a atual aparece)
+  useEffect(function () {
+    if (total < 2 || !primeiraPronta) return;
+    const proxima = (idx + 1) % total;
+    setLiberadas(function (l) {
+      if (l.indexOf(idx) >= 0 && l.indexOf(proxima) >= 0) return l;
+      const n = l.slice();
+      if (n.indexOf(idx) < 0) n.push(idx);
+      if (n.indexOf(proxima) < 0) n.push(proxima);
+      return n;
+    });
+  }, [idx, total, primeiraPronta]);
+
+  // Aba em segundo plano não fica girando
+  useEffect(function () {
+    function aoMudar() { setVisivel(document.visibilityState !== 'hidden'); }
+    document.addEventListener('visibilitychange', aoMudar);
+    return function () { document.removeEventListener('visibilitychange', aoMudar); };
+  }, []);
+
+  useEffect(function () {
+    if (total < 2 || !autoplay || !visivel || !primeiraPronta) return;
+    const t = setTimeout(function () { setAtual(function (a) { return (a + 1) % total; }); }, INTERVALO_CAPA_MS);
+    return function () { clearTimeout(t); };
+  }, [idx, total, autoplay, visivel, primeiraPronta, rodada]);
+
+  function irPara(n: number) {
+    const destino = ((n % total) + total) % total;
+    // Toque antes da 1ª foto carregar: libera a escolhida na hora (senão o topo fica vazio)
+    setLiberadas(function (l) { return l.indexOf(destino) >= 0 ? l : l.concat([destino]); });
+    setAtual(destino);
+    setRodada(function (r) { return r + 1; });
+  }
+
+  function aoDescer(e: React.PointerEvent<HTMLDivElement>) {
+    toqueRef.current = { x: e.clientX, y: e.clientY };
+  }
+
+  function aoSoltar(e: React.PointerEvent<HTMLDivElement>) {
+    const ini = toqueRef.current;
+    toqueRef.current = null;
+    if (!ini || total < 2) return;
+    const dx = e.clientX - ini.x;
+    const dy = e.clientY - ini.y;
+    // Só arrasto claramente horizontal troca a foto; vertical é a rolagem do cardápio
+    if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    irPara(dx < 0 ? idx + 1 : idx - 1);
+  }
+
+  return (
+    <div
+      className="absolute inset-0 overflow-hidden"
+      style={{ touchAction: 'pan-y' }}
+      onPointerDown={total > 1 ? aoDescer : undefined}
+      onPointerUp={total > 1 ? aoSoltar : undefined}
+      onPointerCancel={function () { toqueRef.current = null; }}
+    >
+      {capas.map(function (c, i) {
+        if (liberadas.indexOf(i) < 0) return null;
+        return (
+          <img
+            key={c.url + i}
+            src={c.url}
+            alt=""
+            draggable={false}
+            onLoad={i === 0 ? function () { setPrimeiraPronta(true); } : undefined}
+            onError={i === 0 ? function () { setPrimeiraPronta(true); } : undefined}
+            className={'absolute inset-0 w-full h-full object-cover select-none transition-opacity duration-700 ' + (i === idx ? 'opacity-100' : 'opacity-0')}
+            style={c.posicao ? { objectPosition: c.posicao } : undefined}
+          />
+        );
+      })}
+      {/* z-10: o bloco da logo sobe 40px por cima da capa e roubaria o toque */}
+      {total > 1 ? (
+        <div className="absolute bottom-1.5 right-3 z-10 flex items-center">
+          {capas.map(function (c, i) {
+            return (
+              <button
+                key={c.url + i}
+                type="button"
+                aria-label={'Foto ' + (i + 1) + ' de ' + total}
+                aria-current={i === idx ? 'true' : undefined}
+                onClick={function () { irPara(i); }}
+                className="w-5 h-6 flex items-center justify-center cursor-pointer"
+              >
+                <span className={'block h-1.5 rounded-full shadow-sm transition-all ' + (i === idx ? 'w-4 bg-white' : 'w-1.5 bg-white/60')} />
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }
