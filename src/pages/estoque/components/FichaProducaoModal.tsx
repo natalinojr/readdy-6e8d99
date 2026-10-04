@@ -5,12 +5,16 @@ import { useIngredientCategories } from '@/hooks/useIngredientCategories';
 import type { ProductionRecipe, UnidadeEstoque } from '@/types/estoque';
 import { convertUnit, sameUnitGroup, convertUnitCost } from '@/lib/unitConversion';
 import { formatCurrencyPreciso } from '@/lib/formatters';
+import { useToast } from '@/contexts/ToastContext';
 
 // Busca sem diferenciar maiúscula/minúscula nem acento ("pao" acha "PÃO").
 const semAcento = (t: string) => t.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
 
 interface Props {
   recipe: ProductionRecipe | null;
+  /** Ficha nova já com o nome (e a unidade) do insumo que veio do "Produzir hoje" */
+  nomeInicial?: string;
+  unidadeInicial?: UnidadeEstoque;
   onClose: () => void;
 }
 
@@ -47,14 +51,15 @@ interface FormStep {
   text: string;
 }
 
-export default function FichaProducaoModal({ recipe, onClose }: Props) {
+export default function FichaProducaoModal({ recipe, nomeInicial, unidadeInicial, onClose }: Props) {
   const { addRecipe, updateRecipe } = useProducao();
   const { insumos } = useEstoque();
   const { names: categoriasDisponiveis, addCategory } = useIngredientCategories();
+  const toast = useToast();
 
   const isEditing = !!recipe;
-  const [nome, setNome] = useState(recipe?.name ?? '');
-  const [unidade, setUnidade] = useState<UnidadeEstoque>(recipe?.unit ?? 'kg');
+  const [nome, setNome] = useState(recipe?.name ?? nomeInicial ?? '');
+  const [unidade, setUnidade] = useState<UnidadeEstoque>(recipe?.unit ?? unidadeInicial ?? 'kg');
   const [categoria, setCategoria] = useState(recipe?.category ?? '');
   const [criandoCategoria, setCriandoCategoria] = useState(false);
   const [novaCategoria, setNovaCategoria] = useState('');
@@ -286,6 +291,9 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
         });
       }
       onClose();
+    } catch (e) {
+      // Antes o erro sumia: a janela ficava aberta e a pessoa não sabia que não salvou.
+      toast.error(isEditing ? 'Não foi possível salvar a ficha' : 'Não foi possível criar a ficha', e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
@@ -311,10 +319,10 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
         <div className="sticky top-0 bg-white border-b border-zinc-100 px-5 py-4 flex items-center justify-between z-10">
           <div>
             <h2 className="text-base font-bold text-zinc-800">
-              {isEditing ? 'Editar Ficha de Producao' : 'Nova Ficha de Producao'}
+              {isEditing ? 'Editar Ficha de Produção' : 'Nova Ficha de Produção'}
             </h2>
             <p className="text-xs text-zinc-400 mt-0.5">
-              Cadastre insumos brutos por unidade do produto. Na producao, o sistema cria o produto acabado no estoque automaticamente.
+              Cadastre insumos brutos por unidade do produto. Na produção, o sistema cria o produto acabado no estoque automaticamente.
             </p>
           </div>
           <button
@@ -341,7 +349,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
             </div>
             <div>
               <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
-                Unidade de saida
+                Unidade de saída
               </label>
               <select
                 value={unidade}
@@ -404,14 +412,14 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
               </div>
             )}
             <p className="text-[10px] text-zinc-400 mt-1">
-              Ao registrar a producao, o produto sera criado no estoque com essa categoria.
+              Ao registrar a produção, o produto será criado no estoque com essa categoria.
             </p>
           </div>
 
-          {/* Quantidade minima de estoque */}
+          {/* Quantidade mínima de estoque */}
           <div>
             <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
-              Quantidade minima de estoque
+              Quantidade mínima de estoque
             </label>
             <div className="flex items-center gap-2">
               <input
@@ -430,7 +438,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
               <span className="text-xs text-zinc-500">{unidade}</span>
             </div>
             <p className="text-[10px] text-zinc-400 mt-1">
-              Quando o estoque deste produto atingir este nivel, o sistema alertara para producao.
+              Quando o estoque deste produto atingir este nível, o sistema alertará para produção.
             </p>
           </div>
 
@@ -575,7 +583,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
               <div className="text-center py-6 border border-dashed border-zinc-200 rounded-lg">
                 <i className="ri-add-circle-line text-2xl text-zinc-300 block mb-2" />
                 <p className="text-xs text-zinc-400">
-                  Adicione insumos brutos a ficha de producao
+                  Adicione insumos brutos à ficha de produção
                 </p>
               </div>
             ) : (
@@ -726,7 +734,7 @@ export default function FichaProducaoModal({ recipe, onClose }: Props) {
             ) : (
               <>
                 <i className="ri-save-line mr-1" />
-                {isEditing ? 'Salvar alteracoes' : 'Criar ficha'}
+                {isEditing ? 'Salvar alterações' : 'Criar ficha'}
               </>
             )}
           </button>

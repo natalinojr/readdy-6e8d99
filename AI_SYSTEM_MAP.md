@@ -132,7 +132,7 @@ KDS, producao e impressao:
 - Edge Functions: `production-write`, `print-queue-write`, `print-queue-agent`, `printer-ping`, `printer-raw`.
 
 Estoque, compras e CMV:
-- Tela: `src/pages/estoque`. Abre na aba **Início** (`components/inicio/`: comprar · contar · vai faltar); as outras abas seguem iguais.
+- Tela: `src/pages/estoque`. Abre na aba **Início** (`components/inicio/`: comprar · contar · vai faltar). Desde 2026-10-04 as 10 abas ficam em 5 grupos com pílulas (Início · Insumos · Movimentos · Contagem · Custo), com "+ Registrar", busca de insumo → ficha do insumo e "Arrumar a lista" (ver histórico 2026-10-04 "layout novo").
 - Componentes: inicio, insumos, inventario, movimentacoes, validade, producao, CMV, fornecedores.
 - **Regra única de "estoque baixo"** (2026-10-03): SQL `insumo_abaixo_minimo` / `insumo_esgotado` + leitura `fn_estoque_situacao(p_tenant_id)`; espelho TS em `src/lib/estoqueRegras.ts`; hook `useEstoqueSituacao` (é o que Dashboard, Início do Estoque e a tela Hoje leem). Ver histórico 2026-10-03.
 - Contexts/hooks: `EstoqueContext`, `ProducaoContext`, `useEstoqueSituacao`, `useCmvReport`, `useCmvRelatorio`, `useItensSemEstoque`, `useStockCriticalAlerts`, `useIngredientCategories`, `useIngredientPriceHistory`, `useSuppliers`.
@@ -272,6 +272,18 @@ Quando o usuario pedir "muda X":
 ## Historico de solucoes e criterios
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
+
+### 2026-10-04 — Estoque: layout novo (5 grupos, Registrar, ficha do insumo, Arrumar a lista)
+- **Protótipo aprovado pelo dono** (`docs/prototipos/estoque-abas-proposta.html`). Regra: nenhuma aba, número ou botão sai; ids `?tab=` iguais (links antigos abrem no lugar novo).
+- **Estrutura:** `src/pages/estoque/page.tsx` = grupos + pílulas + busca + ⋯ + "+ Registrar" e TODAS as janelas comuns, abertas por qualquer aba pelo controle `useEstoqueTela()` (`src/pages/estoque/EstoqueTela.tsx`: situação da regra única, irPara, abrirFicha, abrirRegistrar, abrirArrumar, contar, abrirEntrada/Saida/Perda/Transferir/Compra, editarInsumo…). Peças visuais em `components/ui/EstoqueUi.tsx` (Faixa, CartaoAcao, CartaoBarra, Chips, SecaoTitulo, MenuMais…). Folhas novas em `components/folhas/` (FichaInsumo, Arrumar, EscolherFornecedor, Registrar, Perda).
+- **Quem só conta** (`estoque_inventario` sem `estoque_movimentar`): vê só Contagem › Inventário; o controle não abre nada que grave (a tela é a única barreira: o stock-write só confere a loja). Esta trava veio do "acesso por pessoa" (b4fa7faa) — não perder ao mexer no cabeçalho.
+- **Uma regra para "Arrumar a lista"**: `src/lib/estoqueArrumar.ts` (`perguntasDoInsumo`, `contarPendencias`) — Lista, Início e a fila usam a mesma (só insumo com aviso). Contagens do Arrumar gravam juntas no fim (uma sessão só).
+- **Banco** (`20261004200000_estoque_layout_leituras.sql`): `fn_estoque_mov_resumo` (números do período inteiro + vendas por dia), `fn_estoque_entrou_saiu` (teórico "contagem × hoje"), `fn_estoque_ficha_insumo`, `fn_estoque_fornecedores` / `fn_estoque_arrumar_insumo` (só `estoque_pode_configurar`; não mexe no estoque), `fn_estoque_fornecedor_fone` (admin/manager); `fn_get_stock_movements` devolve `signed_quantity`. `20261004210000_cmv_report_loja_certa.sql`: `fn_get_cmv_report` SECURITY DEFINER + `_assert_tenant_access` + `item_id` (menu_items só deixava ler a "loja atual": o dono com várias lojas via prato com ficha como "sem ficha").
+- **CMV**: só dos pratos com ficha (custo ÷ venda dos com ficha); cobertura por receita; régua única ≤30 verde / 30–35 âmbar / >35 vermelho; regras em `src/lib/cmvRegras.ts`. Link do Cardápio: `/cardapio?item=<id>&ficha=1` (abre o item na ficha técnica), `?busca=`, `?aba=combos`.
+- **Consumo**: lê a situação do Estoque (dura/abaixo do mínimo da regra única); período máx. 93 dias (lê todos os movimentos paginando); `useEstoqueSituacao({ ativo })`.
+- **Pegadinhas:** grade `grid` sem `grid-cols-1` estoura a largura no celular (texto `truncate` alarga a coluna); resumo das Movimentações relê no máx. a cada 30 s e o Teórico a cada 60 s (carga no banco); a Folha (`bg-black/45`) esconde o balão do assistente.
+- **Ficou de fora (avisado ao dono):** lote com validade no Receber/Produção; "lembrar a equipe" de anotar perdas; bolinha no grupo Custo.
+- **Testado** logado como qa.admin (magic link) na Testes PDV, celular 375 e computador 1400: todas as abas, ficha, Registrar, perda real, Arrumar (mínimo gravado), link da ficha no Cardápio, Validade com lote; trava "só conta" com qa.garcom + permissão temporária (retirada).
 
 ### 2026-10-04 — Estoque: revisão das 10 abas + erros que mexiam no estoque
 - **Pedido do dono:** revisar as abas do Estoque na linha "simples, óbvio, propositivo". Proposta de layout (5 grupos

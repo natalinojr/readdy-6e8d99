@@ -92,14 +92,14 @@ export default function ConsumoPerdas({ dados, loading }: Props) {
   return (
     <div className="space-y-4">
       {/* Cards de resumo */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="bg-red-50 border border-red-100 rounded-xl p-3">
           <p className="text-[10px] text-red-500 uppercase tracking-wide">Custo total perdas</p>
           <p className="text-xl font-bold text-red-700">{fmt(totalCustoPerda)}</p>
           <p className="text-[10px] text-red-400 mt-0.5">{pct(totalCustoPerda, totalCustoGeral)} do custo total</p>
         </div>
         <div className="bg-orange-50 border border-orange-100 rounded-xl p-3">
-          <p className="text-[10px] text-orange-500 uppercase tracking-wide">Ingredientes com perda</p>
+          <p className="text-[10px] text-orange-500 uppercase tracking-wide">Insumos com perda</p>
           <p className="text-xl font-bold text-orange-700">{comPerdas.length}</p>
           <p className="text-[10px] text-orange-400 mt-0.5">
             de {dados.filter((d) => !d.semCadastro).length} cadastrados
@@ -112,9 +112,9 @@ export default function ConsumoPerdas({ dados, loading }: Props) {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Gráfico Top perdas */}
-        <div className="bg-white border border-zinc-100 rounded-xl p-4">
+        <div className="bg-white border border-zinc-200 rounded-2xl p-4">
           <p className="text-xs font-semibold text-zinc-600 mb-3">Top Perdas por Custo</p>
           <ResponsiveContainer width="100%" height={180}>
             <BarChart
@@ -151,7 +151,7 @@ export default function ConsumoPerdas({ dados, loading }: Props) {
         </div>
 
         {/* Perdas por categoria */}
-        <div className="bg-white border border-zinc-100 rounded-xl p-4">
+        <div className="bg-white border border-zinc-200 rounded-2xl p-4">
           <p className="text-xs font-semibold text-zinc-600 mb-3">Perdas por Categoria</p>
           <div className="space-y-2">
             {porCategoria.map((c) => (
@@ -178,7 +178,7 @@ export default function ConsumoPerdas({ dados, loading }: Props) {
       </div>
 
       {/* Tabela detalhada */}
-      <div className="bg-white border border-zinc-100 rounded-xl overflow-hidden">
+      <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
         <div className="px-4 py-2.5 border-b border-zinc-100 flex items-center gap-2">
           <AlertTriangle size={13} className="text-red-500" />
           <p className="text-xs font-semibold text-zinc-700">Ranking de Perdas</p>
@@ -188,7 +188,7 @@ export default function ConsumoPerdas({ dados, loading }: Props) {
             <thead>
               <tr className="bg-zinc-50 border-b border-zinc-100">
                 <th className="px-3 py-2 text-left font-semibold text-zinc-500">#</th>
-                <th className="px-3 py-2 text-left font-semibold text-zinc-500">Ingrediente</th>
+                <th className="px-3 py-2 text-left font-semibold text-zinc-500">Insumo</th>
                 <th className="px-3 py-2 text-left font-semibold text-zinc-500">Categoria</th>
                 <th className="px-3 py-2 text-right font-semibold text-zinc-500">Qtd Perdida</th>
                 <th className="px-3 py-2 text-right font-semibold text-zinc-500">% do Consumo</th>
@@ -254,8 +254,8 @@ export default function ConsumoPerdas({ dados, loading }: Props) {
         <div>
           <p className="text-xs font-semibold text-amber-800">Como reduzir perdas?</p>
           <p className="text-[11px] text-amber-700 mt-0.5">
-            Revise os processos de armazenamento dos ingredientes com maior perda. Considere ajustar
-            o estoque mínimo e frequência de compras para itens críticos.
+            Revise como os insumos com maior perda são guardados e usados. Considere ajustar
+            o estoque mínimo e a frequência de compras desses insumos.
           </p>
         </div>
       </div>

@@ -2,6 +2,9 @@ import { useMemo, useState } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useToast } from '@/contexts/ToastContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { todayBrasilia } from '@/lib/dateUtils';
+import { podeAplicarFichas } from '@/lib/cmvRegras';
+import { btn } from './ui/EstoqueUi';
 
 // "Aplicar fichas nas vendas passadas" (dono, 2026-09-26): a ficha técnica de hoje vale para as vendas desde uma
 // data, em lote, escolhendo ONDE aplicar — consumo por dia, saldo do estoque, custo das vendas (CMV teórico).
@@ -18,13 +21,14 @@ interface Opcoes { consumo: boolean; estoque: boolean; custo: boolean }
 
 interface Props { tenantId: string; onFechar: () => void; onAplicado?: () => void }
 
-const hojeISO = () => new Date().toLocaleDateString('sv-SE');
+// Datas sempre no dia de Brasília (o aparelho pode estar em outro fuso)
+const hojeISO = () => todayBrasilia();
 const inicioMesISO = () => hojeISO().slice(0, 8) + '01';
 const un = (u: string) => (u === 'unit' ? 'un' : u);
 const num = (n: number) => n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
 const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-const dataBR = (iso: string) => new Date(iso + 'T00:00:00').toLocaleDateString('pt-BR');
-const dataHoraBR = (iso: string) => new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+const dataBR = (iso: string) => iso.split('-').reverse().join('/');
+const dataHoraBR = (iso: string) => new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 const mudou = (r: Resultado | undefined, o: Opcoes) => !!r && ((o.consumo && r.vendas_alteradas > 0) || (o.custo && (r.custo?.vendas_alteradas ?? 0) > 0));
 
 export default function FichasVendasPassadasModal({ tenantId, onFechar, onAplicado }: Props) {
@@ -95,7 +99,8 @@ export default function FichasVendasPassadasModal({ tenantId, onFechar, onAplica
     if (ok) {
       toastOk('Fichas aplicadas', `${ok} produto(s) refeitos desde ${dataBR(desde)}.`);
       onAplicado?.();
-      onFechar();
+      if (!falhas.length) onFechar();
+      else limpar(); // com falha a janela fica aberta: "Ver o efeito" refaz a conta do que sobrou
     }
   };
 
@@ -144,7 +149,7 @@ export default function FichasVendasPassadasModal({ tenantId, onFechar, onAplica
             <p className="text-sm font-bold text-zinc-800">Aplicar fichas nas vendas passadas</p>
             <p className="text-xs text-zinc-500 mt-0.5">A ficha técnica de hoje passa a valer para as vendas desde a data escolhida.</p>
           </div>
-          <button disabled={busy} onClick={onFechar} className="w-8 h-8 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Fechar">
+          <button disabled={busy} onClick={onFechar} className="w-10 h-10 flex items-center justify-center rounded-xl text-zinc-400 hover:bg-zinc-100 cursor-pointer disabled:opacity-50" aria-label="Fechar">
             <i className="ri-close-line text-lg" />
           </button>
         </div>
@@ -153,7 +158,7 @@ export default function FichasVendasPassadasModal({ tenantId, onFechar, onAplica
           <label className="flex flex-wrap items-center gap-2 text-sm text-zinc-700">
             Vendas desde
             <input type="date" value={desde} max={hojeISO()} disabled={busy} onChange={(e) => { setDesde(e.target.value); limpar(); }}
-              className="border border-zinc-200 rounded-lg px-2 py-1 text-sm" />
+              className="h-10 border border-zinc-200 rounded-xl px-3 text-sm" />
           </label>
 
           <div className="space-y-2">
@@ -253,15 +258,15 @@ export default function FichasVendasPassadasModal({ tenantId, onFechar, onAplica
         </div>
 
         <div className="p-4 border-t border-zinc-100 flex flex-wrap items-center gap-2 justify-end">
-          <button disabled={busy} onClick={onFechar} className="px-3 py-2 rounded-lg bg-zinc-100 text-zinc-700 text-xs font-semibold hover:bg-zinc-200 disabled:opacity-50 cursor-pointer">
+          <button disabled={busy} onClick={onFechar} className={btn('out')}>
             Fechar
           </button>
           {!vendidos || busy ? (
-            <button disabled={busy || nenhumaOpcao} onClick={calcular} className="px-3 py-2 rounded-lg bg-amber-500 text-white text-xs font-semibold hover:bg-amber-600 disabled:opacity-50 cursor-pointer">
+            <button disabled={busy || nenhumaOpcao} onClick={calcular} className={btn('p')}>
               {progresso?.fase === 'calculando' ? 'Calculando…' : 'Ver o efeito'}
             </button>
           ) : sel.size > 0 ? (
-            <button disabled={busy} onClick={aplicar} className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50 cursor-pointer">
+            <button disabled={busy} onClick={aplicar} className={btn('dark')}>
               Aplicar em {sel.size} produto(s) desde {dataBR(desde)}
             </button>
           ) : null}
@@ -271,15 +276,15 @@ export default function FichasVendasPassadasModal({ tenantId, onFechar, onAplica
   );
 }
 
-/** Botão que abre a janela (Estoque › Consumo e CMV/Fichas). Só administrador e gerente — o backend confere de novo. */
+/** Botão que abre a janela (Estoque › Consumo e CMV/Fichas). */
 export function BotaoFichasVendasPassadas({ onAplicado, className }: { onAplicado?: () => void; className?: string }) {
   const { user } = useAuth();
   const [aberto, setAberto] = useState(false);
-  if (!user?.tenantId || !['admin', 'gerente'].includes(String(user.perfil))) return null;
+  if (!user?.tenantId || !podeAplicarFichas(user.perfil)) return null;
   return (
     <>
       <button onClick={() => setAberto(true)}
-        className={className ?? 'inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-xs font-semibold hover:bg-amber-100 cursor-pointer'}>
+        className={className ?? 'inline-flex items-center gap-1 px-3 min-h-[34px] rounded-xl border border-amber-200 bg-amber-50 text-amber-800 text-xs font-semibold hover:bg-amber-100 cursor-pointer'}>
         <i className="ri-history-line" /> Aplicar fichas nas vendas passadas
       </button>
       {aberto && <FichasVendasPassadasModal tenantId={user.tenantId} onFechar={() => setAberto(false)} onAplicado={onAplicado} />}

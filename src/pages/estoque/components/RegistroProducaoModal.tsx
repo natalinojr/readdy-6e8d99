@@ -438,8 +438,8 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador, rec
 
     try {
       const tenantId = user?.tenantId;
-      if (!tenantId) throw new Error('Tenant nao identificado');
-      if (!recipe) throw new Error('Ficha nao encontrada');
+      if (!tenantId) throw new Error('Loja não identificada');
+      if (!recipe) throw new Error('Ficha não encontrada');
 
       // 1. Usar outputIngredientId da recipe, ou buscar/criar insumo
       let outputInsumoId = recipe.outputIngredientId;
@@ -466,7 +466,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador, rec
           console.log('[RegistroProducaoModal] upsertInsumo returned ID:', novoId);
 
           if (!novoId) {
-            throw new Error(`Nao foi possivel criar o insumo "${recipe.name}" no estoque`);
+            throw new Error(`Não foi possível criar o insumo "${recipe.name}" no estoque`);
           }
 
           // Recarrega e busca pelo nome DIRETO no banco
@@ -482,7 +482,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador, rec
       }
 
       if (!outputInsumoId) {
-        throw new Error('Nao foi possivel determinar o ID do insumo do produto acabado');
+        throw new Error('Não foi possível determinar o insumo do produto pronto');
       }
 
       // 2. Preparar itens com custo total — converte quantidade para UNIDADE DO ESTOQUE do insumo
@@ -578,7 +578,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador, rec
         <div className="absolute inset-0 bg-black/40" onClick={onClose} />
         <div className="relative bg-white rounded-xl p-6 shadow-xl text-center">
           <i className="ri-error-warning-line text-3xl text-red-400 block mb-2" />
-          <p className="text-sm text-zinc-600">Ficha de producao nao encontrada</p>
+          <p className="text-sm text-zinc-600">Ficha de produção não encontrada</p>
         </div>
       </div>
     );
@@ -603,7 +603,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador, rec
         <div className="sticky top-0 bg-white border-b border-zinc-100 px-5 py-4 flex items-center justify-between z-10">
           <div>
             <h2 className="text-base font-bold text-zinc-800">
-              Registrar Producao — {recipe.name}
+              Registrar Produção — {recipe.name}
             </h2>
             <p className="text-xs text-zinc-400 mt-0.5">
               {formatDate()} · Operador: {operador}
@@ -630,7 +630,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador, rec
                     ? 'bg-emerald-100 text-emerald-700'
                     : 'bg-zinc-100 text-zinc-500'
                 }`}>
-                  {completedCount}/{totalSteps} concluido{totalSteps > 1 ? 's' : ''}
+                  {completedCount}/{totalSteps} {totalSteps > 1 ? 'concluídos' : 'concluído'}
                 </span>
               </div>
               <div className="space-y-1.5">
@@ -665,7 +665,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador, rec
               {!allStepsDone && (
                 <p className="text-[10px] text-amber-600 mt-2 flex items-center gap-1">
                   <i className="ri-alert-line" />
-                  Complete todos os {totalSteps} passos antes de registrar a producao
+                  Complete todos os {totalSteps} passos antes de registrar a produção
                 </p>
               )}
             </div>
@@ -706,7 +706,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador, rec
                 Estoque insuficiente
               </p>
               <p className="text-[10px] text-red-600 mt-1">
-                Ajuste as quantidades ou repoe o estoque antes de registrar a producao.
+                Ajuste as quantidades ou reponha o estoque antes de registrar a produção.
               </p>
             </div>
           )}
@@ -716,10 +716,11 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador, rec
             <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-1.5">
               <p className="text-xs font-semibold text-red-700 flex items-center gap-1.5">
                 <i className="ri-error-warning-line" />
-                Erros ao atualizar o estoque
+                Não foi possível registrar a produção
               </p>
               <p className="text-[10px] text-red-600">
-                A producao foi registrada, mas houve falhas nas movimentacoes de estoque. Verifique o console para detalhes.
+                O sistema não confirmou a gravação. Se a internet falhou na hora de enviar, a produção pode ter sido gravada mesmo assim:
+                antes de tentar de novo, olhe em Registros de produção se ela já aparece lá.
               </p>
               <ul className="space-y-0.5">
                 {saveErrors.map((err, idx) => (
@@ -778,7 +779,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador, rec
                             className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] text-amber-600 hover:text-amber-700 font-normal cursor-pointer"
                           >
                             <i className="ri-refresh-line text-[10px]" />
-                            ajustado — voltar automatico
+                            ajustado — voltar automático
                           </button>
                         )}
                       </p>
@@ -800,7 +801,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador, rec
                         <p className="text-[10px] text-red-600 mt-0.5 flex items-center gap-1">
                           <i className="ri-error-warning-line" />
                           Precisa {stockError.needed.toFixed(3)} {stockError.unit} ·
-                          Disponivel {stockError.available.toFixed(3)} {stockError.unit}
+                          Disponível {stockError.available.toFixed(3)} {stockError.unit}
                         </p>
                       )}
                     </div>
@@ -869,7 +870,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador, rec
               </select>
             </div>
             <p className="text-[10px] text-zinc-400 mt-1">
-              Entra no estoque como <strong>{recipe.name}</strong>. E daqui que sai o custo por {recipe.unit}.
+              Entra no estoque como <strong>{recipe.name}</strong>. É daqui que sai o custo por {recipe.unit}.
             </p>
           </div>
 
@@ -886,13 +887,13 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador, rec
                 <p className={`text-[10px] mt-0.5 ${
                   yieldActual < yieldExpected * 0.8 ? 'text-red-500' : 'text-zinc-400'
                 }`}>
-                  Media de {yieldExpectedN} producao{yieldExpectedN > 1 ? 'es' : ''}: {yieldExpected.toFixed(1)}%
+                  Média de {yieldExpectedN} {yieldExpectedN > 1 ? 'produções' : 'produção'}: {yieldExpected.toFixed(1)}%
                   {yieldActual < yieldExpected * 0.8 && ' · Bem abaixo do normal!'}
                 </p>
               )}
               {yieldExpected === null && (
                 <p className="text-[10px] mt-0.5 text-zinc-400">
-                  Sem historico ainda — a partir da 2a producao aparece a media para comparar.
+                  Sem histórico ainda — a partir da 2ª produção aparece a média para comparar.
                 </p>
               )}
             </div>
@@ -917,7 +918,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador, rec
           {/* Observacoes */}
           <div>
             <label className="block text-xs font-semibold text-zinc-600 mb-1.5">
-              Observacoes
+              Observações
             </label>
             <textarea
               value={notes}
@@ -941,7 +942,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador, rec
             {Number(producedQty) > 0 && (
               <div className="flex items-center justify-between pt-2 border-t border-emerald-200/50">
                 <span className="text-xs text-emerald-700">
-                  Custo unitario do produto gerado
+                  Custo unitário do produto gerado
                 </span>
                 <span className="text-base font-black text-emerald-700">
                   {formatCurrencyPreciso(unitCost)}/{producedUnit}
@@ -976,7 +977,7 @@ export default function RegistroProducaoModal({ recipeId, onClose, operador, rec
             ) : (
               <>
                 <i className="ri-check-line mr-1" />
-                Registrar producao
+                Registrar produção
               </>
             )}
           </button>

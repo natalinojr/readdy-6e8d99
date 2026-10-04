@@ -6,14 +6,20 @@ import { useProductionPriceHistory } from '@/hooks/useProductionPriceHistory';
 const fmt = (v: number, digits = 2) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: digits }).format(v);
 
-// Insumo em g/ml tem preço de fração de centavo: mais casas para não virar R$ 0,00
-const fmtPreco = (v: number) => fmt(v, v > 0 && v < 1 ? 4 : 2);
-
 interface MiniPriceHistoryProps {
   insumo: Insumo;
+  /** Colunas da tabela onde a linha entra (a Lista tem 8) */
+  colSpan?: number;
 }
 
-export default function MiniPriceHistory({ insumo }: MiniPriceHistoryProps) {
+export default function MiniPriceHistory({ insumo, colSpan = 8 }: MiniPriceHistoryProps) {
+  // Mesmo preço que a Lista mostra: insumo em g/ml tem preço de fração de centavo (R$ 0,0044/g) e sai
+  // por kg/L (R$ 4,40/kg); em kg, L e un o valor já é legível.
+  const porMil = insumo.unidade === 'g' || insumo.unidade === 'ml';
+  const unidadeGrande = insumo.unidade === 'g' ? 'kg' : 'L';
+  const fmtPreco = (v: number) => fmt(porMil ? v * 1000 : v, 2);
+  const fmtPrecoUn = (v: number) => `${fmtPreco(v)}${porMil ? `/${unidadeGrande}` : ''}`;
+
   // Sempre busca ambos — usa produção se tiver bateladas, senão fallback para compras
   const { stats: purchaseStats, loading: purchaseLoading } = useIngredientPriceHistory(insumo.id);
   const { stats: productionStats, loading: productionLoading } = useProductionPriceHistory(insumo.id);
@@ -27,7 +33,7 @@ export default function MiniPriceHistory({ insumo }: MiniPriceHistoryProps) {
   if (loading) {
     return (
       <tr>
-        <td colSpan={7} className="px-6 py-3 bg-amber-50/40 border-t border-amber-100">
+        <td colSpan={colSpan} className="px-6 py-3 bg-amber-50/40 border-t border-amber-100">
           <div className="flex items-center gap-2 text-zinc-400 text-xs">
             <i className="ri-loader-4-line animate-spin" /> Carregando histórico...
           </div>
@@ -39,7 +45,7 @@ export default function MiniPriceHistory({ insumo }: MiniPriceHistoryProps) {
   if (!stats || stats.points.length === 0) {
     return (
       <tr>
-        <td colSpan={7} className="px-6 py-3 bg-zinc-50/60 border-t border-zinc-100">
+        <td colSpan={colSpan} className="px-6 py-3 bg-zinc-50/60 border-t border-zinc-100">
           <p className="text-xs text-zinc-400 flex items-center gap-1.5">
             <i className="ri-bar-chart-2-line" />
             {isProduction
@@ -61,20 +67,20 @@ export default function MiniPriceHistory({ insumo }: MiniPriceHistoryProps) {
 
   return (
     <tr>
-      <td colSpan={7} className="px-4 py-3 bg-amber-50/30 border-t border-amber-100/60">
+      <td colSpan={colSpan} className="px-4 py-3 bg-amber-50/30 border-t border-amber-100/60">
         <div className="flex items-start gap-5 flex-wrap">
           <div className="flex items-center gap-3 flex-wrap">
             <div className="bg-white border border-zinc-200 rounded-xl px-3 py-2 min-w-[90px]">
               <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-0.5">
                 {isProduction ? 'Custo médio 6m' : 'Preço médio 3m'}
               </p>
-              <p className="text-xs font-bold tabular-nums text-zinc-800">{fmtPreco(stats.avg3m)}</p>
+              <p className="text-xs font-bold tabular-nums text-zinc-800">{fmtPrecoUn(stats.avg3m)}</p>
             </div>
             <div className="bg-white border border-zinc-200 rounded-xl px-3 py-2 min-w-[90px]">
               <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-0.5">
                 {isProduction ? 'Custo médio 30 dias' : 'Média 30 dias'}
               </p>
-              <p className="text-xs font-bold tabular-nums text-zinc-800">{fmtPreco(stats.avg1m)}</p>
+              <p className="text-xs font-bold tabular-nums text-zinc-800">{fmtPrecoUn(stats.avg1m)}</p>
             </div>
             <div className="bg-white border border-zinc-200 rounded-xl px-3 py-2 min-w-[90px]">
               <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-0.5">Variação recente</p>
@@ -99,7 +105,7 @@ export default function MiniPriceHistory({ insumo }: MiniPriceHistoryProps) {
               <p className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wide mb-0.5">
                 {isProduction ? 'Faixa 6m' : 'Faixa 3m'}
               </p>
-              <p className="text-xs font-semibold text-zinc-700">{fmtPreco(stats.minPrice)} – {fmtPreco(stats.maxPrice)}</p>
+              <p className="text-xs font-semibold text-zinc-700">{fmtPreco(stats.minPrice)} – {fmtPrecoUn(stats.maxPrice)}</p>
             </div>
           </div>
 
@@ -134,7 +140,7 @@ export default function MiniPriceHistory({ insumo }: MiniPriceHistoryProps) {
                 if (i % passo !== 0 && i !== prices.length - 1) return null;
                 return (
                   <span key={i}
-                    title={`${new Date(pt.date + 'T00:00:00').toLocaleDateString('pt-BR')} · ${'supplier' in pt ? pt.supplier : 'produção'} · ${fmtPreco(pt.price)}`}
+                    title={`${new Date(pt.date + 'T00:00:00').toLocaleDateString('pt-BR')} · ${'supplier' in pt ? pt.supplier : 'produção'} · ${fmtPrecoUn(pt.price)}`}
                     className="absolute -translate-x-1/2 -translate-y-full -mt-1 text-[9px] font-semibold text-amber-700 whitespace-nowrap bg-white/80 rounded px-0.5 leading-tight"
                     style={{ left: `${x}%`, top: `${y}%` }}>
                     {fmtPreco(pt.price)}
@@ -145,7 +151,7 @@ export default function MiniPriceHistory({ insumo }: MiniPriceHistoryProps) {
               </div>
               <div className="flex justify-between text-[9px] text-zinc-400 mt-0.5">
                 <span>{stats.points[0]?.date ? new Date(stats.points[0].date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) : ''}</span>
-                <span className="font-semibold text-amber-600">{fmtPreco(stats.lastPrice)}</span>
+                <span className="font-semibold text-amber-600">{fmtPrecoUn(stats.lastPrice)}</span>
                 <span>{stats.points[stats.points.length - 1]?.date ? new Date(stats.points[stats.points.length - 1].date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }) : ''}</span>
               </div>
             </div>

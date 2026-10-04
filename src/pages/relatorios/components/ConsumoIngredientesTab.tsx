@@ -1,482 +1,622 @@
-import { useState, useMemo, useCallback } from 'react';
-import {
-  Package, ArrowDown, ArrowUp, Minus, Download,
-  ChevronDown, ChevronUp, Calendar, Search, AlertCircle,
-  Layers, Utensils, AlertTriangle, List,
-} from 'lucide-react';
-import { useConsumoIngredientes } from '@/hooks/useConsumoIngredientes';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { useConsumoIngredientes, type ConsumoIngrediente } from '@/hooks/useConsumoIngredientes';
+import { useEstoqueSituacao } from '@/hooks/useEstoqueSituacao';
+import { useEstoqueTelaOpcional } from '@/pages/estoque/EstoqueTela';
 import { useAuth } from '@/contexts/AuthContext';
+import { todayBrasilia } from '@/lib/dateUtils';
+import { fmtQtd, type InsumoSituacao } from '@/lib/estoqueRegras';
+import {
+  intervaloDoPreset, validarPeriodo, duraInfo, montarCsv,
+  type DuraInfo, type PresetPeriodo,
+} from '@/lib/consumoInsumos';
+import {
+  btn, Faixa, Chips, CartaoAcao, Vazio, Nota, Etiqueta, MenuMais, semAcento, brl, brlInteiro,
+  type ItemFaixa, type OpcaoChip,
+} from '@/pages/estoque/components/ui/EstoqueUi';
+import Ajuda from '@/pages/estoque/components/inicio/Ajuda';
+import FichasVendasPassadasModal from '@/pages/estoque/components/FichasVendasPassadasModal';
 import ConsumoDetalheDia from './ConsumoDetalheDia';
 import ConsumoCategoriasPanel from './ConsumoCategoriasPanel';
 import ConsumoPorLanchePanel from './ConsumoPorLanchePanel';
 import ConsumoPerdas from './ConsumoPerdas';
-import { BotaoFichasVendasPassadas } from '@/pages/estoque/components/FichasVendasPassadasModal';
 
-type SubTab = 'ingredientes' | 'categorias' | 'lanchesPratos' | 'perdas';
+// Estoque › Custo › Consumo (layout novo, 2026-10-04): período no topo, faixa de números, quatro visões
+// (insumo, categoria, prato, perdas). Esta peça também aparece fora do Estoque: lá não há ficha do insumo
+// para abrir e a situação do estoque (dura/abaixo do mínimo) é buscada aqui mesmo.
+
+type Pilula = 'insumo' | 'categoria' | 'prato' | 'perdas';
+type Ordem = 'custo' | 'consumo' | 'dias';
 
 interface Props {
-  periodo: string;
+  /** Não é mais usado: o período é escolhido na própria tela. Fica para não quebrar quem ainda passa. */
+  periodo?: string;
 }
 
-const fmt = (v: number) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
-const fmtNum = (v: number) =>
-  new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v);
+/** Uma linha de "Por insumo": o consumo do período + a situação do estoque (regra única). */
+interface Linha extends ConsumoIngrediente {
+  /** Unidade no padrão do banco (g | kg | ml | L | unit), para fmtQtd */
+  unBanco: string;
+  sit: InsumoSituacao | null;
+  estoque: number;
+  dias: number | null;
+  dura: DuraInfo | null;
+  esgotado: boolean;
+  abaixoMinimo: boolean;
+  /** Acaba em 3 dias ou menos */
+  critico: boolean;
+}
 
-const LEAD_TIME: Record<string, number> = {
-  Carnes: 2, Peixes: 2, 'Laticínios': 1, Hortifruti: 1, Bebidas: 3, Secos: 5,
+const unidadeBanco = (u: string) => (u === 'l' ? 'L' : u === 'un' ? 'unit' : u);
+const dataBR = (ymd: string) => ymd.split('-').reverse().join('/');
+
+const COR_DURA: Record<DuraInfo['tom'], string> = {
+  red: 'text-red-600', amber: 'text-amber-600', green: 'text-emerald-700', zinc: 'text-zinc-400',
 };
-function calcSugestao(estoque: number, media: number, cat: string) {
-  if (media <= 0) return { sugerido: 0, cobertura: 999 };
-  const lt = LEAD_TIME[cat] ?? 3;
-  const sugerido = Math.max(0, media * (lt + 7) - estoque);
-  return { sugerido, cobertura: estoque / media };
-}
+const TENDENCIA = {
+  subindo: { texto: '↗ subindo', cor: 'text-red-500' },
+  estavel: { texto: '→ igual', cor: 'text-zinc-400' },
+  caindo: { texto: '↘ caindo', cor: 'text-emerald-600' },
+} as const;
 
-function TooltipHeader({ label, tip }: { label: string; tip: string }) {
-  return (
-    <span className="inline-flex items-center gap-1 cursor-help group relative">
-      {label}
-      <span className="w-3.5 h-3.5 flex items-center justify-center rounded-full bg-zinc-200 text-zinc-500 text-[9px] font-bold leading-none group-hover:bg-amber-200 group-hover:text-amber-700 transition-colors">
-        ?
-      </span>
-      {/* tooltip aparece ABAIXO para não ser clipado pelo overflow do container */}
-      <span className="absolute top-full right-0 mt-1 w-56 bg-zinc-800 text-white text-[10px] leading-relaxed rounded-lg px-2.5 py-2 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg whitespace-normal text-left font-normal">
-        {tip}
-        <span className="absolute bottom-full right-3 border-4 border-transparent border-b-zinc-800" />
-      </span>
-    </span>
-  );
-}
-
-function TipoBadge({ tipo, qtd, unidade }: { tipo: string; qtd: number; unidade: string }) {
-  if (qtd <= 0) return null;
-  const map: Record<string, { label: string; color: string }> = {
-    vendas: { label: 'Vendas', color: 'text-amber-600 bg-amber-50' },
-    producao: { label: 'Produção', color: 'text-sky-600 bg-sky-50' },
-    perda: { label: 'Perda', color: 'text-red-600 bg-red-50' },
-    ajuste: { label: 'Ajuste', color: 'text-zinc-500 bg-zinc-50' },
-    transferencia: { label: 'Transferência', color: 'text-violet-500 bg-violet-50' },
-  };
-  const c = map[tipo] ?? { label: tipo, color: 'text-zinc-500 bg-zinc-50' };
-  return (
-    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${c.color}`}>
-      {c.label}: {fmtNum(qtd)} {unidade}
-    </span>
-  );
-}
-
-const SUB_TABS: { id: SubTab; label: string; icon: React.ReactNode }[] = [
-  { id: 'ingredientes', label: 'Por Ingrediente', icon: <List size={12} /> },
-  { id: 'categorias', label: 'Por Categoria', icon: <Layers size={12} /> },
-  { id: 'lanchesPratos', label: 'Por Prato', icon: <Utensils size={12} /> },
-  { id: 'perdas', label: 'Perdas', icon: <AlertTriangle size={12} /> },
+const OPCOES_PERIODO: OpcaoChip<PresetPeriodo>[] = [
+  { id: '7d', rotulo: '7 dias' },
+  { id: '30d', rotulo: '30 dias' },
+  { id: 'mes', rotulo: 'Este mês' },
+  { id: 'custom', rotulo: 'Período' },
 ];
 
-export default function ConsumoIngredientesTab({ periodo }: Props) {
-  const { user } = useAuth();
-  const hoje = new Date().toLocaleDateString('sv-SE');
-  const trinta = new Date(Date.now() - 30 * 86400000).toLocaleDateString('sv-SE');
+const campo = 'h-10 px-3 rounded-xl border border-zinc-200 bg-white text-[13px] font-semibold text-zinc-700 focus:outline-none focus:ring-2 focus:ring-amber-500/30';
 
-  const [from, setFrom] = useState(trinta);
-  const [toDate, setToDate] = useState(hoje);
+/** Tela larga (tabela) × celular (cartões). Só uma das duas fica montada, para o "dia a dia" não carregar em dobro. */
+function useTelaLarga() {
+  const consulta = '(min-width: 768px)';
+  const temMedia = typeof window !== 'undefined' && typeof window.matchMedia === 'function';
+  const [larga, setLarga] = useState(() => temMedia && window.matchMedia(consulta).matches);
+  useEffect(() => {
+    if (!temMedia) return;
+    const m = window.matchMedia(consulta);
+    const f = () => setLarga(m.matches);
+    f();
+    m.addEventListener('change', f);
+    return () => m.removeEventListener('change', f);
+  }, [temMedia]);
+  return larga;
+}
+
+/** Pílulas (segmented): Por insumo · Por categoria · Por prato · Perdas. */
+function Pilulas<T extends string>({ opcoes, valor, onChange }: { opcoes: OpcaoChip<T>[]; valor: T; onChange: (v: T) => void }) {
+  return (
+    <div className="overflow-x-auto scrollbar-hide -mx-4 px-4 md:mx-0 md:px-0">
+      <div className="inline-flex gap-1 p-1 bg-zinc-100 rounded-xl">
+        {opcoes.map((o) => (
+          <button key={o.id} type="button" onClick={() => onChange(o.id)}
+            className={`min-h-[34px] px-3.5 rounded-lg text-[12.5px] font-bold whitespace-nowrap cursor-pointer transition-colors ${
+              o.id === valor ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
+            {o.rotulo}
+            {o.n != null && o.n > 0 && (
+              <span className="ml-1.5 bg-red-500 text-white text-[10px] font-extrabold rounded-full px-1.5 py-0.5 align-middle">{o.n}</span>
+            )}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const TIPOS_SAIDA: Array<{ chave: keyof ConsumoIngrediente['porTipo']; rotulo: string; cor: string }> = [
+  { chave: 'vendas', rotulo: 'Vendas', cor: 'text-amber-700 bg-amber-50' },
+  { chave: 'producao', rotulo: 'Produção', cor: 'text-sky-700 bg-sky-50' },
+  { chave: 'perda', rotulo: 'Perda', cor: 'text-red-600 bg-red-50' },
+  { chave: 'ajuste', rotulo: 'Ajuste', cor: 'text-zinc-600 bg-zinc-100' },
+  { chave: 'transferencia', rotulo: 'Transferência', cor: 'text-violet-600 bg-violet-50' },
+];
+
+/** De onde saiu o que foi usado (venda, produção, perda...). */
+function Saidas({ item }: { item: Linha }) {
+  const partes = TIPOS_SAIDA.filter((t) => Number(item.porTipo[t.chave] ?? 0) > 0);
+  if (!partes.length) return null;
+  return (
+    <div className="flex flex-wrap gap-1 mt-1">
+      {partes.map((t) => (
+        <span key={t.chave} className={`inline-block px-1.5 py-0.5 rounded-md text-[10.5px] font-bold ${t.cor}`}>
+          {t.rotulo}: {fmtQtd(Number(item.porTipo[t.chave]), item.unBanco)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function Etiquetas({ item }: { item: Linha }) {
+  return (
+    <>
+      {item.semCadastro && <Etiqueta tom="amber">Sem cadastro</Etiqueta>}
+      {item.esgotado && <Etiqueta tom="red">Zerado</Etiqueta>}
+      {item.critico && <Etiqueta tom="red">Crítico</Etiqueta>}
+      {item.abaixoMinimo && <Etiqueta tom="amber">Abaixo do mínimo</Etiqueta>}
+    </>
+  );
+}
+
+interface LinhaProps {
+  item: Linha;
+  aberto: boolean;
+  onAlternar: () => void;
+  /** Dentro do Estoque: abre a ficha do insumo. Fora: undefined (linha não clicável). */
+  onAbrir?: () => void;
+  de: string;
+  ate: string;
+}
+
+function fundoDaLinha(item: Linha, aberto: boolean) {
+  if (aberto) return 'bg-amber-50/40';
+  if (item.esgotado || item.critico) return 'bg-red-50/40';
+  if (item.semCadastro) return 'bg-amber-50/30';
+  return '';
+}
+
+/** Celular: o cartão da linha. */
+function LinhaCartao({ item, aberto, onAlternar, onAbrir, de, ate }: LinhaProps) {
+  const usou = item.totalConsumido > 0;
+  return (
+    <div className={`px-3.5 py-3 ${fundoDaLinha(item, aberto)}`}>
+      <div className="flex items-start gap-3">
+        <div className={`flex-1 min-w-0 ${onAbrir ? 'cursor-pointer' : ''}`} onClick={onAbrir}
+          role={onAbrir ? 'button' : undefined} tabIndex={onAbrir ? 0 : undefined}
+          onKeyDown={onAbrir ? (e) => { if (e.key === 'Enter') onAbrir(); } : undefined}>
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[14.5px] font-extrabold text-zinc-900 leading-snug">{item.nome}</span>
+            <Etiquetas item={item} />
+          </div>
+          <p className="text-[12.5px] text-zinc-500 mt-0.5 leading-relaxed">
+            {usou ? <>usou {fmtQtd(item.totalConsumido, item.unBanco)}</> : <>não saiu no período</>}
+            {item.semCadastro ? (
+              <> · sem cadastro ativo</>
+            ) : (
+              <>
+                {' · '}tem {fmtQtd(item.estoque, item.unBanco)}
+                {item.sit && !item.sit.acompanha && <> · não conta estoque</>}
+                {item.dura && <> · <span className={`font-bold ${COR_DURA[item.dura.tom]}`}>{item.dura.longo}</span></>}
+              </>
+            )}
+          </p>
+          <Saidas item={item} />
+        </div>
+        <div className="text-right flex-shrink-0">
+          <p className="text-[14.5px] font-extrabold text-zinc-900 tabular-nums">{brl(item.custoTotal)}</p>
+          {item.tendencia && (
+            <p className={`text-[11.5px] font-bold ${TENDENCIA[item.tendencia].cor}`}>{TENDENCIA[item.tendencia].texto}</p>
+          )}
+        </div>
+      </div>
+      {usou && (
+        <button type="button" onClick={onAlternar} className={`${btn('ghost', 'sm')} mt-1 -ml-3`}>
+          <i className={aberto ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
+          {aberto ? 'Esconder o dia a dia' : 'Ver o dia a dia'}
+        </button>
+      )}
+      {aberto && (
+        <div className="mt-2 -mx-3.5 -mb-3">
+          <ConsumoDetalheDia ingredientId={item.id} ingredientUnit={item.unidade} dateFrom={de} dateTo={ate} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Computador: a linha da tabela (e o dia a dia embaixo, quando aberto). */
+function LinhaTabela({ item, aberto, onAlternar, onAbrir, de, ate }: LinhaProps) {
+  const usou = item.totalConsumido > 0;
+  const tend = item.tendencia ? TENDENCIA[item.tendencia] : null;
+  const contaSit = item.sit ? `Tem ${fmtQtd(item.estoque, item.unBanco)}${item.sit.consumoDia ? ` ÷ usa ${fmtQtd(item.sit.consumoDia, item.unBanco)} por dia` : ''}` : undefined;
+  return (
+    <Fragment>
+      <tr className={`${fundoDaLinha(item, aberto)} ${onAbrir ? 'cursor-pointer hover:bg-zinc-50' : ''}`} onClick={onAbrir}>
+        <td className="pl-3 pr-1 py-2 w-9" onClick={(e) => e.stopPropagation()}>
+          {usou && (
+            <button type="button" onClick={onAlternar} aria-label={aberto ? 'Esconder o dia a dia' : 'Ver o dia a dia'}
+              title={aberto ? 'Esconder o dia a dia' : 'Ver o dia a dia'}
+              className={`w-[30px] h-[30px] inline-flex items-center justify-center rounded-lg border cursor-pointer ${aberto ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50'}`}>
+              <i className={aberto ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
+            </button>
+          )}
+        </td>
+        <td className="px-3 py-2">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className={`font-bold ${item.semCadastro ? 'text-amber-800' : 'text-zinc-900'}`}>{item.nome}</span>
+            <Etiquetas item={item} />
+          </div>
+          <Saidas item={item} />
+        </td>
+        <td className="px-3 py-2 text-right text-zinc-700 tabular-nums whitespace-nowrap">
+          {usou ? fmtQtd(item.totalConsumido, item.unBanco) : <span className="text-zinc-300">—</span>}
+        </td>
+        <td className="px-3 py-2 text-right font-bold text-zinc-900 tabular-nums whitespace-nowrap">{brl(item.custoTotal)}</td>
+        <td className="px-3 py-2 text-right whitespace-nowrap tabular-nums">
+          {item.semCadastro ? (
+            <span className="text-zinc-400">—</span>
+          ) : (
+            <span className={item.esgotado || item.abaixoMinimo ? 'text-red-600 font-bold' : 'text-zinc-600'}>{fmtQtd(item.estoque, item.unBanco)}</span>
+          )}
+        </td>
+        <td className="px-3 py-2 text-right whitespace-nowrap">
+          {item.dura ? <span title={contaSit} className={`font-bold ${COR_DURA[item.dura.tom]}`}>{item.dura.curto}</span> : <span className="text-zinc-300">—</span>}
+        </td>
+        <td className="px-3 py-2 text-right whitespace-nowrap">
+          {tend ? <span className={`text-xs font-bold ${tend.cor}`}>{tend.texto}</span> : <span className="text-zinc-300">—</span>}
+        </td>
+      </tr>
+      {aberto && (
+        <tr>
+          <td colSpan={7} className="p-0">
+            <ConsumoDetalheDia ingredientId={item.id} ingredientUnit={item.unidade} dateFrom={de} dateTo={ate} />
+          </td>
+        </tr>
+      )}
+    </Fragment>
+  );
+}
+
+export default function ConsumoIngredientesTab(_props: Props) {
+  const { user } = useAuth();
+  const ctx = useEstoqueTelaOpcional();
+  // Dentro do Estoque a situação vem da tela (uma busca só); fora dela, busca aqui.
+  const proprio = useEstoqueSituacao({ ativo: !ctx });
+  const situacao = ctx ? ctx.situacao : proprio.data;
+
+  const hoje = todayBrasilia();
+  const [preset, setPreset] = useState<PresetPeriodo>('30d');
+  const [intervalo, setIntervalo] = useState(() => intervaloDoPreset('30d', todayBrasilia()));
+  // Campos De/Até do "Período": podem ficar inválidos por um instante; a consulta só muda quando estão certos
+  const [de, setDe] = useState(() => intervalo.from);
+  const [ate, setAte] = useState(() => intervalo.to);
+  const erroPeriodo = preset === 'custom' ? validarPeriodo(de, ate, hoje) : null;
+
+  const [pilula, setPilula] = useState<Pilula>('insumo');
   const [filtro, setFiltro] = useState('');
   const [cat, setCat] = useState('');
   const [forn, setForn] = useState('');
-  const [sort, setSort] = useState<'custo' | 'consumo' | 'dias'>('custo');
+  const [ordem, setOrdem] = useState<Ordem>('custo');
+  const [soAbaixo, setSoAbaixo] = useState(false);
+  const [mostrarSemUso, setMostrarSemUso] = useState(false);
   const [expand, setExpand] = useState<Set<string>>(new Set());
-  const [subTab, setSubTab] = useState<SubTab>('ingredientes');
+  const [fichasAberto, setFichasAberto] = useState(false);
+  const larga = useTelaLarga();
 
-  const { dados, resumo, loading, error, reload } = useConsumoIngredientes(undefined, from, toDate);
+  const { dados, resumo, loading, error, aviso, reload } = useConsumoIngredientes(intervalo.from, intervalo.to);
+
+  const recarregarTudo = useCallback(() => {
+    reload();
+    if (ctx) void ctx.recarregarSituacao();
+    else proprio.reload();
+  }, [reload, ctx, proprio.reload]);
+
+  const escolherPeriodo = (p: PresetPeriodo) => {
+    setPreset(p);
+    if (p === 'custom') return; // começa pelo período que já estava na tela
+    const r = intervaloDoPreset(p, todayBrasilia());
+    setIntervalo(r);
+    setDe(r.from);
+    setAte(r.to);
+  };
+  const mudarDatas = (novoDe: string, novoAte: string) => {
+    setDe(novoDe);
+    setAte(novoAte);
+    if (!validarPeriodo(novoDe, novoAte, todayBrasilia())) setIntervalo({ from: novoDe, to: novoAte });
+  };
+
+  const sitPorId = useMemo(() => new Map((situacao?.insumos ?? []).map((i) => [i.id, i])), [situacao]);
+
+  const linhas = useMemo<Linha[]>(() => dados.map((d) => {
+    const sit = d.semCadastro ? null : sitPorId.get(d.id) ?? null;
+    const dias = sit?.diasRestantes ?? null;
+    const dura = sit
+      ? duraInfo({ acompanha: sit.acompanha, esgotado: sit.esgotado, diasRestantes: sit.diasRestantes, abaixoMinimo: sit.abaixoMinimo, vaiFaltar: sit.vaiFaltar })
+      : null;
+    return {
+      ...d,
+      unBanco: unidadeBanco(d.unidade),
+      sit,
+      estoque: sit ? sit.estoque : d.estoqueAtual,
+      dias,
+      dura,
+      esgotado: !!sit && sit.esgotado,
+      abaixoMinimo: !!sit && sit.abaixoMinimo,
+      critico: !!sit && sit.acompanha && !sit.esgotado && dias !== null && dias <= 3,
+    };
+  }), [dados, sitPorId]);
 
   const cats = useMemo(
     () => ['', ...Array.from(new Set(dados.filter((d) => !d.semCadastro).map((d) => d.categoria).filter(Boolean)))],
     [dados],
   );
   const forns = useMemo(
-    () =>
-      ['', ...Array.from(new Set(dados.filter((d) => !d.semCadastro).map((d) => d.fornecedor).filter((f) => f && f !== '—'))).sort()],
+    () => ['', ...Array.from(new Set(dados.filter((d) => !d.semCadastro).map((d) => d.fornecedor).filter((f) => f && f !== '—'))).sort()],
     [dados],
   );
 
+  const q = semAcento(filtro);
   const filtrados = useMemo(() => {
-    let r = dados.map((d) => ({ ...d, ...calcSugestao(d.estoqueAtual, d.mediaDiaria, d.categoria) }));
-    if (cat) r = r.filter((d) => !d.semCadastro && d.categoria === cat);
-    if (forn) r = r.filter((d) => !d.semCadastro && d.fornecedor === forn);
-    if (filtro) {
-      const q = filtro.toLowerCase();
-      r = r.filter((d) => d.nome.toLowerCase().includes(q) || d.fornecedor.toLowerCase().includes(q));
-    }
+    // Por padrão só os insumos que saíram; a busca, o "abaixo do mínimo" e o botão "mostrar todos" trazem os outros
+    const incluiSemUso = mostrarSemUso || !!q || soAbaixo;
+    const r = linhas.filter((l) => {
+      if (soAbaixo && !l.abaixoMinimo) return false;
+      if (cat && (l.semCadastro || l.categoria !== cat)) return false;
+      if (forn && (l.semCadastro || l.fornecedor !== forn)) return false;
+      if (q && !semAcento(l.nome).includes(q) && !semAcento(l.fornecedor).includes(q)) return false;
+      if (!incluiSemUso && l.totalConsumido <= 0) return false;
+      return true;
+    });
+    const chaveDias = (l: Linha) => (l.esgotado ? -1 : l.dias ?? 1e9);
     return r.sort((a, b) => {
       if (a.semCadastro !== b.semCadastro) return a.semCadastro ? 1 : -1;
-      if (sort === 'custo') return (b.custoTotal ?? 0) - (a.custoTotal ?? 0);
-      if (sort === 'consumo') return (b.totalConsumido ?? 0) - (a.totalConsumido ?? 0);
-      return (a.diasAteZerar ?? 999) - (b.diasAteZerar ?? 999);
+      if (ordem === 'custo') return b.custoTotal - a.custoTotal;
+      if (ordem === 'consumo') return b.totalConsumido - a.totalConsumido;
+      return chaveDias(a) - chaveDias(b);
     });
-  }, [dados, cat, forn, filtro, sort]);
+  }, [linhas, cat, forn, q, ordem, soAbaixo, mostrarSemUso]);
 
-  const orfas = useMemo(() => dados.filter((d) => d.semCadastro), [dados]);
+  const orfas = useMemo(() => dados.filter((d) => d.semCadastro).length, [dados]);
+  const semUso = useMemo(() => linhas.filter((l) => !l.semCadastro && l.totalConsumido <= 0).length, [linhas]);
+  const qtdAbaixo = useMemo(() => linhas.filter((l) => l.abaixoMinimo).length, [linhas]);
   const qtdPerdas = useMemo(() => dados.filter((d) => !d.semCadastro && d.porTipo.perda > 0).length, [dados]);
+  const temFiltro = !!(q || cat || forn || soAbaixo);
 
-  const toggle = useCallback(
-    (id: string) =>
-      setExpand((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; }),
+  const alternar = useCallback(
+    (id: string) => setExpand((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; }),
     [],
   );
 
-  if (error && !loading && dados.length === 0) {
-    return (
-      <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-        <p className="text-sm font-semibold text-red-800">{error}</p>
-        <p className="text-xs text-zinc-500">
-          User: {user?.id ?? '—'} | Tenant: {user?.tenantId ?? '—'}
-        </p>
-        <button
-          onClick={() => window.location.reload()}
-          className="mt-2 px-3 py-1.5 bg-red-600 text-white text-xs rounded-lg cursor-pointer"
-        >
-          Recarregar
-        </button>
-      </div>
-    );
-  }
+  // "Aplicar fichas nas vendas passadas": mesma regra de quem pode (admin e Supervisor; o backend confere de novo)
+  const podeAplicarFichas = !!user?.tenantId && ['admin', 'gerente'].includes(String(user.perfil));
+
+  const baixarCsv = () => {
+    const cab = [
+      'Insumo', 'Categoria', 'Fornecedor', 'Unidade', 'Usou', 'Custo (R$)', 'Vendas', 'Produção', 'Perdas', 'Ajustes',
+      'Transferências', 'Tem', 'Mínimo', 'Usa por dia', 'Dura (dias)', 'Tendência', 'Situação',
+    ];
+    const rotuloTendencia = { subindo: 'subindo', estavel: 'igual', caindo: 'caindo' } as const;
+    const linhasCsv = filtrados.map((l) => [
+      l.nome, l.semCadastro ? '' : l.categoria, l.fornecedor === '—' ? '' : l.fornecedor,
+      l.unBanco === 'unit' ? 'un' : l.unBanco,
+      l.totalConsumido, Math.round(l.custoTotal * 100) / 100,
+      l.porTipo.vendas, l.porTipo.producao, l.porTipo.perda, l.porTipo.ajuste, l.porTipo.transferencia,
+      l.semCadastro ? null : l.estoque, l.semCadastro ? null : (l.sit?.minimo ?? l.minimo),
+      l.sit?.consumoDia ?? null, l.dias == null ? null : Math.round(l.dias * 10) / 10,
+      l.tendencia ? rotuloTendencia[l.tendencia] : '',
+      l.semCadastro ? 'Sem cadastro' : l.esgotado ? 'Zerado' : l.abaixoMinimo ? 'Abaixo do mínimo' : '',
+    ]);
+    const blob = new Blob(['﻿' + montarCsv(cab, linhasCsv)], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `consumo-insumos_${intervalo.from}_a_${intervalo.to}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const abaixoMinimo = situacao?.totais.abaixoMinimo ?? null;
+  const faixaPrincipal: ItemFaixa[] = resumo ? [
+    {
+      valor: resumo.insumosUsados, rotulo: 'Insumos usados',
+      ajuda: 'Quantos insumos tiveram alguma saída do estoque no período (venda, produção, perda ou saída manual).',
+    },
+    {
+      valor: brlInteiro(resumo.totalConsumidoValor), rotulo: 'Custo do que saiu',
+      ajuda: 'O que saiu do estoque no período (vendas pela ficha, produção, perdas, saídas manuais e contagem que achou a menos) vezes o preço atual de cada insumo.',
+    },
+    {
+      valor: resumo.totalVendasValor == null ? '—' : brlInteiro(resumo.totalVendasValor), rotulo: 'Vendas',
+      ajuda: 'Faturamento do período: pedidos que valeram, sem cancelados nem de treino.',
+    },
+    {
+      valor: abaixoMinimo ?? '—', rotulo: 'Abaixo do mínimo', tom: abaixoMinimo ? 'red' : 'neutro',
+      ajuda: 'O mesmo número do Início do Estoque: insumos com estoque igual ou abaixo do mínimo hoje. Não depende do período. Na lista "Por insumo" dá para filtrar só esses.',
+    },
+  ] : [];
+  const faixaCustos: ItemFaixa[] = resumo ? [
+    { valor: brl(resumo.custoVendas), rotulo: 'Custo das vendas', tom: 'amber' },
+    { valor: brl(resumo.custoProducao), rotulo: 'Custo da produção' },
+    { valor: brl(resumo.custoPerda), rotulo: 'Custo das perdas', tom: resumo.custoPerda > 0 ? 'red' : 'neutro', onClick: () => setPilula('perdas') },
+  ] : [];
+
+  const opcoesPilula: OpcaoChip<Pilula>[] = [
+    { id: 'insumo', rotulo: 'Por insumo' },
+    { id: 'categoria', rotulo: 'Por categoria' },
+    { id: 'prato', rotulo: 'Por prato' },
+    { id: 'perdas', rotulo: 'Perdas', n: qtdPerdas },
+  ];
+
+  const mostrarConteudo = !loading && !error;
 
   return (
     <div className="space-y-4">
-      {/* Período + Resumo */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <Calendar size={13} className="text-zinc-400" />
-        <span className="text-xs text-zinc-500">De</span>
-        <input
-          type="date"
-          value={from}
-          onChange={(e) => setFrom(e.target.value)}
-          className="px-2 py-1.5 text-xs border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-        />
-        <span className="text-xs text-zinc-500">até</span>
-        <input
-          type="date"
-          value={toDate}
-          onChange={(e) => setToDate(e.target.value)}
-          className="px-2 py-1.5 text-xs border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500/20"
-        />
-        <button
-          onClick={() => { setFrom(trinta); setToDate(hoje); }}
-          className="text-xs text-zinc-500 hover:text-zinc-700 cursor-pointer"
-        >
-          Últimos 30 dias
-        </button>
-        <span className="flex-1" />
-        <BotaoFichasVendasPassadas onAplicado={reload} />
+      {/* Período + menu */}
+      <div className="space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="flex-1 min-w-0 overflow-hidden">
+            <Chips opcoes={OPCOES_PERIODO} valor={preset} onChange={escolherPeriodo} />
+          </div>
+          <MenuMais itens={[
+            { rotulo: 'Atualizar os números', icone: 'ri-refresh-line', onClick: recarregarTudo },
+            { rotulo: 'Aplicar fichas nas vendas passadas', icone: 'ri-history-line', onClick: () => setFichasAberto(true), oculto: !podeAplicarFichas },
+          ]} />
+        </div>
+        {preset === 'custom' && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <label className="text-xs font-bold text-zinc-500" htmlFor="consumo-de">De</label>
+            <input id="consumo-de" type="date" value={de} max={hoje} onChange={(e) => mudarDatas(e.target.value, ate)} className={campo} />
+            <label className="text-xs font-bold text-zinc-500" htmlFor="consumo-ate">até</label>
+            <input id="consumo-ate" type="date" value={ate} min={de} max={hoje} onChange={(e) => mudarDatas(de, e.target.value)} className={campo} />
+          </div>
+        )}
+        {erroPeriodo && <p className="text-xs font-semibold text-red-600">{erroPeriodo} Os números abaixo continuam do período anterior.</p>}
+        <p className="text-[11.5px] text-zinc-400 px-0.5">
+          Mostrando de {dataBR(intervalo.from)} a {dataBR(intervalo.to)}
+        </p>
       </div>
 
       {loading && (
         <div className="flex items-center justify-center py-12">
           <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
-          <span className="ml-2 text-sm text-zinc-400">Carregando...</span>
+          <span className="ml-2 text-sm text-zinc-400">Lendo o consumo…</span>
         </div>
       )}
 
-      {!loading && dados.length === 0 && (
-        <div className="bg-white border border-zinc-100 rounded-xl p-8 text-center">
-          <Package size={20} className="text-zinc-300 mx-auto mb-2" />
-          <p className="text-sm font-semibold text-zinc-600">Nenhum dado de consumo</p>
-          <p className="text-xs text-zinc-400">Não há movimentações no período selecionado.</p>
-          <button
-            onClick={reload}
-            className="mt-3 px-4 py-2 bg-amber-500 text-white text-xs font-semibold rounded-lg cursor-pointer"
-          >
-            Recarregar
-          </button>
-        </div>
+      {!loading && error && (
+        <CartaoAcao tom="alerta" icone="ri-error-warning-line" titulo={error}
+          acoes={<button type="button" onClick={recarregarTudo} className={btn('dark', 'sm')}>Tentar de novo</button>}>
+          O período e os filtros continuam como estão.
+        </CartaoAcao>
       )}
 
-      {/* Cards de resumo */}
-      {resumo && dados.length > 0 && (
+      {mostrarConteudo && aviso && (
+        <CartaoAcao tom="prop" icone="ri-alert-line" titulo="Os números podem estar incompletos">{aviso}</CartaoAcao>
+      )}
+
+      {mostrarConteudo && dados.length === 0 && (
+        <Vazio icone="ri-archive-line" titulo="Nenhum dado de consumo"
+          acao={<button type="button" onClick={recarregarTudo} className={btn('p', 'sm')}>Atualizar</button>}>
+          Não há insumos nem movimentos de estoque neste período.
+        </Vazio>
+      )}
+
+      {mostrarConteudo && resumo && dados.length > 0 && (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="bg-white border border-zinc-100 rounded-xl p-3">
-              <p className="text-xs text-zinc-500">Ingredientes</p>
-              <p className="text-lg font-bold text-zinc-800">{resumo.totalIngredientes}</p>
-            </div>
-            <div className="bg-white border border-zinc-100 rounded-xl p-3">
-              <p className="text-xs text-zinc-500">Custo Consumido</p>
-              <p className="text-lg font-bold text-zinc-800">{fmt(resumo.totalConsumidoValor)}</p>
-            </div>
-            <div className="bg-white border border-zinc-100 rounded-xl p-3">
-              <p className="text-xs text-zinc-500">Faturamento</p>
-              <p className="text-lg font-bold text-zinc-800">{fmt(resumo.totalVendasValor)}</p>
-            </div>
-            <div className="bg-white border border-zinc-100 rounded-xl p-3">
-              <p className="text-xs text-zinc-500">Ingredientes Críticos</p>
-              <p className="text-lg font-bold text-zinc-800">{resumo.ingredientesCriticos}</p>
-            </div>
-          </div>
+          <Faixa itens={faixaPrincipal} />
+          <Faixa itens={faixaCustos} />
 
-          <div className="grid grid-cols-3 gap-3">
-            <div className="bg-amber-50 border border-amber-100 rounded-xl p-2">
-              <p className="text-[10px] text-amber-600">Custo Vendas</p>
-              <p className="text-sm font-bold text-amber-700">{fmt(resumo.custoVendas)}</p>
-            </div>
-            <div className="bg-sky-50 border border-sky-100 rounded-xl p-2">
-              <p className="text-[10px] text-sky-600">Custo Produção</p>
-              <p className="text-sm font-bold text-sky-700">{fmt(resumo.custoProducao)}</p>
-            </div>
-            <div className="bg-red-50 border border-red-100 rounded-xl p-2">
-              <p className="text-[10px] text-red-600">Custo Perdas</p>
-              <p className="text-sm font-bold text-red-700">{fmt(resumo.custoPerda)}</p>
-            </div>
-          </div>
-        </>
-      )}
+          {orfas > 0 && (
+            <CartaoAcao tom="prop" icone="ri-error-warning-line"
+              titulo={`${orfas} insumo${orfas > 1 ? 's' : ''} com saída, mas sem cadastro ativo`}>
+              Há movimentos de estoque apontando para insumos removidos ou que não estão cadastrados. Eles aparecem no fim da lista, sem custo.
+            </CartaoAcao>
+          )}
 
-      {orfas.length > 0 && (
-        <div className="bg-orange-50 border border-orange-200 rounded-xl p-3">
-          <div className="flex items-center gap-2 mb-1">
-            <AlertCircle size={14} className="text-orange-600" />
-            <p className="text-xs font-semibold text-orange-700">
-              {orfas.length} ingrediente{orfas.length > 1 ? 's' : ''} com consumo mas sem cadastro ativo
-            </p>
-          </div>
-          <p className="text-[10px] text-orange-600">
-            Existem movimentações apontando para ingredientes removidos ou não cadastrados.
-          </p>
-        </div>
-      )}
+          <Pilulas opcoes={opcoesPilula} valor={pilula} onChange={(v) => setPilula(v)} />
 
-      {/* Sub-tabs */}
-      {dados.length > 0 && (
-        <div className="flex items-center gap-1 border-b border-zinc-100 pb-0">
-          {SUB_TABS.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setSubTab(t.id)}
-              className={`flex items-center gap-1.5 px-3 py-2 text-xs font-semibold border-b-2 -mb-px transition-colors whitespace-nowrap cursor-pointer ${
-                subTab === t.id
-                  ? 'border-amber-500 text-amber-600'
-                  : 'border-transparent text-zinc-400 hover:text-zinc-600'
-              }`}
-            >
-              {t.icon}
-              {t.label}
-              {t.id === 'perdas' && qtdPerdas > 0 && (
-                <span className="bg-red-500 text-white text-[9px] font-bold px-1 py-0.5 rounded-full leading-none">
-                  {qtdPerdas}
-                </span>
+          {pilula === 'categoria' && <ConsumoCategoriasPanel dados={dados} loading={loading} />}
+          {pilula === 'prato' && <ConsumoPorLanchePanel dateFrom={intervalo.from} dateTo={intervalo.to} />}
+          {pilula === 'perdas' && <ConsumoPerdas dados={dados} loading={loading} />}
+
+          {pilula === 'insumo' && (
+            <div className="space-y-3">
+              {/* Busca e filtros */}
+              <div className="space-y-2">
+                <div className="relative">
+                  <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+                  <input type="text" placeholder="Buscar insumo ou fornecedor" value={filtro} onChange={(e) => setFiltro(e.target.value)}
+                    className={`${campo} w-full pl-9 font-normal`} />
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select value={cat} onChange={(e) => setCat(e.target.value)} className={`${campo} max-w-[180px]`} aria-label="Categoria">
+                    {cats.map((c) => <option key={c} value={c}>{c || 'Todas as categorias'}</option>)}
+                  </select>
+                  <select value={forn} onChange={(e) => setForn(e.target.value)} className={`${campo} max-w-[180px]`} aria-label="Fornecedor">
+                    {forns.map((f) => <option key={f} value={f}>{f || 'Todos os fornecedores'}</option>)}
+                  </select>
+                  <select value={ordem} onChange={(e) => setOrdem(e.target.value as Ordem)} className={campo} aria-label="Ordem">
+                    <option value="custo">Maior custo</option>
+                    <option value="consumo">Mais usado</option>
+                    <option value="dias">Acaba primeiro</option>
+                  </select>
+                  {(qtdAbaixo > 0 || soAbaixo) && (
+                    <button type="button" onClick={() => setSoAbaixo((v) => !v)} aria-pressed={soAbaixo}
+                      className={`inline-flex items-center gap-1 h-8 px-3 rounded-full border text-[12.5px] font-bold cursor-pointer whitespace-nowrap ${
+                        soAbaixo ? 'bg-zinc-900 border-zinc-900 text-white' : 'bg-red-50 border-red-200 text-red-700'}`}>
+                      Abaixo do mínimo <span className="opacity-70">{qtdAbaixo}</span>
+                    </button>
+                  )}
+                  <span className="flex-1" />
+                  <span className="text-xs text-zinc-400">{filtrados.length} insumo{filtrados.length === 1 ? '' : 's'}</span>
+                  <button type="button" onClick={baixarCsv} disabled={!filtrados.length} className={btn('out', 'sm')}>
+                    <i className="ri-download-2-line" />CSV
+                  </button>
+                </div>
+              </div>
+
+              {soAbaixo && !q && !cat && !forn && abaixoMinimo != null && filtrados.length < abaixoMinimo && (
+                <Nota>
+                  O Início do Estoque conta {abaixoMinimo}; aqui entram só os insumos de consumo (os produzidos na cozinha ficam de fora).
+                </Nota>
               )}
-            </button>
-          ))}
-        </div>
-      )}
 
-      {/* Conteúdo das sub-abas */}
-      {dados.length > 0 && subTab === 'categorias' && (
-        <ConsumoCategoriasPanel dados={dados} loading={loading} />
-      )}
-
-      {dados.length > 0 && subTab === 'lanchesPratos' && (
-        <ConsumoPorLanchePanel dateFrom={from} dateTo={toDate} />
-      )}
-
-      {dados.length > 0 && subTab === 'perdas' && (
-        <ConsumoPerdas dados={dados} loading={loading} />
-      )}
-
-      {/* Por Ingrediente (lista existente) */}
-      {subTab === 'ingredientes' && dados.length > 0 && (
-        <>
-          {/* Filtros */}
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative flex-1 min-w-0">
-              <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400" />
-              <input
-                type="text"
-                placeholder="Buscar..."
-                value={filtro}
-                onChange={(e) => setFiltro(e.target.value)}
-                className="w-full pl-7 pr-2 py-1.5 text-xs border border-zinc-200 rounded-lg"
-              />
-            </div>
-            <select
-              value={cat}
-              onChange={(e) => setCat(e.target.value)}
-              className="px-2 py-1.5 text-xs border border-zinc-200 rounded-lg bg-white"
-            >
-              {cats.map((c) => <option key={c} value={c}>{c || 'Todas categorias'}</option>)}
-            </select>
-            <select
-              value={forn}
-              onChange={(e) => setForn(e.target.value)}
-              className="px-2 py-1.5 text-xs border border-zinc-200 rounded-lg bg-white max-w-[140px]"
-            >
-              {forns.map((f) => <option key={f} value={f}>{f || 'Todos fornecedores'}</option>)}
-            </select>
-            <select
-              value={sort}
-              onChange={(e) => setSort(e.target.value as 'custo' | 'consumo' | 'dias')}
-              className="px-2 py-1.5 text-xs border border-zinc-200 rounded-lg bg-white"
-            >
-              <option value="custo">Por custo</option>
-              <option value="consumo">Por consumo</option>
-              <option value="dias">Por dias</option>
-            </select>
-            <button className="flex items-center gap-1 px-2 py-1.5 bg-zinc-800 text-white text-xs rounded-lg cursor-pointer whitespace-nowrap">
-              <Download size={12} />
-              CSV
-            </button>
-          </div>
-
-          {/* Tabela de ingredientes */}
-          <div className="bg-white border border-zinc-100 rounded-xl overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="bg-zinc-50 border-b border-zinc-100">
-                    <th className="px-3 py-2 text-left font-semibold text-zinc-600 w-6" />
-                    <th className="px-3 py-2 text-left font-semibold text-zinc-600">Ingrediente</th>
-                    <th className="px-3 py-2 text-right font-semibold text-zinc-600">Consumo</th>
-                    <th className="px-3 py-2 text-right font-semibold text-zinc-600">Custo</th>
-                    <th className="px-3 py-2 text-right font-semibold text-zinc-600">Estoque</th>
-                    <th className="px-3 py-2 text-right font-semibold text-zinc-600">
-                      <TooltipHeader
-                        label="Dias"
-                        tip="Estimativa de dias até o estoque zerar. Cálculo: Estoque atual ÷ Média diária de consumo de vendas no período selecionado. Quanto menor o número, mais urgente a reposição."
-                      />
-                    </th>
-                    <th className="px-3 py-2 text-center font-semibold text-zinc-600">
-                      <TooltipHeader
-                        label="Tend."
-                        tip="Tendência do consumo: compara a última semana com a semana anterior. Seta vermelha (↑) = consumo acelerando. Seta verde (↓) = consumo caindo. Traço (—) = consumo estável (variação menor que 20%)."
-                      />
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-50">
-                  {filtrados.map((item) => {
-                    const exp = expand.has(String(item.id));
-                    // Sem venda no período (diasAteZerar null) não é crítico — antes Number(null) = 0 marcava CRÍTICO
-                    const temPrevisao = !item.semCadastro && item.diasAteZerar !== null;
-                    const crit = temPrevisao && Number(item.diasAteZerar) <= 3;
-                    const baixo = temPrevisao && Number(item.diasAteZerar) <= 7;
-                    return (
-                      <>
-                        <tr
-                          key={String(item.id)}
-                          className={`hover:bg-zinc-50/50 cursor-pointer ${exp ? 'bg-amber-50/30' : crit ? 'bg-red-50/30' : item.semCadastro ? 'bg-orange-50/20' : ''}`}
-                          onClick={() => toggle(String(item.id))}
-                        >
-                          <td className="px-3 py-2 text-zinc-400">
-                            {exp ? <ChevronUp size={12} className="text-amber-500" /> : <ChevronDown size={12} />}
-                          </td>
-                          <td className="px-3 py-2">
-                            <div className="flex items-center gap-1">
-                              <span className={`font-medium ${item.semCadastro ? 'text-orange-700' : 'text-zinc-800'}`}>
-                                {item.nome}
-                              </span>
-                              {item.semCadastro && (
-                                <span className="px-1 bg-orange-100 text-orange-700 rounded text-[9px] font-bold">
-                                  SEM CADASTRO
-                                </span>
-                              )}
-                              {crit && (
-                                <span className="px-1 bg-red-100 text-red-700 rounded text-[9px] font-bold">
-                                  CRÍTICO
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex flex-wrap gap-1 mt-0.5">
-                              <TipoBadge tipo="vendas" qtd={Number(item.porTipo.vendas ?? 0)} unidade={item.unidade} />
-                              <TipoBadge tipo="producao" qtd={Number(item.porTipo.producao ?? 0)} unidade={item.unidade} />
-                              <TipoBadge tipo="perda" qtd={Number(item.porTipo.perda ?? 0)} unidade={item.unidade} />
-                              <TipoBadge tipo="ajuste" qtd={Number(item.porTipo.ajuste ?? 0)} unidade={item.unidade} />
-                              <TipoBadge tipo="transferencia" qtd={Number(item.porTipo.transferencia ?? 0)} unidade={item.unidade} />
-                            </div>
-                          </td>
-                          <td className="px-3 py-2 text-right text-zinc-700">
-                            {fmtNum(Number(item.totalConsumido))} {item.unidade}
-                          </td>
-                          <td className="px-3 py-2 text-right font-medium text-zinc-800">
-                            {fmt(Number(item.custoTotal))}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            {item.semCadastro ? (
-                              <span className="text-orange-500 text-[10px]">N/A</span>
-                            ) : (
-                              <span className={baixo ? 'text-red-600 font-semibold' : 'text-zinc-600'}>
-                                {fmtNum(Number(item.estoqueAtual))} {item.unidade}
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-right">
-                            {item.semCadastro || item.diasAteZerar === null ? (
-                              <span className="text-zinc-400">—</span>
-                            ) : (
-                              <span
-                                className={`relative group cursor-help font-semibold ${crit ? 'text-red-600' : baixo ? 'text-amber-600' : 'text-emerald-600'}`}
-                              >
-                                {item.estoqueAtual <= 0 ? 'zerado' : `${Number(item.diasAteZerar)}d`}
-                                {/* tooltip abaixo, alinhado à direita */}
-                                <span className="absolute top-full right-0 mt-1 w-52 bg-zinc-800 text-white text-[10px] leading-relaxed rounded-lg px-2.5 py-2 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg whitespace-normal text-left font-normal">
-                                  <span className="font-semibold text-amber-300 block mb-1">Como foi calculado:</span>
-                                  Estoque atual: {fmtNum(item.estoqueAtual)} {item.unidade}
-                                  <br />Média diária: {fmtNum(item.mediaDiaria)} {item.unidade}/dia
-                                  <br />= {Number(item.diasAteZerar)} dias para zerar
-                                  {crit && <span className="block mt-1 text-red-300 font-semibold">⚠️ Reposição urgente!</span>}
-                                  {baixo && !crit && <span className="block mt-1 text-amber-300 font-semibold">⚠️ Estoque baixo.</span>}
-                                  <span className="absolute bottom-full right-4 border-4 border-transparent border-b-zinc-800" />
-                                </span>
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-center">
-                            {item.tendencia === 'subindo' ? (
-                              <span className="relative group cursor-help inline-flex items-center justify-center">
-                                <ArrowUp size={12} className="text-red-500" />
-                                {/* tooltip abaixo, alinhado à direita para não vazar */}
-                                <span className="absolute top-full right-0 mt-1 w-52 bg-zinc-800 text-white text-[10px] leading-relaxed rounded-lg px-2.5 py-2 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg whitespace-normal text-left font-normal">
-                                  Consumo <span className="text-red-300 font-semibold">acelerando</span>. Última semana teve mais de 20% de consumo a mais que a semana anterior. Fique atento ao estoque.
-                                  <span className="absolute bottom-full right-3 border-4 border-transparent border-b-zinc-800" />
-                                </span>
-                              </span>
-                            ) : item.tendencia === 'caindo' ? (
-                              <span className="relative group cursor-help inline-flex items-center justify-center">
-                                <ArrowDown size={12} className="text-emerald-500" />
-                                <span className="absolute top-full right-0 mt-1 w-52 bg-zinc-800 text-white text-[10px] leading-relaxed rounded-lg px-2.5 py-2 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg whitespace-normal text-left font-normal">
-                                  Consumo <span className="text-emerald-300 font-semibold">diminuindo</span>. Última semana teve mais de 20% de consumo a menos que a semana anterior.
-                                  <span className="absolute bottom-full right-3 border-4 border-transparent border-b-zinc-800" />
-                                </span>
-                              </span>
-                            ) : (
-                              <span className="relative group cursor-help inline-flex items-center justify-center">
-                                <Minus size={12} className="text-zinc-400" />
-                                <span className="absolute top-full right-0 mt-1 w-52 bg-zinc-800 text-white text-[10px] leading-relaxed rounded-lg px-2.5 py-2 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50 shadow-lg whitespace-normal text-left font-normal">
-                                  Consumo <span className="text-zinc-300 font-semibold">estável</span>. A variação entre a última semana e a anterior foi menor que 20%.
-                                  <span className="absolute bottom-full right-3 border-4 border-transparent border-b-zinc-800" />
-                                </span>
-                              </span>
-                            )}
-                          </td>
+              {filtrados.length === 0 ? (
+                temFiltro ? (
+                  <Vazio icone="ri-search-line" titulo="Nenhum insumo com esse filtro"
+                    acao={<button type="button" className={btn('out', 'sm')}
+                      onClick={() => { setFiltro(''); setCat(''); setForn(''); setSoAbaixo(false); }}>Limpar filtros</button>} />
+                ) : (
+                  <Vazio icone="ri-archive-line" titulo="Nada saiu do estoque neste período"
+                    acao={semUso > 0 ? <button type="button" className={btn('out', 'sm')} onClick={() => setMostrarSemUso(true)}>Ver todos os insumos</button> : undefined}>
+                    Escolha outro período para ver o consumo.
+                  </Vazio>
+                )
+              ) : larga ? (
+                <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-[13px]">
+                      <thead>
+                        <tr className="bg-zinc-50 border-b border-zinc-200 text-[11.5px] text-zinc-500">
+                          <th className="w-9" />
+                          <th className="px-3 py-2.5 text-left font-bold">Insumo</th>
+                          <th className="px-3 py-2.5 text-right font-bold">Usou</th>
+                          <th className="px-3 py-2.5 text-right font-bold">Custo</th>
+                          <th className="px-3 py-2.5 text-right font-bold">Tem</th>
+                          <th className="px-3 py-2.5 text-right font-bold whitespace-nowrap">
+                            Dura{' '}
+                            <Ajuda titulo="Dura">
+                              Quanto tempo o que tem em estoque dura, no ritmo dos últimos dias: o que tem ÷ o que usa por dia.
+                              É a mesma conta do Início do Estoque{situacao?.janelaDias ? ` (média dos últimos ${Math.round(situacao.janelaDias)} dias de venda)` : ''}.
+                              Fica em branco quando a loja ainda tem pouco histórico.
+                            </Ajuda>
+                          </th>
+                          <th className="px-3 py-2.5 text-right font-bold whitespace-nowrap">
+                            Tendência{' '}
+                            <Ajuda titulo="Tendência">
+                              Compara a segunda metade do período escolhido com a primeira. ↗ subindo: usou mais de 20% a mais.
+                              ↘ caindo: mais de 20% a menos. → igual: variação menor que isso. Fica em branco com menos de
+                              4 dias de período ou quando o insumo não saiu na primeira metade. O dia de hoje não entra (ainda não terminou).
+                            </Ajuda>
+                          </th>
                         </tr>
-                        {exp && (
-                          <tr key={`detail-${String(item.id)}`}>
-                            <td colSpan={7} className="p-0">
-                              <ConsumoDetalheDia
-                                ingredientId={String(item.id)}
-                                ingredientUnit={item.unidade}
-                                dateFrom={from}
-                                dateTo={toDate}
-                              />
-                            </td>
-                          </tr>
-                        )}
-                      </>
-                    );
-                  })}
-                </tbody>
-              </table>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100">
+                        {filtrados.map((item) => (
+                          <LinhaTabela key={item.id} item={item} aberto={expand.has(item.id)} onAlternar={() => alternar(item.id)}
+                            onAbrir={ctx && !item.semCadastro ? () => ctx.abrirFicha(item.id) : undefined}
+                            de={intervalo.from} ate={intervalo.to} />
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden divide-y divide-zinc-100">
+                  {filtrados.map((item) => (
+                    <LinhaCartao key={item.id} item={item} aberto={expand.has(item.id)} onAlternar={() => alternar(item.id)}
+                      onAbrir={ctx && !item.semCadastro ? () => ctx.abrirFicha(item.id) : undefined}
+                      de={intervalo.from} ate={intervalo.to} />
+                  ))}
+                </div>
+              )}
+
+              {!temFiltro && semUso > 0 && filtrados.length > 0 && (
+                <button type="button" onClick={() => setMostrarSemUso((v) => !v)} className={btn('ghost', 'sm')}>
+                  {mostrarSemUso ? 'Esconder os insumos que não saíram' : `Mostrar também os ${semUso} insumos que não saíram`}
+                </button>
+              )}
+
+              <Nota>
+                Usou = o que saiu do estoque no período. Dura = o que tem ÷ o que usa por dia (a mesma conta do Início do Estoque).
+                Tendência = segunda metade do período contra a primeira.
+              </Nota>
             </div>
-          </div>
+          )}
         </>
+      )}
+
+      {fichasAberto && user?.tenantId && (
+        <FichasVendasPassadasModal tenantId={user.tenantId} onFechar={() => setFichasAberto(false)} onAplicado={recarregarTudo} />
       )}
     </div>
   );

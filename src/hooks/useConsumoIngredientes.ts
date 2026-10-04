@@ -1,7 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { convertUnit } from '@/lib/unitConversion';
+import { fetchAllRows } from '@/lib/fetchAllRows';
+import { todayBrasilia, somarDias } from '@/lib/dateUtils';
+import { dividirPeriodo, tendenciaDe, type Tendencia } from '@/lib/consumoInsumos';
 import type { UnidadeEstoque } from '@/types/estoque';
 
 export interface ConsumoPorTipo {
@@ -12,6 +15,8 @@ export interface ConsumoPorTipo {
   transferencia: number;
 }
 
+// "Quanto dura" e "abaixo do mínimo" NÃO são calculados aqui: vêm da regra única do Estoque
+// (fn_estoque_situacao, lida pela tela). Antes este hook dividia pelos dias com QUALQUER movimento.
 export interface ConsumoIngrediente {
   id: string;
   nome: string;
@@ -22,24 +27,21 @@ export interface ConsumoIngrediente {
   minimo: number;
   totalConsumido: number;
   porTipo: ConsumoPorTipo;
-  totalVendas: number;
-  qtdPedidos: number;
   custoTotal: number;
   custoVendas: number;
   custoProducao: number;
   custoPerda: number;
-  mediaDiaria: number;
-  diasAteZerar: number | null;
-  tendencia: 'subindo' | 'estavel' | 'caindo';
+  /** 2ª metade do período × 1ª metade; null = sem como comparar */
+  tendencia: Tendencia | null;
   semCadastro: boolean;
 }
 
 export interface ConsumoResumo {
-  totalIngredientes: number;
+  /** Insumos cadastrados que tiveram alguma saída no período */
+  insumosUsados: number;
   totalConsumidoValor: number;
-  totalVendasValor: number;
-  ingredientesCriticos: number;
-  mediaConsumoDiario: number;
+  /** null = não deu para ler os pedidos (a tela mostra "—", nunca R$ 0 falso) */
+  totalVendasValor: number | null;
   custoVendas: number;
   custoProducao: number;
   custoPerda: number;
@@ -115,32 +117,60 @@ function classifyMovement(
   return { bucket: 'ajuste', isConsumo: false };
 }
 
-export function useConsumoIngredientes(
-  _tenantId: string | undefined | null,
-  dateFrom?: string,
-  dateTo?: string,
-) {
+// Lê tudo paginado: as funções do banco devolvem TABLE e o PostgREST corta em ~1000 linhas sem avisar
+// (um mês de vendas passa disso fácil). Ordenar por created_at/id mantém as páginas estáveis.
+const LIMITE_MOVIMENTOS = 100_000;
+const LIMITE_PEDIDOS = 50_000;
+
+interface MovimentoRow {
+  id: string;
+  ingredient_id: string;
+  ingredient_name: string | null;
+  type: string;
+  quantity: number;
+  ingredient_unit?: string | null;
+  reason?: string | null;
+  created_at?: string | null;
+  signed_quantity?: number | null;
+}
+interface PedidoRow { id: string; total: number | null; status: string | null }
+
+const PEDIDO_NAO_VALE = new Set(['cancelled', 'canceled', 'cancelado', 'refunded']);
+
+interface Acumulado {
+  nome: string;
+  porTipo: ConsumoPorTipo;
+  totalSaidas: number;
+  /** true se houve venda direta (theoretical_out) no período */
+  temVendasDiretas: boolean;
+  /** vendas / produção na 1ª e na 2ª metade do período (para a tendência) */
+  vendas1: number; vendas2: number;
+  producao1: number; producao2: number;
+}
+
+export function useConsumoIngredientes(dateFrom?: string, dateTo?: string) {
   const { user } = useAuth();
   const tenantId = user?.tenantId;
 
-  const fromIso = dateFrom ?? new Date(Date.now() - 30 * 86400000).toLocaleDateString('sv-SE');
-  const toIso = dateTo ?? new Date().toLocaleDateString('sv-SE');
+  const hojeBR = todayBrasilia();
+  const fromIso = dateFrom ?? somarDias(hojeBR, -29);
+  const toIso = dateTo ?? hojeBR;
 
   const [dados, setDados] = useState<ConsumoIngrediente[]>([]);
   const [resumo, setResumo] = useState<ConsumoResumo | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [debugInfo, setDebugInfo] = useState({
-    movsCount: 0,
-    insumosCount: 0,
-    orfas: 0,
-    ordersCount: 0,
-    cadastrados: 0,
-    tenantName: '',
-  });
+  // Leitura incompleta (período grande demais, vendas que não vieram): a tela avisa em vez de mostrar número como certo
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [tentativa, setTentativa] = useState(0);
+
+  // Recarrega só os dados — período e filtros ficam como estão (antes era window.location.reload()).
+  const reload = useCallback(() => setTentativa((n) => n + 1), []);
 
   useEffect(() => {
     if (!tenantId) {
+      setDados([]);
+      setResumo(null);
       setLoading(false);
       return;
     }
@@ -150,15 +180,46 @@ export function useConsumoIngredientes(
     async function load() {
       setLoading(true);
       setError(null);
+      setAviso(null);
 
       try {
-        /* 1) ingredients via RPC (funciona com RLS) */
-        const { data: ingsData, error: ingsErr } = await supabase.rpc('fn_get_ingredients', {
-          p_tenant_id: tenantId,
-        });
-        if (ingsErr) throw ingsErr;
+        // Dia de Brasília inteiro (fuso fixo -03:00, como no resto dos relatórios)
+        const deTs = new Date(`${fromIso}T00:00:00-03:00`).toISOString();
+        const ateTs = new Date(`${toIso}T23:59:59.999-03:00`).toISOString();
 
-        const ingredients = ((ingsData as Array<Record<string, unknown>>) ?? []).map((r) => ({
+        const [ingsRes, movsRes, pedidosRes] = await Promise.all([
+          /* 1) insumos via RPC (funciona com RLS) */
+          supabase.rpc('fn_get_ingredients', { p_tenant_id: tenantId }),
+          /* 2) movimentos de estoque do período */
+          fetchAllRows<MovimentoRow>(
+            (a, b) =>
+              supabase
+                .rpc('fn_get_stock_movements_filtered', { p_tenant_id: tenantId, p_date_from: deTs, p_date_to: ateTs })
+                .order('created_at', { ascending: true })
+                .order('id', { ascending: true })
+                .range(a, b),
+            { maxRows: LIMITE_MOVIMENTOS },
+          ),
+          /* 3) pedidos do período (para o "Vendas") */
+          fetchAllRows<PedidoRow>(
+            (a, b) =>
+              supabase
+                .rpc('fn_get_orders_for_consumo', { p_tenant_id: tenantId, p_date_from: deTs, p_date_to: ateTs })
+                .order('created_at', { ascending: true })
+                .order('id', { ascending: true })
+                .range(a, b),
+            { maxRows: LIMITE_PEDIDOS },
+          ),
+        ]);
+        if (ingsRes.error) throw ingsRes.error;
+        if (movsRes.error) throw movsRes.error;
+
+        const avisos: string[] = [];
+        if (movsRes.truncated) {
+          avisos.push('Este período tem movimentos demais para ler de uma vez: os números estão incompletos. Escolha um período menor.');
+        }
+
+        const ingredients = ((ingsRes.data as Array<Record<string, unknown>>) ?? []).map((r) => ({
           id: String(r.id ?? ''),
           name: String(r.name ?? 'Sem nome'),
           unit: normalizeUnit(r.unit as string),
@@ -186,71 +247,32 @@ export function useConsumoIngredientes(
         const ingredientMap = new Map(activeIngredients.map((i) => [i.id, i]));
         const allIngredientMap = new Map(ingredients.map((i) => [i.id, i]));
 
-        const fromDate = new Date(`${fromIso}T00:00:00`);
-        const toDate = new Date(`${toIso}T23:59:59`);
-
-        /* 2) stock movements via RPC com filtro de período */
-        const { data: movsData, error: movsErr } = await supabase.rpc('fn_get_stock_movements_filtered', {
-          p_tenant_id: tenantId,
-          p_date_from: fromDate.toISOString(),
-          p_date_to: toDate.toISOString(),
-        });
-        if (movsErr) throw movsErr;
-
-        const rawMovs = (movsData ?? []) as Array<{
-          id: string;
-          ingredient_id: string;
-          ingredient_name: string;
-          type: string;
-          quantity: number;
-          ingredient_unit?: string | null;
-          reason?: string | null;
-          created_at?: string | null;
-          order_id?: string | null;
-          signed_quantity?: number | null;
-        }>;
-
-        const movements = rawMovs.map((r) => ({
-          id: r.id,
+        const movements = movsRes.rows.map((r) => ({
           ingredientId: r.ingredient_id,
+          ingredientName: r.ingredient_name ?? null,
           type: r.type,
           quantity: Number(r.quantity),
           unit: normalizeUnit(r.ingredient_unit),
           reason: r.reason ?? null,
-          createdAt: r.created_at ?? '',
+          createdMs: r.created_at ? Date.parse(r.created_at) : NaN,
           signed: r.signed_quantity == null ? null : Number(r.signed_quantity),
         }));
 
-        /* 3) orders do período via RPC */
-        const { data: ordersData } = await supabase.rpc('fn_get_orders_for_consumo', {
-          p_tenant_id: tenantId,
-          p_date_from: fromDate.toISOString(),
-          p_date_to: toDate.toISOString(),
-        });
-
-        const invalidStatuses = new Set(['cancelled', 'canceled', 'cancelado', 'refunded']);
-        const validOrders = (ordersData ?? []).filter((o) => !invalidStatuses.has(o.status as string));
-        const ordersTotal = validOrders.reduce((s, o) => s + Number(o.total ?? 0), 0);
-        const ordersCount = validOrders.length;
+        /* pedidos: se não vieram, o "Vendas" fica em branco (null) — nunca R$ 0 como se fosse verdade */
+        let ordersTotal: number | null = null;
+        if (pedidosRes.error) {
+          avisos.push('Não consegui somar as vendas do período. O restante está certo.');
+        } else {
+          ordersTotal = pedidosRes.rows
+            .filter((o) => !PEDIDO_NAO_VALE.has(String(o.status)))
+            .reduce((s, o) => s + Number(o.total ?? 0), 0);
+          if (pedidosRes.truncated) avisos.push('Há pedidos demais no período: o total de vendas pode estar incompleto.');
+        }
 
         /* 4) agregar */
-        const hoje = new Date();
-        const inicioUltimaSemana = new Date(hoje.getTime() - 7 * 86400000);
-        const inicioSemanaAnterior = new Date(hoje.getTime() - 14 * 86400000);
-
-        const agg = new Map<
-          string,
-          {
-            porTipo: ConsumoPorTipo;
-            diasComMovimento: Set<string>;
-            ultimaSemanaVendas: number;     // apenas vendas, para tendência
-            semanaAnteriorVendas: number;   // apenas vendas, para tendência
-            ultimaSemanaProducao: number;   // para insumos de produção
-            semanaAnteriorProducao: number; // para insumos de produção
-            totalSaidas: number;
-            temVendasDiretas: boolean;      // true se houve theoretical_out no período
-          }
-        >();
+        // Tendência: a 2ª metade do período escolhido contra a 1ª (sem o dia de hoje, que ainda não terminou)
+        const divisao = dividirPeriodo(fromIso, toIso, hojeBR);
+        const agg = new Map<string, Acumulado>();
 
         for (const m of movements) {
           const classified = classifyMovement(m.type, m.reason, m.signed);
@@ -266,14 +288,12 @@ export function useConsumoIngredientes(
           }
 
           const prev = agg.get(m.ingredientId) ?? {
+            nome: m.ingredientName ?? '',
             porTipo: { vendas: 0, producao: 0, perda: 0, ajuste: 0, transferencia: 0 },
-            diasComMovimento: new Set<string>(),
-            ultimaSemanaVendas: 0,
-            semanaAnteriorVendas: 0,
-            ultimaSemanaProducao: 0,
-            semanaAnteriorProducao: 0,
             totalSaidas: 0,
             temVendasDiretas: false,
+            vendas1: 0, vendas2: 0,
+            producao1: 0, producao2: 0,
           };
 
           if (classified.isConsumo) {
@@ -282,28 +302,14 @@ export function useConsumoIngredientes(
           }
 
           // Marca se houve vendas diretas (theoretical_out) no período
-          if (m.type === 'theoretical_out') {
-            prev.temVendasDiretas = true;
-          }
-
-          const d = new Date(m.createdAt);
-          const dateKey = d.toLocaleDateString('pt-BR');
-          prev.diasComMovimento.add(dateKey);
+          if (m.type === 'theoretical_out') prev.temVendasDiretas = true;
 
           // Tendência: vendas para insumos finais, produção para insumos intermediários
-          if (classified.bucket === 'vendas' && classified.isConsumo) {
-            if (d >= inicioUltimaSemana) {
-              prev.ultimaSemanaVendas += finalQty;
-            } else if (d >= inicioSemanaAnterior && d < inicioUltimaSemana) {
-              prev.semanaAnteriorVendas += finalQty;
-            }
-          }
-          if (classified.bucket === 'producao' && classified.isConsumo) {
-            if (d >= inicioUltimaSemana) {
-              prev.ultimaSemanaProducao += finalQty;
-            } else if (d >= inicioSemanaAnterior && d < inicioUltimaSemana) {
-              prev.semanaAnteriorProducao += finalQty;
-            }
+          if (divisao && classified.isConsumo && (classified.bucket === 'vendas' || classified.bucket === 'producao')) {
+            const t = m.createdMs;
+            const metade = t < divisao.fimPrimeiraMs ? 1 : t >= divisao.inicioSegundaMs && t < divisao.fimSegundaMs ? 2 : 0;
+            if (metade === 1) { if (classified.bucket === 'vendas') prev.vendas1 += finalQty; else prev.producao1 += finalQty; }
+            if (metade === 2) { if (classified.bucket === 'vendas') prev.vendas2 += finalQty; else prev.producao2 += finalQty; }
           }
 
           agg.set(m.ingredientId, prev);
@@ -318,44 +324,13 @@ export function useConsumoIngredientes(
           const porTipo: ConsumoPorTipo = c?.porTipo ?? {
             vendas: 0, producao: 0, perda: 0, ajuste: 0, transferencia: 0,
           };
-          const dias = c?.diasComMovimento.size ?? 0;
-
-          // Regra de consumo de referência (para média diária, dias até zerar e tendência):
-          //
-          // Se o insumo teve vendas diretas (theoretical_out) no período → usa VENDAS como referência,
-          // independente do usage_type. Isso cobre hambúrgueres e outros itens de produção
-          // que também são vendidos diretamente no PDV.
-          //
-          // Se o insumo é usage_type='production' E não teve vendas diretas → é um produto produzido
-          // puro (ex: Molho de Tomate). Usa o bucket PRODUÇÃO (saídas para outras receitas)
-          // como referência.
-          //
-          // Para insumos finais normais (Coca-Cola, etc.) → sempre usa VENDAS.
-          const isProdutoProducao = ing.usageType === 'production';
-          const temVendasDiretas = c?.temVendasDiretas ?? false;
-          const consumoReferencia = (isProdutoProducao && !temVendasDiretas)
-            ? porTipo.producao   // produto produzido puro: consumido em outras receitas
-            : porTipo.vendas;    // vendido diretamente no PDV (inclui itens de produção com venda)
-
-          const mediaDiaria = dias > 0 ? consumoReferencia / dias : 0;
           const custo = totalConsumido * ing.unitPrice;
 
-          // Tendência usa o mesmo critério do consumoReferencia
-          const ultimaSemanaRef = (isProdutoProducao && !temVendasDiretas)
-            ? (c?.ultimaSemanaProducao ?? 0)
-            : (c?.ultimaSemanaVendas ?? 0);
-          const semanaAnteriorRef = (isProdutoProducao && !temVendasDiretas)
-            ? (c?.semanaAnteriorProducao ?? 0)
-            : (c?.semanaAnteriorVendas ?? 0);
-
-          // Sem consumo na semana anterior não há com o que comparar (ex.: loja começou a vender há poucos
-          // dias) — antes virava "acelerando" para tudo.
-          let tendencia: 'subindo' | 'estavel' | 'caindo' = 'estavel';
-          if (semanaAnteriorRef > 0) {
-            const variacao = (ultimaSemanaRef - semanaAnteriorRef) / semanaAnteriorRef;
-            if (variacao > 0.2) tendencia = 'subindo';
-            else if (variacao < -0.2) tendencia = 'caindo';
-          }
+          // Referência da tendência: se o insumo teve venda direta, vale a VENDA; produto produzido puro
+          // (usage_type='production' sem venda) vale a PRODUÇÃO (saída para outras receitas).
+          const usaProducao = ing.usageType === 'production' && !(c?.temVendasDiretas ?? false);
+          const metade1 = usaProducao ? (c?.producao1 ?? 0) : (c?.vendas1 ?? 0);
+          const metade2 = usaProducao ? (c?.producao2 ?? 0) : (c?.vendas2 ?? 0);
 
           result.push({
             id: ing.id,
@@ -367,21 +342,16 @@ export function useConsumoIngredientes(
             minimo: ing.minStock,
             totalConsumido,
             porTipo,
-            totalVendas: ordersTotal,
-            qtdPedidos: ordersCount,
             custoTotal: custo,
             custoVendas: porTipo.vendas * ing.unitPrice,
             custoProducao: porTipo.producao * ing.unitPrice,
             custoPerda: porTipo.perda * ing.unitPrice,
-            mediaDiaria,
-            // Estoque zerado/negativo = 0 dias (antes saía "-27 dias")
-            diasAteZerar: mediaDiaria > 0 ? Math.max(0, Math.floor(ing.currentStock / mediaDiaria)) : null,
-            tendencia,
+            tendencia: divisao ? tendenciaDe(metade1, metade2) : null,
             semCadastro: false,
           });
         }
 
-        /* 6) ingredientes orfãos */
+        /* 6) insumos órfãos (removidos ou sem cadastro) */
         const processedIds = new Set(activeIngredients.map((i) => i.id));
         for (const [ingId, c] of agg.entries()) {
           if (processedIds.has(ingId)) continue;
@@ -391,7 +361,7 @@ export function useConsumoIngredientes(
 
           result.push({
             id: ingId,
-            nome: delIng?.name ?? `Removido (${ingId.slice(0, 8)}...)`,
+            nome: delIng?.name ?? (c.nome || `Removido (${ingId.slice(0, 8)}...)`),
             unidade: (delIng?.unit ?? 'un') as UnidadeEstoque,
             categoria: delIng?.category ?? '—',
             fornecedor: delIng?.supplier ?? '—',
@@ -399,15 +369,11 @@ export function useConsumoIngredientes(
             minimo: 0,
             totalConsumido: c.totalSaidas,
             porTipo: c.porTipo,
-            totalVendas: ordersTotal,
-            qtdPedidos: ordersCount,
             custoTotal: 0,
             custoVendas: 0,
             custoProducao: 0,
             custoPerda: 0,
-            mediaDiaria: c.diasComMovimento.size > 0 ? c.totalSaidas / c.diasComMovimento.size : 0,
-            diasAteZerar: null,
-            tendencia: 'estavel',
+            tendencia: null,
             semCadastro: true,
           });
         }
@@ -417,18 +383,11 @@ export function useConsumoIngredientes(
           return (b.custoTotal ?? 0) - (a.custoTotal ?? 0);
         });
 
-        const criticoCount = result.filter(
-          (r) => !r.semCadastro && r.diasAteZerar !== null && r.diasAteZerar <= 3,
-        ).length;
-
+        const cadastrados = result.filter((r) => !r.semCadastro);
         const resumoData: ConsumoResumo = {
-          totalIngredientes: activeIngredients.length,
-          totalConsumidoValor: result.filter((r) => !r.semCadastro).reduce((s, r) => s + r.custoTotal, 0),
+          insumosUsados: cadastrados.filter((r) => r.totalConsumido > 0).length,
+          totalConsumidoValor: cadastrados.reduce((s, r) => s + r.custoTotal, 0),
           totalVendasValor: ordersTotal,
-          ingredientesCriticos: criticoCount,
-          mediaConsumoDiario:
-            result.filter((r) => !r.semCadastro).reduce((s, r) => s + r.mediaDiaria, 0) /
-            Math.max(result.filter((r) => !r.semCadastro).length, 1),
           custoVendas: result.reduce((s, r) => s + r.custoVendas, 0),
           custoProducao: result.reduce((s, r) => s + r.custoProducao, 0),
           custoPerda: result.reduce((s, r) => s + r.custoPerda, 0),
@@ -437,20 +396,16 @@ export function useConsumoIngredientes(
         if (!cancelled) {
           setDados(result);
           setResumo(resumoData);
-          setDebugInfo({
-            movsCount: movements.length,
-            insumosCount: activeIngredients.length,
-            orfas: result.filter((r) => r.semCadastro).length,
-            ordersCount,
-            cadastrados: activeIngredients.length,
-            tenantName: '',
-          });
+          setAviso(avisos.length ? avisos.join(' ') : null);
           setError(null);
         }
       } catch (e) {
         if (!cancelled) {
-          const msg = e instanceof Error ? e.message : 'Erro desconhecido';
-          setError(msg);
+          console.error('[Consumo] falha ao carregar', e);
+          // Nada de número velho de outro período/loja ao lado do erro
+          setDados([]);
+          setResumo(null);
+          setError('Não deu para carregar o consumo agora.');
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -462,14 +417,7 @@ export function useConsumoIngredientes(
     return () => {
       cancelled = true;
     };
-  }, [tenantId, fromIso, toIso]);
+  }, [tenantId, fromIso, toIso, tentativa]);
 
-  return {
-    dados,
-    resumo,
-    loading,
-    error,
-    debugInfo,
-    reload: () => window.location.reload(),
-  };
+  return { dados, resumo, loading, error, aviso, reload };
 }

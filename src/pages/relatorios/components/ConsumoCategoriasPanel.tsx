@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import type { ConsumoIngrediente } from '@/hooks/useConsumoIngredientes';
@@ -83,7 +83,7 @@ export default function ConsumoCategoriasPanel({ dados, loading }: Props) {
   if (categorias.length === 0) {
     return (
       <div className="py-8 text-center text-xs text-zinc-400">
-        Nenhum dado de categoria no período.
+        Nenhuma categoria teve saída no período.
       </div>
     );
   }
@@ -94,7 +94,7 @@ export default function ConsumoCategoriasPanel({ dados, loading }: Props) {
   return (
     <div className="space-y-4">
       {/* Gráfico de barras */}
-      <div className="bg-white border border-zinc-100 rounded-xl p-4">
+      <div className="bg-white border border-zinc-200 rounded-2xl p-4">
         <p className="text-xs font-semibold text-zinc-600 mb-3">Custo por Categoria (Top 10)</p>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart data={chartData} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
@@ -129,7 +129,7 @@ export default function ConsumoCategoriasPanel({ dados, loading }: Props) {
       </div>
 
       {/* Tabela por categoria */}
-      <div className="bg-white border border-zinc-100 rounded-xl overflow-hidden">
+      <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
@@ -148,9 +148,8 @@ export default function ConsumoCategoriasPanel({ dados, loading }: Props) {
               {categorias.map((cat, idx) => {
                 const exp = expanded.has(cat.nome);
                 return (
-                  <>
+                  <Fragment key={cat.nome}>
                     <tr
-                      key={cat.nome}
                       className="border-b border-zinc-50 hover:bg-zinc-50/50 cursor-pointer transition-colors"
                       onClick={() => toggle(cat.nome)}
                     >
@@ -179,7 +178,7 @@ export default function ConsumoCategoriasPanel({ dados, loading }: Props) {
                     </tr>
 
                     {exp && (
-                      <tr key={`${cat.nome}-detail`}>
+                      <tr>
                         <td colSpan={8} className="bg-zinc-50/60 px-6 py-2">
                           <div className="space-y-1">
                             {cat.ingredientes
@@ -205,7 +204,7 @@ export default function ConsumoCategoriasPanel({ dados, loading }: Props) {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>

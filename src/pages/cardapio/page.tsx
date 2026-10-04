@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useCardapio } from '../../contexts/CardapioContext';
 import CategoriasTab from './components/CategoriasTab';
-import ItensTab from './components/ItensTab';
+import ItensTab, { type EntradaItens } from './components/ItensTab';
 import CombosTab from './components/CombosTab';
 import ObservacoesGlobaisTab from './components/ObservacoesGlobaisTab';
 import DestaquesTab from './components/DestaquesTab';
@@ -20,6 +21,25 @@ export default function CardapioPage() {
   const { itens, categorias, combos, obsGlobais, destaques, loading, recarregar } = useCardapio();
   const [activeTab, setActiveTab] = useState<Tab>('destaques');
   const [showExportImport, setShowExportImport] = useState(false);
+
+  // Links de fora do Cardápio (ex.: "Fazer ficha" do Estoque › CMV):
+  //   ?item=<id>&ficha=1 abre o item na Ficha Técnica · ?busca=<nome> abre a lista de itens já filtrada ·
+  //   ?aba=combos abre os combos. O link é consumido uma vez e sai da barra de endereço.
+  const [params, setParams] = useSearchParams();
+  const [entrada, setEntrada] = useState<EntradaItens | null>(null);
+  useEffect(() => {
+    const item = params.get('item');
+    const busca = params.get('busca');
+    const aba = params.get('aba');
+    if (!item && !busca && aba !== 'combos') return;
+    if (item || busca) {
+      setActiveTab('itens');
+      setEntrada({ itemId: item, ficha: params.get('ficha') === '1', busca });
+    } else {
+      setActiveTab('combos');
+    }
+    setParams({}, { replace: true });
+  }, [params, setParams]);
   const { user } = useAuth();
   const { addToast } = useToast();
   const [publicando, setPublicando] = useState(false);
@@ -128,7 +148,7 @@ export default function CardapioPage() {
           </div>
         )}
         {!loading && activeTab === 'destaques' && <DestaquesTab />}
-        {!loading && activeTab === 'itens' && <ItensTab />}
+        {!loading && activeTab === 'itens' && <ItensTab entrada={entrada} onEntradaUsada={() => setEntrada(null)} />}
         {!loading && activeTab === 'categorias' && <CategoriasTab />}
         {!loading && activeTab === 'combos' && <CombosTab />}
         {!loading && activeTab === 'obsGlobais' && <ObservacoesGlobaisTab />}

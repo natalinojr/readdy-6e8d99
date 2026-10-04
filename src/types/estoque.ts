@@ -128,6 +128,8 @@ export interface Movimentacao {
   pedidoNumero?: string | null;
   /** Nome do item vendido que gerou a baixa do insumo */
   itemVendidoNome?: string | null;
+  /** Efeito real no estoque: 1 somou, -1 tirou, 0 informativa (não mexeu). undefined = banco não informou. */
+  sinal?: number;
 }
 
 export interface InventarioItemContado {

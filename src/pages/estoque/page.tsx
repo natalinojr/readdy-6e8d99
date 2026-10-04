@@ -66,7 +66,11 @@ export default function EstoquePage() {
   // Aba guardada na URL (?tab=producao): sair do módulo e voltar (ou F5) abre onde estava.
   const [searchParams, setSearchParams] = useSearchParams();
   const rawTab = searchParams.get('tab') as AbaEstoque | null;
-  const tab: AbaEstoque = rawTab && VALID_TABS.includes(rawTab) ? rawTab : 'inicio';
+  // Quem só conta o estoque (estoque_inventario sem estoque_movimentar — "Conta o estoque" dado por pessoa,
+  // 2026-10-03) vê só o Inventário: sem Registrar, busca, menu e nada que grave além da contagem.
+  const { hasPermissao } = usePermissoes();
+  const soContar = !hasPermissao('estoque_movimentar') && hasPermissao('estoque_inventario');
+  const tab: AbaEstoque = soContar ? 'inventario' : rawTab && VALID_TABS.includes(rawTab) ? rawTab : 'inicio';
   const setTab = useCallback((t: AbaEstoque) => setSearchParams({ tab: t }, { replace: true }), [setSearchParams]);
 
   const { user } = useAuth();
@@ -74,7 +78,6 @@ export default function EstoquePage() {
   const { insumos, reloadInsumos, addMovimentacao, upsertInsumo } = useEstoque();
   const { names: categoriasDB, addCategory } = useIngredientCategories();
   const situacao = useEstoqueSituacao();
-  const { hasPermissao } = usePermissoes();
   const podeContar = hasPermissao('estoque_inventario');
   const podeConfigurar = !!situacao.data?.config.podeConfigurar;
 
@@ -83,7 +86,8 @@ export default function EstoquePage() {
     const s = situacao.data;
     if (!s) return { porPedir: 0, contar: 0, produzir: 0 };
     const lista = s.insumos.filter((i) => i.abaixoMinimo || i.naLista);
-    const porPedir = lista.filter((i) => !ehProduzido(i) && !pedidoDoInsumo(i, s.pedidos)).length;
+    // Mesma conta do "Hoje: pedir N" do Início (inclui o que a cozinha produz).
+    const porPedir = lista.filter((i) => !pedidoDoInsumo(i, s.pedidos)).length;
     const produzir = s.insumos.filter((i) => ehProduzido(i) && i.abaixoMinimo).length;
     return { porPedir, contar: contagemDeHoje(s).itens.length, produzir };
   }, [situacao.data]);
@@ -112,7 +116,8 @@ export default function EstoquePage() {
     return todos.find((x) => x.n) ?? todos[0] ?? null;
   };
 
-  const grupoAtivo = GRUPOS.find((g) => g.abas.includes(tab)) ?? GRUPOS[0];
+  const gruposVisiveis = soContar ? [{ ...GRUPOS[3], abas: ['inventario' as AbaEstoque] }] : GRUPOS;
+  const grupoAtivo = gruposVisiveis.find((g) => g.abas.includes(tab)) ?? gruposVisiveis[0];
   // Voltar a um grupo reabre a última aba usada nele.
   const [ultimaDoGrupo, setUltimaDoGrupo] = useState<Record<string, AbaEstoque>>({});
   useEffect(() => {
@@ -137,26 +142,28 @@ export default function EstoquePage() {
 
   const insumoPorId = (id: string | null | undefined): Insumo | undefined => (id ? insumos.find((i) => i.id === id) : undefined);
 
+  // Quem só conta não abre nada que grave fora da contagem (a tela era a única barreira: o stock-write só confere a loja).
+  const naoSoContar = <A extends unknown[]>(f: (...a: A) => void) => (...a: A) => { if (!soContar) f(...a); };
   const api: EstoqueTelaApi = {
     situacao: situacao.data,
     recarregarSituacao: situacao.reload,
-    irPara: setTab,
-    abrirFicha: (id) => setFichaId(id),
-    abrirRegistrar: () => setRegistrar(true),
-    abrirArrumar: (opcoes) => setArrumar(opcoes ?? {}),
+    irPara: naoSoContar(setTab),
+    abrirFicha: naoSoContar((id: string) => setFichaId(id)),
+    abrirRegistrar: naoSoContar(() => setRegistrar(true)),
+    abrirArrumar: naoSoContar((opcoes?: { filtro?: FiltroArrumar; insumoId?: string }) => setArrumar(opcoes ?? {})),
     contar: (itens, titulo) => {
       if (!podeContar) { toast.info('Quem conta é quem faz o inventário', 'Peça para o Líder ou o Supervisor contar.'); return; }
       if (!itens.length) { toast.info('Nada para contar agora'); return; }
       setContagem({ itens, titulo });
     },
-    abrirEntrada: (id) => setEntradaId(id),
-    abrirSaida: (id) => setSaida({ insumoId: id }),
-    abrirPerda: (id) => setPerda({ insumoId: id }),
-    abrirTransferir: () => setTransferir(true),
-    abrirCompra: (id) => setCompra({ insumoId: id }),
-    abrirNovoInsumo: () => setInsumoModal('novo'),
-    editarInsumo: (id) => setInsumoModal(id),
-    podeConfigurar,
+    abrirEntrada: naoSoContar((id: string) => setEntradaId(id)),
+    abrirSaida: naoSoContar((id?: string) => setSaida({ insumoId: id })),
+    abrirPerda: naoSoContar((id?: string) => setPerda({ insumoId: id })),
+    abrirTransferir: naoSoContar(() => setTransferir(true)),
+    abrirCompra: naoSoContar((id?: string) => setCompra({ insumoId: id })),
+    abrirNovoInsumo: naoSoContar(() => setInsumoModal('novo')),
+    editarInsumo: naoSoContar((id: string) => setInsumoModal(id)),
+    podeConfigurar: podeConfigurar && !soContar,
     podeContar,
   };
 
@@ -170,7 +177,12 @@ export default function EstoquePage() {
       purchaseUnit: data.purchaseUnit, purchaseFactor: data.purchaseFactor ?? 1, dreCategoryId: data.dreCategoryId,
       rastrearEstoque: data.rastrearEstoque, contaInventario: data.contaInventario,
       unidadeContagem: data.unidadeContagem ?? null, fatorContagem: data.fatorContagem ?? null,
+    }, { lancarErro: true }).catch((e) => {
+      // A janela fica aberta com o que foi digitado (antes fechava e nada mudava, sem aviso).
+      toast.error('Insumo não salvo', e instanceof Error ? e.message : String(e));
+      throw e;
     });
+    toast.success(data.id ? `${data.nome} salvo` : `${data.nome} cadastrado`);
     depoisDeMexer();
   };
   const categoriasModal = useMemo(() => {
@@ -196,6 +208,7 @@ export default function EstoquePage() {
               <h1 className="text-base md:text-lg font-bold text-zinc-800">Estoque</h1>
               <p className="text-xs text-zinc-400 hidden sm:block">Comprar, contar e o que vai faltar</p>
             </div>
+            {!soContar && (<>
             <div className="hidden lg:block w-72"><BuscaInsumo insumos={insumos} onEscolher={(id) => setFichaId(id)} /></div>
             <button onClick={() => setBuscaAberta(true)} aria-label="Procurar insumo"
               className="lg:hidden w-9 h-9 flex items-center justify-center rounded-xl border border-zinc-200 bg-zinc-50 text-zinc-500 cursor-pointer flex-shrink-0">
@@ -212,11 +225,12 @@ export default function EstoquePage() {
               style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' }}>
               <i className="ri-add-line text-base" />Registrar
             </button>
+            </>)}
           </div>
 
           {/* Grupos — no celular os 5 dividem a largura (ícone em cima, nome embaixo), sem rolar de lado */}
           <div className="flex md:gap-0.5 -mx-4 md:mx-0 px-1 md:px-0" style={{ borderBottom: '1px solid rgba(245,158,11,0.15)' }}>
-            {GRUPOS.map((g) => {
+            {gruposVisiveis.map((g) => {
               const selo = seloGrupo(g);
               const ativo = grupoAtivo.id === g.id;
               return (

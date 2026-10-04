@@ -1,8 +1,10 @@
 import { useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEstoque } from '@/contexts/EstoqueContext';
 import { useToast } from '@/contexts/ToastContext';
+import { usePermissoes, RECEBER_MODULO_KEYS } from '@/hooks/usePermissoes';
 import { linkWhatsApp } from '@/lib/trilhaAcoes';
 import {
   agruparCompras, pedidoDoInsumo, sugestaoCompra, fmtQtd, fmtPrecoUnit, fmtSugestao, dataBrasilia, rotuloUnidade,
@@ -11,6 +13,8 @@ import {
 } from '@/lib/estoqueRegras';
 import Folha from './Folha';
 import Ajuda from './Ajuda';
+import { btn } from '../ui/EstoqueUi';
+import { useEstoqueTela } from '../../EstoqueTela';
 
 const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const hora = (ts: string) => new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
@@ -32,7 +36,13 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar, d
   const { user } = useAuth();
   const toast = useToast();
   const { reloadInsumos } = useEstoque();
+  const navigate = useNavigate();
+  const { hasPermissao } = usePermissoes();
+  const { abrirArrumar, podeConfigurar } = useEstoqueTela();
+  const podeReceber = RECEBER_MODULO_KEYS.some((k) => hasPermissao(k));
   const { diasCompra } = situacao.config;
+  // "Chegou?" respondido com "Ainda não": some só nesta visita ao Início (não grava nada).
+  const [aindaNao, setAindaNao] = useState<Record<string, boolean>>({});
   const [fora, setFora] = useState<Record<string, boolean>>({});
   const [qtd, setQtd] = useState<Record<string, number>>({});
   const [folha, setFolha] = useState<FolhaAberta>(null);
@@ -60,6 +70,8 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar, d
   };
   const ativos = (g: GrupoCompra) => porMandar(g).filter((i) => !fora[i.id] && !conteAntes(i) && sugestaoDe(i).qtd > 0);
   const totalDe = (g: GrupoCompra) => ativos(g).reduce((s, i) => s + (i.preco ? sugestaoDe(i).qtd * i.preco : 0), 0);
+  // Item sem preço entra no pedido mas não soma no total: o cartão avisa quantos ficaram de fora da conta.
+  const semPrecoDe = (g: GrupoCompra) => ativos(g).filter((i) => !i.preco).length;
 
   const mudarQtd = (i: InsumoSituacao, sinal: 1 | -1) => {
     const s = sugestaoDe(i);
@@ -89,12 +101,13 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar, d
     );
   };
   const quantidade = (i: InsumoSituacao) => {
-    if (conteAntes(i)) return <button onClick={onIrContar} title="O sistema mostra estoque negativo, então não dá para saber quanto pedir. Conte primeiro." className="text-[11px] font-bold text-red-600 bg-red-50 border border-dashed border-red-300 rounded-lg px-2 py-1.5 flex-shrink-0 cursor-pointer whitespace-nowrap">conte antes</button>;
+    // Pode quebrar em duas linhas no celular, em vez de empurrar a linha para fora da tela.
+    if (conteAntes(i)) return <button onClick={onIrContar} title="O sistema mostra estoque negativo, então não dá para saber quanto pedir. Conte primeiro." className="text-[11px] font-bold leading-tight text-center text-red-600 bg-red-50 border border-dashed border-red-300 rounded-lg px-2 py-1.5 flex-shrink-0 max-w-[84px] cursor-pointer">conte antes</button>;
     const s = sugestaoDe(i);
     return (
       <div className={`flex items-center gap-1 flex-shrink-0 ${fora[i.id] ? 'opacity-40' : ''}`}>
-        <button onClick={() => mudarQtd(i, -1)} className="w-7 h-7 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-sm font-bold text-zinc-600 cursor-pointer" aria-label="Menos">−</button>
-        <div className="min-w-[64px] text-center leading-tight">
+        <button onClick={() => mudarQtd(i, -1)} className="w-9 h-9 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-base font-bold text-zinc-600 cursor-pointer" aria-label="Menos">−</button>
+        <div className="min-w-[58px] text-center leading-tight">
           {s.embalagens != null ? (
             <>
               <p className="text-[12.5px] font-extrabold text-zinc-800">{s.embalagens} {s.unidadeCompra}</p>
@@ -102,7 +115,7 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar, d
             </>
           ) : <p className="text-[12.5px] font-extrabold text-zinc-800">{fmtQtd(s.qtd, i.unidade)}</p>}
         </div>
-        <button onClick={() => mudarQtd(i, 1)} className="w-7 h-7 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-sm font-bold text-zinc-600 cursor-pointer" aria-label="Mais">+</button>
+        <button onClick={() => mudarQtd(i, 1)} className="w-9 h-9 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-base font-bold text-zinc-600 cursor-pointer" aria-label="Mais">+</button>
       </div>
     );
   };
@@ -114,15 +127,25 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar, d
     if (g.chave === CHAVE_PRODUZIR) return `Cozinha, precisa produzir:\n\n${linhas}\n\n(${user?.loja ?? ''}, ${dataHoje})`;
     return `Olá! Pedido da ${user?.loja ?? 'loja'} (${dataHoje}):\n\n${linhas}\n\nPode confirmar o valor e a entrega? Obrigado!`;
   };
+  // "Mandar tudo": só o que tem quantidade para pedir (o − até 0 tira da lista) e o que precisa de contagem antes.
+  const linhasTudo = (g: GrupoCompra) => porMandar(g)
+    .filter((i) => !fora[i.id] && (conteAntes(i) || sugestaoDe(i).qtd > 0))
+    .map((i) => (conteAntes(i) ? `• ${i.nome} — contar antes` : linhaPedido(i)));
   const mensagemTudo = () => `Lista de compras — ${user?.loja ?? ''} (${dataHoje})\n\n` + grupos
-    .filter((g) => porMandar(g).length > 0)
-    .map((g) => `*${g.nome}*\n${porMandar(g).filter((i) => !fora[i.id]).map((i) => (conteAntes(i) ? `• ${i.nome} — contar antes` : linhaPedido(i))).join('\n')}`)
+    .filter((g) => linhasTudo(g).length > 0)
+    .map((g) => `*${g.nome}*\n${linhasTudo(g).join('\n')}`)
     .join('\n\n');
 
   const abrirMandar = (g: GrupoCompra) => { setMsg(mensagemDe(g)); setCopiado(false); setFolha({ tipo: 'mandar', chave: g.chave }); };
   const abrirTudo = () => { setMsg(mensagemTudo()); setCopiado(false); setFolha({ tipo: 'tudo' }); };
 
   const registrar = async (lista: GrupoCompra[]) => {
+    // Nada com quantidade para pedir (tudo zerado ou "conte antes"): não marca pedido vazio como mandado.
+    if (lista.length === 0) {
+      setFolha(null);
+      toast.info('Nada para marcar como mandado', 'Os itens com quantidade 0 ou “conte antes” ficam de fora.');
+      return;
+    }
     setGravando(true);
     try {
       for (const g of lista) {
@@ -180,6 +203,8 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar, d
 
   const nomeTotal = itens.length;
   const pendentesGrupos = grupos.filter((g) => porMandar(g).length > 0);
+  // Grupos que de fato vão no "Mandar tudo" (com pelo menos um item de quantidade > 0).
+  const gruposTudo = pendentesGrupos.filter((g) => ativos(g).length > 0);
   const grupoAberto = folha?.tipo === 'mandar' ? grupos.find((g) => g.chave === folha.chave) ?? null : null;
   const itemAberto = folha?.tipo === 'item' ? situacao.insumos.find((i) => i.id === folha.id) ?? null : null;
 
@@ -216,7 +241,12 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar, d
           const jaPedidos = g.itens.filter((i) => pedidoDe(i));
           const temZerado = abertos.some((i) => i.esgotado);
           const total = totalDe(g);
+          const semPreco = semPrecoDe(g);
           const produzir = g.chave === CHAVE_PRODUZIR;
+          const semForn = g.chave === CHAVE_SEM_FORNECEDOR;
+          // Pedido mandado há mais de 1 dia e a mercadoria ainda sem entrada: pergunta "Chegou?" (não vale para a cozinha).
+          const horasDoPedido = pedido ? (Date.now() - new Date(pedido.enviadoEm).getTime()) / 3600000 : 0;
+          const perguntarChegou = !!pedido && !produzir && podeReceber && horasDoPedido > 24 && !aindaNao[g.chave];
           const barra = pedido ? 'bg-emerald-500' : temZerado ? 'bg-red-500' : 'bg-amber-400';
           return (
             <div key={g.chave} className="relative bg-white border border-zinc-200 rounded-2xl pl-4 pr-3 py-3 lg:pl-5 lg:pr-4 lg:py-3.5 overflow-hidden">
@@ -226,7 +256,16 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar, d
                 {produzir ? <span className="text-[10px] font-bold uppercase tracking-wide bg-sky-50 text-sky-700 rounded-md px-1.5 py-0.5">cozinha</span>
                   : g.fone ? <span className="text-[10px] font-bold uppercase tracking-wide bg-emerald-50 text-emerald-700 rounded-md px-1.5 py-0.5">WhatsApp</span>
                   : g.chave !== CHAVE_SEM_FORNECEDOR ? <span className="text-[10px] font-bold uppercase tracking-wide bg-zinc-100 text-zinc-500 rounded-md px-1.5 py-0.5">sem telefone</span> : null}
-                {total > 0 && !pedido && <span className="text-sm font-extrabold text-zinc-800 tabular-nums whitespace-nowrap">{brl(total)}</span>}
+                {!pedido && (total > 0 || semPreco > 0) && (
+                  <span className="text-right leading-tight whitespace-nowrap flex-shrink-0">
+                    {total > 0 && <span className="block text-sm font-extrabold text-zinc-800 tabular-nums">{brl(total)}</span>}
+                    {semPreco > 0 && (
+                      <span title="O valor soma só os itens que têm preço cadastrado" className="block text-[10.5px] font-semibold text-amber-700">
+                        {total > 0 ? '+ ' : ''}{semPreco} sem preço
+                      </span>
+                    )}
+                  </span>
+                )}
                 {!pedido && (
                   <button
                     onClick={() => abrirMandar(g)}
@@ -253,9 +292,29 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar, d
                     <button onClick={() => abrirMandar(g)} className="text-[11px] font-bold text-amber-700 cursor-pointer">Mandar de novo</button>
                     <button onClick={() => desfazer(pedido.id)} className="text-[11px] font-semibold text-zinc-400 underline cursor-pointer">desfazer</button>
                   </div>
+                  {perguntarChegou && (
+                    <div className="mt-2.5 pt-2.5 border-t border-emerald-100">
+                      <p className="text-[12.5px] text-zinc-600 leading-snug">
+                        <b className="text-zinc-900">Chegou?</b> Faz {Math.floor(horasDoPedido / 24)} {Math.floor(horasDoPedido / 24) === 1 ? 'dia' : 'dias'} que o pedido foi mandado e a mercadoria ainda não deu entrada.
+                      </p>
+                      <div className="flex gap-2 flex-wrap mt-2">
+                        <button onClick={() => navigate('/receber')} className={`${btn('dark', 'sm')} !min-h-[38px]`}>
+                          <i className="ri-truck-line" />Receber mercadoria
+                        </button>
+                        <button onClick={() => setAindaNao((a) => ({ ...a, [g.chave]: true }))} className={`${btn('out', 'sm')} !min-h-[38px]`}>Ainda não</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <>
+                  {semForn && (
+                    <p className="text-[12px] text-zinc-500 leading-snug mb-1">
+                      {podeConfigurar
+                        ? 'Para pedir direto, diga quem vende. Escolher aqui já vale para os próximos pedidos.'
+                        : 'Para pedir direto, falta o fornecedor: o Supervisor escolhe o fornecedor de cada insumo. Enquanto isso, dá para compartilhar o pedido.'}
+                    </p>
+                  )}
                   {jaPedidos.length > 0 && (
                     <p className="text-[11px] font-semibold text-emerald-700 mt-0.5 mb-1 leading-snug">
                       <i className="ri-check-double-line" /> Já pedido: {jaPedidos.map((i) => i.nome).join(', ')}. Abaixo, o que ainda falta pedir.{' '}
@@ -271,18 +330,27 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar, d
                       if (!(i.estoque < 0) && !i.esgotado && i.diasRestantes == null) tags[0] = { t: `tem ${fmtQtd(i.estoque, i.unidade)}` };
                       if (i.minimo > 0) tags.push({ t: `mín. ${fmtQtd(i.minimo, i.unidade)}` });
                       return (
-                        <div key={i.id} data-item={i.id} className={`flex items-center gap-2.5 py-2 transition-colors ${destaque === i.id ? 'bg-amber-100 -mx-2 px-2 rounded-xl' : ''}`}>
-                          {marcar(i)}
-                          <button onClick={() => abrirItem(i)} className="flex-1 min-w-0 text-left cursor-pointer">
-                            <p className={`text-[13.5px] font-bold truncate ${off ? 'text-zinc-400 line-through' : 'text-zinc-800'}`}>{i.nome}</p>
-                            <p className="text-[11.5px] text-zinc-400 leading-snug">
-                              {tags.map((t, k) => <span key={k}>{k > 0 && ' · '}<span className={t.c}>{t.t}</span></span>)}
-                            </p>
-                          </button>
-                          {!i.abaixoMinimo && (
-                            <button onClick={() => onTirarDaLista(i)} title="Posto na lista por alguém da loja. Toque para tirar." className="text-[10.5px] font-bold text-sky-700 bg-sky-50 rounded-md px-1.5 py-0.5 flex-shrink-0 cursor-pointer">na lista ✕</button>
+                        <div key={i.id} data-item={i.id} className={`py-2 transition-colors ${destaque === i.id ? 'bg-amber-100 -mx-2 px-2 rounded-xl' : ''}`}>
+                          <div className="flex items-center gap-2.5">
+                            {marcar(i)}
+                            <button onClick={() => abrirItem(i)} className="flex-1 min-w-0 text-left cursor-pointer">
+                              <p className={`text-[13.5px] font-bold truncate ${off ? 'text-zinc-400 line-through' : 'text-zinc-800'}`}>{i.nome}</p>
+                              <p className="text-[11.5px] text-zinc-400 leading-snug">
+                                {tags.map((t, k) => <span key={k}>{k > 0 && ' · '}<span className={t.c}>{t.t}</span></span>)}
+                              </p>
+                            </button>
+                            {!i.abaixoMinimo && (
+                              <button onClick={() => onTirarDaLista(i)} title="Posto na lista por alguém da loja. Toque para tirar." className="text-[10.5px] font-bold text-sky-700 bg-sky-50 rounded-md px-1.5 py-0.5 flex-shrink-0 cursor-pointer">na lista ✕</button>
+                            )}
+                            {quantidade(i)}
+                          </div>
+                          {semForn && podeConfigurar && (
+                            <div className="pl-8 mt-1.5">
+                              <button onClick={() => abrirArrumar({ filtro: 'fornecedor', insumoId: i.id })} className={`${btn('p', 'sm')} !min-h-[36px]`}>
+                                <i className="ri-truck-line" />Quem vende?
+                              </button>
+                            </div>
                           )}
-                          {quantidade(i)}
                         </div>
                       );
                     })}
@@ -319,6 +387,9 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar, d
                               {!i.abaixoMinimo && (
                                 <button onClick={() => onTirarDaLista(i)} title="Posto na lista por alguém da loja (ainda não chegou no mínimo). Clique para tirar." className="ml-1.5 text-[10.5px] font-bold text-sky-700 bg-sky-50 rounded-md px-1.5 py-0.5 cursor-pointer align-middle">na lista ✕</button>
                               )}
+                              {semForn && podeConfigurar && (
+                                <button onClick={() => abrirArrumar({ filtro: 'fornecedor', insumoId: i.id })} className="ml-1.5 text-[11px] font-bold text-amber-800 bg-amber-100 hover:bg-amber-200 rounded-md px-2 py-0.5 cursor-pointer align-middle whitespace-nowrap">Quem vende?</button>
+                              )}
                             </td>
                             <td className={`py-1.5 pr-3 text-[12px] whitespace-nowrap ${st.c ?? 'text-zinc-500'}`}>{st.t}</td>
                             <td className={`py-1.5 pr-3 text-right tabular-nums whitespace-nowrap ${i.estoque < 0 ? 'text-red-600 font-semibold' : 'text-zinc-700'}`}>{fmtQtd(i.estoque, i.unidade)}</td>
@@ -339,11 +410,8 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar, d
                     <i className={produzir ? 'ri-restaurant-line' : g.fone ? 'ri-whatsapp-line' : 'ri-share-forward-line'} />
                     {produzir ? 'Avisar a cozinha' : g.fone ? 'Mandar pelo WhatsApp' : 'Compartilhar pedido'}{jaPedidos.length > 0 ? ` (${ativos(g).length})` : ''}
                   </button>
-                  {g.chave === CHAVE_SEM_FORNECEDOR && (
-                    <p className="text-[11px] text-zinc-400 mt-2 leading-snug">Sem fornecedor no cadastro o pedido não vai direto para ninguém. Defina o fornecedor na aba Estoque.</p>
-                  )}
                   {abertos.some(conteAntes) && (
-                    <p className="text-[11px] text-zinc-400 mt-2 leading-snug">“Conte antes”: o sistema mostra um número negativo, então não dá para saber quanto pedir. Fica de fora do pedido até a contagem.</p>
+                    <p className="text-[11px] text-zinc-400 mt-2 leading-snug break-words">“Conte antes”: o sistema mostra um número negativo, então não dá para saber quanto pedir. Fica de fora do pedido até a contagem.</p>
                   )}
                 </>
               )}
@@ -367,13 +435,13 @@ export default function ComprarSecao({ situacao, extras, onReload, onIrContar, d
             {copiado ? (
               <button
                 disabled={gravando}
-                onClick={() => registrar(folha?.tipo === 'tudo' ? pendentesGrupos : grupoAberto ? [grupoAberto] : [])}
+                onClick={() => registrar(folha?.tipo === 'tudo' ? gruposTudo : grupoAberto ? [grupoAberto] : [])}
                 className="flex-1 min-h-[44px] rounded-xl bg-zinc-900 text-white text-sm font-bold cursor-pointer disabled:opacity-50"
               >Já mandei</button>
             ) : (
               <button
                 disabled={gravando}
-                onClick={() => enviar(folha?.tipo === 'tudo' ? pendentesGrupos : grupoAberto ? [grupoAberto] : [], folha?.tipo === 'tudo' ? null : grupoAberto?.fone ?? null)}
+                onClick={() => enviar(folha?.tipo === 'tudo' ? gruposTudo : grupoAberto ? [grupoAberto] : [], folha?.tipo === 'tudo' ? null : grupoAberto?.fone ?? null)}
                 className={`flex-1 min-h-[44px] rounded-xl text-sm font-bold cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5 ${folha?.tipo !== 'tudo' && grupoAberto?.fone ? 'bg-[#1FA855] text-white' : 'bg-amber-500 text-zinc-900'}`}
               >
                 <i className={folha?.tipo !== 'tudo' && grupoAberto?.fone ? 'ri-whatsapp-line' : 'ri-share-forward-line'} />

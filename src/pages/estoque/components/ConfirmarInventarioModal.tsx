@@ -1,8 +1,5 @@
 import type { InventarioItemContado } from '../../../contexts/EstoqueContext';
-import { fmtQtd } from '@/lib/estoqueRegras';
-
-// Quantidade legível (2,5 kg e não "2.500 kg"); a unidade da tela é "un"/"l", a do formatador é "unit"/"L".
-const fq = (q: number, u: string) => fmtQtd(q, u === 'un' ? 'unit' : u === 'l' ? 'L' : u);
+import { fmtQtdTela as fq } from '@/lib/contagemResumo';
 
 const fmt = (v: number, digits = 2) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', minimumFractionDigits: digits }).format(v);
@@ -27,17 +24,17 @@ export default function ConfirmarInventarioModal({ itens, operador, onConfirmar,
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-2xl mx-4 overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="bg-white rounded-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header — warning */}
-        <div className="flex items-start gap-4 px-6 py-5 bg-amber-50 border-b border-amber-200">
+        <div className="flex items-start gap-3 md:gap-4 px-4 md:px-6 py-4 md:py-5 bg-amber-50 border-b border-amber-200 flex-shrink-0">
           <div className="w-10 h-10 flex items-center justify-center bg-amber-100 rounded-xl flex-shrink-0 mt-0.5">
             <i className="ri-alert-line text-amber-600 text-xl" />
           </div>
           <div>
-            <h2 className="text-sm font-bold text-zinc-900 mb-1">Confirmar Contagem de Inventário?</h2>
+            <h2 className="text-sm font-extrabold text-zinc-900 mb-1">Confirmar a contagem?</h2>
             <p className="text-xs text-zinc-600 leading-relaxed">
-              Esta ação <strong>atualizará os valores reais do estoque</strong> de acordo com as quantidades contadas.
-              Todas as diferenças serão registradas no histórico de movimentações e não podem ser desfeitas.
+              Isto <strong>atualiza o estoque</strong> com as quantidades contadas. Cada diferença fica registrada no histórico de movimentações.
+              Se errar um número, dá para corrigir depois em <strong>Editar contagem</strong> (no histórico de contagens).
             </p>
             {contadoEmTexto && (
               <p className="text-xs text-zinc-700 mt-2">
@@ -49,24 +46,24 @@ export default function ConfirmarInventarioModal({ itens, operador, onConfirmar,
         </div>
 
         {/* Resumo */}
-        <div className="grid grid-cols-4 gap-0 border-b border-zinc-100 flex-shrink-0">
-          <div className="px-5 py-4 text-center border-r border-zinc-100">
-            <p className="text-xl font-black text-zinc-800">{itens.length}</p>
-            <p className="text-[10px] text-zinc-500">itens contados</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 border-b border-zinc-100 flex-shrink-0">
+          <div className="px-3 md:px-5 py-3 md:py-4 text-center border-r border-b md:border-b-0 border-zinc-100">
+            <p className="text-lg md:text-xl font-black text-zinc-800">{itens.length}</p>
+            <p className="text-[11px] md:text-[10px] text-zinc-500">{itens.length === 1 ? 'item contado' : 'itens contados'}</p>
           </div>
-          <div className="px-5 py-4 text-center border-r border-zinc-100">
-            <p className="text-xl font-black text-zinc-500">{semDiff.length}</p>
-            <p className="text-[10px] text-zinc-500">sem diferença</p>
+          <div className="px-3 md:px-5 py-3 md:py-4 text-center border-b md:border-b-0 md:border-r border-zinc-100">
+            <p className="text-lg md:text-xl font-black text-zinc-500">{semDiff.length}</p>
+            <p className="text-[11px] md:text-[10px] text-zinc-500">sem diferença</p>
           </div>
-          <div className="px-5 py-4 text-center border-r border-zinc-100">
-            <p className={`text-xl font-black ${comDiff.length > 0 ? 'text-red-500' : 'text-zinc-500'}`}>{comDiff.length}</p>
-            <p className="text-[10px] text-zinc-500">com diferença</p>
+          <div className="px-3 md:px-5 py-3 md:py-4 text-center border-r border-zinc-100">
+            <p className={`text-lg md:text-xl font-black ${comDiff.length > 0 ? 'text-red-500' : 'text-zinc-500'}`}>{comDiff.length}</p>
+            <p className="text-[11px] md:text-[10px] text-zinc-500">com diferença</p>
           </div>
-          <div className="px-5 py-4 text-center">
-            <p className={`text-xl font-black ${valorImpacto < 0 ? 'text-red-500' : valorImpacto > 0 ? 'text-emerald-600' : 'text-zinc-500'}`}>
+          <div className="px-3 md:px-5 py-3 md:py-4 text-center">
+            <p className={`text-lg md:text-xl font-black ${valorImpacto < 0 ? 'text-red-500' : valorImpacto > 0 ? 'text-emerald-600' : 'text-zinc-500'}`}>
               {valorImpacto >= 0 ? '+' : ''}{fmt(valorImpacto)}
             </p>
-            <p className="text-[10px] text-zinc-500">impacto financeiro</p>
+            <p className="text-[11px] md:text-[10px] text-zinc-500">impacto financeiro</p>
           </div>
         </div>
 
@@ -82,19 +79,19 @@ export default function ConfirmarInventarioModal({ itens, operador, onConfirmar,
             </div>
           ) : (
             <div>
-              <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider px-6 py-3 border-b border-zinc-50">
+              <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider px-4 md:px-6 py-3 border-b border-zinc-50">
                 Itens com diferença — serão ajustados no estoque
               </p>
               {faltando.length > 0 && (
                 <div>
-                  <div className="flex items-center gap-2 px-6 py-2 bg-red-50">
+                  <div className="flex items-center gap-2 px-4 md:px-6 py-2 bg-red-50">
                     <i className="ri-arrow-down-line text-red-500 text-xs" />
                     <span className="text-[10px] font-bold text-red-600 uppercase tracking-wider">
                       Faltando ({faltando.length})
                     </span>
                   </div>
                   {faltando.map((item) => (
-                    <div key={item.insumoId} className="flex items-center gap-3 px-6 py-3 border-b border-zinc-50 hover:bg-zinc-50">
+                    <div key={item.insumoId} className="flex items-center gap-3 px-4 md:px-6 py-3 border-b border-zinc-50 hover:bg-zinc-50">
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-semibold text-zinc-800 truncate">{item.insumoNome}</p>
                         <p className="text-[10px] text-zinc-400">
@@ -116,14 +113,14 @@ export default function ConfirmarInventarioModal({ itens, operador, onConfirmar,
               )}
               {sobrando.length > 0 && (
                 <div>
-                  <div className="flex items-center gap-2 px-6 py-2 bg-emerald-50">
+                  <div className="flex items-center gap-2 px-4 md:px-6 py-2 bg-emerald-50">
                     <i className="ri-arrow-up-line text-emerald-600 text-xs" />
                     <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wider">
                       Sobrando ({sobrando.length})
                     </span>
                   </div>
                   {sobrando.map((item) => (
-                    <div key={item.insumoId} className="flex items-center gap-3 px-6 py-3 border-b border-zinc-50 hover:bg-zinc-50">
+                    <div key={item.insumoId} className="flex items-center gap-3 px-4 md:px-6 py-3 border-b border-zinc-50 hover:bg-zinc-50">
                       <div className="flex-1 min-w-0">
                         <p className="text-xs font-semibold text-zinc-800 truncate">{item.insumoNome}</p>
                         <p className="text-[10px] text-zinc-400">
@@ -148,25 +145,28 @@ export default function ConfirmarInventarioModal({ itens, operador, onConfirmar,
         </div>
 
         {/* Operador + ações */}
-        <div className="px-6 py-4 border-t border-zinc-100 bg-zinc-50 flex items-center gap-4 flex-shrink-0">
-          <div className="flex-1">
+        <div className="px-4 md:px-6 py-4 border-t border-zinc-100 bg-zinc-50 flex flex-col md:flex-row md:items-center gap-3 md:gap-4 flex-shrink-0">
+          <div className="md:flex-1">
             <p className="text-[10px] text-zinc-400">Responsável pela contagem</p>
             <p className="text-xs font-semibold text-zinc-700">{operador}</p>
           </div>
-          <button
-            onClick={onCancelar}
-            className="px-4 py-2.5 bg-zinc-200 hover:bg-zinc-300 text-zinc-700 text-sm font-semibold rounded-xl cursor-pointer whitespace-nowrap transition-colors"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={onConfirmar}
-            disabled={confirmando}
-            className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center gap-2"
-          >
-            <i className={confirmando ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'} />
-            {confirmando ? 'Confirmando…' : 'Confirmar e Atualizar Estoque'}
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={onCancelar}
+              disabled={confirmando}
+              className="flex-1 md:flex-none min-h-[42px] px-4 bg-zinc-200 hover:bg-zinc-300 disabled:opacity-60 text-zinc-700 text-sm font-semibold rounded-xl cursor-pointer whitespace-nowrap transition-colors"
+            >
+              Voltar
+            </button>
+            <button
+              onClick={onConfirmar}
+              disabled={confirmando}
+              className="flex-[2] md:flex-none min-h-[42px] px-5 bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center justify-center gap-2"
+            >
+              <i className={confirmando ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'} />
+              {confirmando ? 'Confirmando…' : 'Confirmar e atualizar estoque'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

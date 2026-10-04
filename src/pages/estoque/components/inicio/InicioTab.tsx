@@ -9,10 +9,13 @@ import {
   contagemDeHoje, fmtQtd, pedidoDoInsumo, quandoFica,
   type InsumoSituacao, type SituacaoEstoque,
 } from '@/lib/estoqueRegras';
+import { contarPendencias } from '@/lib/estoqueArrumar';
 import ComprarSecao from './ComprarSecao';
 import ContarSecao, { ContagemFolha } from './ContarSecao';
 import ConfigFolha from './ConfigFolha';
 import Ajuda from './Ajuda';
+import { CartaoAcao, SecaoTitulo, btn } from '../ui/EstoqueUi';
+import { useEstoqueTela, type FiltroArrumar } from '../../EstoqueTela';
 
 // Início do Estoque (2026-10-03): abre respondendo "o que comprar", "o que contar" e "o que vai faltar",
 // pela regra única (fn_estoque_situacao / src/lib/estoqueRegras.ts). As outras abas continuam iguais.
@@ -30,6 +33,7 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
   const [config, setConfig] = useState(false);
   const { hasPermissao } = usePermissoes();
   const podeContar = hasPermissao('estoque_inventario');
+  const { abrirArrumar } = useEstoqueTela();
 
   const hoje = useMemo(() => (situacao ? contagemDeHoje(situacao) : null), [situacao]);
 
@@ -86,6 +90,17 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
       mostrarNaLista(i.id);
     } else toast.success(`${i.nome} saiu da lista de compras`);
   };
+  // Arrumar a lista: o que falta no cadastro (cada número é uma conta separada; a soma é o total do título).
+  const pend = contarPendencias(situacao, podeContar);
+  const pendCadastro: Array<{ filtro: FiltroArrumar; n: number; rotulo: string; vermelho?: boolean }> = [
+    // Mesma regra da fila do Arrumar (src/lib/estoqueArrumar.ts): o número bate com o passo a passo.
+    { filtro: 'fornecedor', n: pend.fornecedor, rotulo: 'sem fornecedor' },
+    { filtro: 'minimo', n: pend.minimo, rotulo: 'sem mínimo' },
+    { filtro: 'preco', n: pend.preco, rotulo: 'sem preço' },
+    { filtro: 'negativo', n: pend.negativo, rotulo: 'negativos', vermelho: true },
+  ];
+  const totalCadastro = pendCadastro.reduce((t, p) => t + p.n, 0);
+
   const partes: string[] = [];
   if (nPorPedir) partes.push(`pedir ${nPorPedir} ${nPorPedir === 1 ? 'insumo' : 'insumos'}`);
   if (nContar) partes.push(`contar ${nContar}`);
@@ -106,7 +121,7 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
         </h2>
       )}
       <p className="text-xs text-zinc-500 mt-1 mb-3 lg:mb-0">
-        Números de agora, pela mesma regra do Dashboard e do assistente.
+        Toque num número para ir direto.
         {carregando && <i className="ri-loader-4-line animate-spin ml-1 align-middle" />}
       </p>
       </div>
@@ -137,6 +152,27 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
 
           <VaiFaltarSecao situacao={situacao} itens={vaiFaltar} postosNaLista={totais.naLista}
             onPorNaLista={(i) => porNaLista(i)} onVerNaLista={mostrarNaLista} onReload={onReload} />
+
+          {cfg.podeConfigurar && totalCadastro > 0 && (
+            <section id="inicio-arrumar" className="scroll-mt-4 lg:col-span-2">
+              <SecaoTitulo titulo="Arrumar a lista" n={totalCadastro} tomN="zinc" />
+              <CartaoAcao tom="prop" icone="ri-magic-line" titulo="O Estoque fica mais certo com 5 minutos de cadastro"
+                acoes={(
+                  <button onClick={() => abrirArrumar()} className={`${btn('p')} w-full`}>
+                    <i className="ri-play-line" />Arrumar um por um
+                  </button>
+                )}>
+                <div className="flex gap-1.5 flex-wrap mt-0.5">
+                  {pendCadastro.filter((p) => p.n > 0).map((p) => (
+                    <button key={p.filtro} onClick={() => abrirArrumar({ filtro: p.filtro })}
+                      className={`inline-flex items-center gap-1 h-8 px-3 rounded-full border bg-white text-[12.5px] font-semibold cursor-pointer hover:border-amber-300 ${p.vermelho ? 'border-red-200 text-red-700' : 'border-zinc-200 text-zinc-700'}`}>
+                      <b className="font-extrabold tabular-nums">{p.n}</b> {p.rotulo}
+                    </button>
+                  ))}
+                </div>
+              </CartaoAcao>
+            </section>
+          )}
 
           {cfg.podeConfigurar && (
             <button onClick={() => setConfig(true)} className="w-full flex items-center justify-center gap-2 text-xs font-bold text-zinc-500 hover:text-zinc-700 py-2 cursor-pointer lg:col-span-2 lg:border lg:border-dashed lg:border-zinc-300 lg:rounded-xl lg:hover:bg-white">

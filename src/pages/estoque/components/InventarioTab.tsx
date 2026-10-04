@@ -2,13 +2,16 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { usePermissoes } from '@/hooks/usePermissoes';
+import { useToast } from '@/contexts/ToastContext';
 import { useEstoque, type InventarioSession } from '../../../contexts/EstoqueContext';
+import { contagemDeHoje, descreverFrequencia, itensDoPlano, quandoFica, type InsumoSituacao } from '@/lib/estoqueRegras';
+import { dateKeyBrasilia, todayBrasilia } from '@/lib/dateUtils';
+import { dataBRparaYmd, diaCurto, diasEntre, reaisComSinal, resumirContagem, textoDiasSemContar } from '@/lib/contagemResumo';
+import { useEstoqueTela } from '../EstoqueTela';
 import ContagemInventario from './ContagemInventario';
 import DetalheInventario from './DetalheInventario';
 import DivergenciaPanel from './DivergenciaPanel';
-
-const fmt = (v: number) =>
-  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+import { CartaoAcao, CartaoBarra, Etiqueta, Pagina, SecaoTitulo, Vazio, btn, brl } from './ui/EstoqueUi';
 
 type View = 'historico' | 'contagem' | 'detalhe';
 
@@ -24,15 +27,30 @@ function temRascunhoSalvo(tenantId: string): boolean {
   }
 }
 
+/** Os que mais giram em reais por dia (para a semanal sugerida). Mesma conta do "Criar as duas de sempre" do Início. */
+function maisGiram(insumos: InsumoSituacao[], n = 10): InsumoSituacao[] {
+  return insumos
+    .filter((i) => i.contaInventario && (i.consumoDia ?? 0) > 0)
+    .sort((a, b) => (b.consumoDia ?? 0) * b.preco - (a.consumoDia ?? 0) * a.preco)
+    .slice(0, n);
+}
+
+const minutosPara = (n: number) => Math.max(1, Math.round(n * 0.7));
+const plural = (n: number, um: string, varios: string) => (n === 1 ? um : varios);
+
 export default function InventarioTab() {
   const { inventarioSessions } = useEstoque();
   const { user } = useAuth();
+  const toast = useToast();
   const { hasPermissao } = usePermissoes();
+  const { situacao, recarregarSituacao, contar, abrirFicha, podeConfigurar, podeContar } = useEstoqueTela();
   const podeInventariar = hasPermissao('estoque_inventario');
   const [view, setView] = useState<View>('historico');
   const [sessionDetalhe, setSessionDetalhe] = useState<InventarioSession | null>(null);
   const [startFresh, setStartFresh] = useState(false);
-  const [showDraftModal, setShowDraftModal] = useState(false);
+  // 'escolher' = quem pediu contagem cheia com rascunho aberto; 'descartar' = quem tocou em "Descartar".
+  const [modalRascunho, setModalRascunho] = useState<null | 'escolher' | 'descartar'>(null);
+  const [criando, setCriando] = useState(false);
 
   const tenantId = user?.tenantId ?? '';
   // Rascunho pode estar neste aparelho ou no banco (começado em outro celular).
@@ -50,7 +68,7 @@ export default function InventarioTab() {
   const handleNovaContagem = () => {
     if (!podeInventariar) return;
     if (hasDraft) {
-      setShowDraftModal(true);
+      setModalRascunho('escolher');
     } else {
       setStartFresh(false);
       setView('contagem');
@@ -59,29 +77,30 @@ export default function InventarioTab() {
 
   const handleRetomarRascunho = () => {
     if (!podeInventariar) return;
-    setShowDraftModal(false);
+    setModalRascunho(null);
     setStartFresh(false);
     setView('contagem');
   };
 
   const handleNovaContagemLimpa = () => {
     if (!podeInventariar) return;
-    setShowDraftModal(false);
+    setModalRascunho(null);
     setStartFresh(true);
     setView('contagem');
   };
 
+  const sairDaContagem = () => { setView('historico'); void recarregarSituacao(); };
+
   if (view === 'contagem') {
     return (
-      <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
-        <DivergenciaPanel />
+      <Pagina>
         <ContagemInventario
           operador={user?.nome ?? 'Operador'}
-          onConcluido={() => setView('historico')}
+          onConcluido={sairDaContagem}
           onCancelar={() => setView('historico')}
           startFresh={startFresh}
         />
-      </div>
+      </Pagina>
     );
   }
 
@@ -89,191 +108,276 @@ export default function InventarioTab() {
     // Versão mais recente da contagem (depois de uma edição a lista é recarregada)
     const atual = inventarioSessions.find((s) => s.id === sessionDetalhe.id) ?? sessionDetalhe;
     return (
-      <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
-        <DivergenciaPanel />
+      <Pagina>
         <DetalheInventario
           session={atual}
           sessoesMaisNovas={inventarioSessions.filter((s) => s.numero > atual.numero)}
           podeEditar={podeInventariar}
           onVoltar={() => { setView('historico'); setSessionDetalhe(null); }}
         />
-      </div>
+      </Pagina>
     );
   }
 
-  // View padrão: histórico de contagens
-  return (
-    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
-      <DivergenciaPanel />
+  // ── View padrão: o que contar agora + contagens feitas ──────────────────────
+  const hoje = situacao?.hoje ?? todayBrasilia();
+  const contagem = situacao ? contagemDeHoje(situacao) : null;
+  const conferir = contagem?.conferir ?? [];
+  const devidos = contagem?.devidos ?? [];
+  const planos = contagem?.planos ?? [];
 
-      {/* Banner de rascunho pendente */}
-      {hasDraft && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap">
-          <div className="w-10 h-10 flex items-center justify-center bg-amber-100 rounded-xl flex-shrink-0">
-            <i className="ri-draft-line text-amber-600 text-lg" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold text-zinc-800">Você tem um rascunho de contagem pendente</p>
-            <p className="text-xs text-zinc-500">Retome de onde parou ou inicie uma nova contagem do zero.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleNovaContagemLimpa}
-              className="flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm"
-            >
-              Nova contagem
-            </button>
-            <button
-              onClick={handleRetomarRascunho}
-              className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm"
-            >
-              <i className="ri-play-line" />
-              Retomar Rascunho
-            </button>
-          </div>
-        </div>
+  // Itens das contagens programadas que estão para hoje (ou atrasadas), sem repetir.
+  const itensDevidos: InsumoSituacao[] = [];
+  const vistos = new Set<string>();
+  for (const d of devidos) for (const i of d.pendentes) if (!vistos.has(i.id)) { vistos.add(i.id); itensDevidos.push(i); }
+
+  // Há quantos dias foi a última contagem (dia de Brasília)
+  const ultimaTs = (situacao?.insumos ?? []).reduce<string | null>(
+    (m, i) => (i.ultimaContagem && (!m || new Date(i.ultimaContagem).getTime() > new Date(m).getTime()) ? i.ultimaContagem : m), null);
+  const ultimaYmd = ultimaTs ? dateKeyBrasilia(ultimaTs) : inventarioSessions[0] ? dataBRparaYmd(inventarioSessions[0].data) : null;
+  const diasSemContar = ultimaYmd ? diasEntre(ultimaYmd, hoje) : null;
+
+  // "Criar as duas de sempre": geral no último dia do mês + semanal (segunda) dos 10 que mais giram. Igual ao Início.
+  const criarPadrao = async () => {
+    if (!situacao || !tenantId) return;
+    setCriando(true);
+    try {
+      const topo = maisGiram(situacao.insumos).map((i) => i.id);
+      const r1 = await supabase.rpc('fn_estoque_salvar_plano', {
+        p_tenant_id: tenantId, p_id: null, p_nome: 'Contagem geral', p_frequencia: 'mensal',
+        p_dia_semana: null, p_dia_mes: 0, p_todos: true, p_itens: [],
+      });
+      if (r1.error) throw r1.error;
+      if (topo.length) {
+        const r2 = await supabase.rpc('fn_estoque_salvar_plano', {
+          p_tenant_id: tenantId, p_id: null, p_nome: 'Contagem semanal', p_frequencia: 'semanal',
+          p_dia_semana: 1, p_dia_mes: null, p_todos: false, p_itens: topo,
+        });
+        if (r2.error) throw r2.error;
+      }
+      toast.success('Contagens programadas', topo.length ? 'Geral no último dia do mês e semanal toda segunda.' : 'Geral no último dia do mês.');
+    } catch (e) {
+      toast.error('Não programei as contagens', (e as { message?: string })?.message ?? String(e));
+    } finally {
+      setCriando(false);
+      void recarregarSituacao(); // se a 1ª foi gravada, o cartão muda e não duplica ao tentar de novo
+    }
+  };
+
+  const negativos = conferir.filter((i) => i.estoque < 0).length;
+  const marcados = conferir.length - negativos;
+  const tituloConferir = marcados === 0
+    ? `${conferir.length} ${plural(conferir.length, 'insumo com número negativo', 'insumos com número negativo')}`
+    : `${conferir.length} ${plural(conferir.length, 'insumo', 'insumos')} para conferir`;
+
+  const proximos = [...planos].sort((a, b) => Number(b.pendentes.length > 0) - Number(a.pendentes.length > 0) || a.proxima.localeCompare(b.proxima));
+  const proxima = devidos.length === 0 && planos.length > 0 ? proximos[0] : null;
+
+  return (
+    <Pagina>
+      {/* Rascunho pendente */}
+      {hasDraft && podeInventariar && (
+        <CartaoAcao tom="prop" icone="ri-draft-line" titulo="Você começou uma contagem e não terminou"
+          acoes={(
+            <>
+              <button onClick={handleRetomarRascunho} className={btn('p', 'sm')}><i className="ri-play-line" />Continuar</button>
+              <button onClick={() => setModalRascunho('descartar')} className={btn('perigo', 'sm')}>Descartar e começar do zero</button>
+            </>
+          )}>
+          Continue de onde parou. O que já foi contado está guardado.
+        </CartaoAcao>
       )}
 
-      {/* Header da lista + botão */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h3 className="text-sm font-bold text-zinc-800">Histórico de Contagens</h3>
-          <p className="text-xs text-zinc-400">
-            {inventarioSessions.length === 0
-              ? 'Nenhuma contagem realizada ainda'
-              : `${inventarioSessions.length} contagen${inventarioSessions.length > 1 ? 's' : ''} registrada${inventarioSessions.length > 1 ? 's' : ''}`}
-          </p>
-        </div>
-        {podeInventariar && (
-          <button
-            onClick={handleNovaContagem}
-            className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm"
-          >
-            <i className="ri-clipboard-line text-sm" />
-            Nova Contagem
-          </button>
-        )}
-      </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+        {/* Esquerda: o que contar agora */}
+        <div className="space-y-3">
+          {conferir.length > 0 && (
+            <CartaoAcao tom="alerta" icone="ri-error-warning-line" titulo={tituloConferir}
+              direita={<Etiqueta tom="amber">~{minutosPara(conferir.length)} min</Etiqueta>}
+              acoes={podeContar ? (
+                <button onClick={() => contar(conferir, 'Conferir')} className={`${btn('dark')} w-full`}>
+                  <i className="ri-scales-3-line" />Contar {conferir.length === 1 ? 'esse' : `os ${conferir.length}`} agora
+                </button>
+              ) : undefined}>
+              <p>
+                Não existe estoque menor que zero: alguma venda baixou o que não tinha.
+                {' '}Conte só {conferir.length === 1 ? 'esse' : `esses ${conferir.length}`} e o número volta a valer.
+                {marcados > 0 && ` ${marcados} ${plural(marcados, 'está marcado', 'estão marcados')} como esgotado, mas ${plural(marcados, 'tem', 'têm')} saldo.`}
+              </p>
+              <div className="flex gap-1.5 flex-wrap mt-2">
+                {conferir.slice(0, 6).map((i) => (
+                  <button key={i.id} type="button" onClick={() => abrirFicha(i.id)} title="Abrir a ficha do insumo"
+                    className="inline-flex items-center h-7 px-2.5 rounded-full border border-red-200 bg-red-50 text-red-700 text-xs font-bold cursor-pointer hover:bg-red-100 whitespace-nowrap">
+                    {i.nome}
+                  </button>
+                ))}
+                {conferir.length > 6 && (
+                  <span className="inline-flex items-center h-7 px-2.5 rounded-full border border-zinc-200 bg-white text-zinc-500 text-xs font-bold">+{conferir.length - 6}</span>
+                )}
+              </div>
+              {!podeContar && <p className="text-[11.5px] text-zinc-400 mt-2">Contar é com quem tem a permissão de inventário.</p>}
+            </CartaoAcao>
+          )}
 
-      {/* Lista de sessões */}
-      {inventarioSessions.length === 0 ? (
-        <div className="bg-white border border-zinc-200 rounded-2xl py-14 text-center">
-          <i className="ri-clipboard-line text-4xl text-zinc-200" />
-          <p className="text-sm font-semibold text-zinc-500 mt-2 mb-1">Nenhuma contagem ainda</p>
-          <p className="text-xs text-zinc-400 mb-4">Clique em "Nova Contagem" para fazer a primeira contagem de inventário</p>
-          {podeInventariar ? (
-            <button
-              onClick={handleNovaContagem}
-              className="inline-flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm"
-            >
-              <i className="ri-clipboard-line" />
-              Iniciar primeira contagem
-            </button>
+          <CartaoAcao tom="neutro" icone="ri-calendar-schedule-line"
+            titulo={!situacao ? 'Próxima contagem'
+              : devidos.length > 0 ? 'Tem contagem para fazer agora'
+              : proxima ? `Próxima contagem: ${quandoFica(proxima.proxima, hoje)}`
+              : 'Próxima contagem: nenhuma programada'}
+            acoes={(
+              <>
+                {devidos.length > 0 && podeContar && (
+                  <button onClick={() => contar(itensDevidos, devidos.length === 1 ? devidos[0].plano.nome : 'Contagem de hoje')} className={btn('dark', 'sm')}>
+                    <i className="ri-scales-3-line" />Contar agora ({itensDevidos.length} · ~{minutosPara(itensDevidos.length)} min)
+                  </button>
+                )}
+                {situacao && planos.length === 0 && podeConfigurar && (
+                  <button disabled={criando} onClick={criarPadrao} className={btn('p', 'sm')}>{criando ? 'Criando…' : 'Criar as duas de sempre'}</button>
+                )}
+                {podeInventariar && (
+                  <button onClick={handleNovaContagem} className={btn('out', 'sm')}><i className="ri-clipboard-line" />Contagem cheia agora</button>
+                )}
+              </>
+            )}>
+            {!situacao ? (
+              <p>Carregando as contagens programadas…</p>
+            ) : planos.length === 0 ? (
+              <>
+                <p>
+                  {textoDiasSemContar(diasSemContar)} Programe a <b>geral no fim do mês</b> e a <b>semanal dos 10 que mais giram</b>:
+                  {' '}no dia, quem cuida do estoque recebe aviso no celular.
+                </p>
+                {!podeConfigurar && <p className="text-[11.5px] text-zinc-400 mt-1.5">Quem programa é o supervisor ou o dono.</p>}
+              </>
+            ) : (
+              <ul className="space-y-1">
+                {proximos.map((p) => {
+                  const total = p.pendentes.length + p.contados.length;
+                  const devido = p.pendentes.length > 0;
+                  const nItens = itensDoPlano(p.plano, situacao.insumos).length;
+                  return (
+                    <li key={p.plano.id}>
+                      <b className="text-zinc-800">{p.plano.nome}</b> · {descreverFrequencia(p.plano)}
+                      {devido
+                        ? <> · {p.pendentes.length} de {total} {plural(total, 'item', 'itens')} por contar, <span className={p.atraso > 0 ? 'font-bold text-red-600' : 'font-bold text-amber-700'}>
+                            {p.atraso > 0 ? `atrasada ${p.atraso} ${plural(p.atraso, 'dia', 'dias')}` : 'é hoje'}</span></>
+                        : <> · {quandoFica(p.proxima, hoje)} · {nItens} {plural(nItens, 'item', 'itens')}</>}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            {devidos.length > 0 && !podeContar && <p className="text-[11.5px] text-zinc-400 mt-1.5">Contar é com quem tem a permissão de inventário.</p>}
+          </CartaoAcao>
+        </div>
+
+        {/* Direita: contagens feitas */}
+        <div>
+          <SecaoTitulo titulo="Contagens feitas" n={inventarioSessions.length} tomN="zinc" />
+          {inventarioSessions.length === 0 ? (
+            <Vazio icone="ri-clipboard-line" titulo="Nenhuma contagem ainda">
+              A primeira contagem define o estoque de partida. Quando você fizer, ela aparece aqui com o que deu diferença.
+              {podeInventariar ? ' Para começar, use “Contagem cheia agora”.' : ' Seu perfil não tem permissão para realizar inventário.'}
+            </Vazio>
           ) : (
-            <p className="text-xs text-zinc-400 italic">Seu perfil não tem permissão para realizar inventário.</p>
+            <div className="space-y-2.5">
+              {inventarioSessions.map((s, idx) => (
+                <CartaoContagem key={s.id} session={s} hoje={hoje} maisRecente={idx === 0}
+                  onAbrir={() => { setSessionDetalhe(s); setView('detalhe'); }} />
+              ))}
+            </div>
           )}
         </div>
-      ) : (
-        <div className="space-y-2">
-          {inventarioSessions.map((session) => {
-            const temDiff = session.itensComDiferenca > 0;
-            return (
-              <button
-                key={session.id}
-                onClick={() => { setSessionDetalhe(session); setView('detalhe'); }}
-                className="w-full bg-white border border-zinc-200 hover:border-amber-300 hover:bg-amber-50/40 rounded-2xl px-4 md:px-5 py-4 text-left cursor-pointer transition-all group"
-              >
-                <div className="flex items-center gap-4">
-                  {/* Ícone */}
-                  <div className={`w-10 h-10 flex items-center justify-center rounded-xl flex-shrink-0 ${
-                    temDiff ? 'bg-amber-50' : 'bg-emerald-50'
-                  }`}>
-                    <i className={`text-lg ${temDiff ? 'ri-alert-line text-amber-500' : 'ri-checkbox-circle-line text-emerald-500'}`} />
-                  </div>
+      </div>
 
-                  {/* Info principal */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-bold text-zinc-800">Contagem #{session.numero}</span>
-                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${
-                        temDiff ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'
-                      }`}>
-                        {temDiff ? `${session.itensComDiferenca} diferença${session.itensComDiferenca > 1 ? 's' : ''}` : 'Sem diferenças'}
-                      </span>
-                    </div>
-                    <p className="text-xs text-zinc-400 mt-0.5">
-                      {session.data} às {session.hora} · {session.operador} · {session.itensContados} itens contados
-                    </p>
-                  </div>
-
-                  {/* Valores financeiros */}
-                  <div className="text-right flex-shrink-0 space-y-0.5">
-                    {(() => {
-                      const valorEstoque = session.itens.reduce((s, i) => s + i.qtdContada * i.precoUnitario, 0);
-                      return (
-                        <>
-                          <p className="text-sm font-bold tabular-nums text-zinc-800">{fmt(valorEstoque)}</p>
-                          <p className="text-[10px] text-zinc-400">valor em estoque</p>
-                          {session.valorAjusteLiquido !== 0 && (
-                            <p className={`text-[10px] font-bold ${session.valorAjusteLiquido < 0 ? 'text-red-500' : 'text-emerald-600'}`}>
-                              {session.valorAjusteLiquido >= 0 ? '+' : ''}{fmt(session.valorAjusteLiquido)} ajuste
-                            </p>
-                          )}
-                        </>
-                      );
-                    })()}
-                  </div>
-
-                  <div className="w-5 h-5 flex items-center justify-center text-zinc-300 group-hover:text-amber-400 transition-colors">
-                    <i className="ri-arrow-right-s-line text-base" />
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
+      {/* Contagem cheia com rascunho aberto: continuar ou recomeçar */}
+      {modalRascunho === 'escolher' && (
+        <Janela titulo="Já tem uma contagem começada" onFechar={() => setModalRascunho(null)}
+          texto="Você começou uma contagem de inventário e não terminou. Continue de onde parou ou descarte o que foi contado e comece do zero.">
+          <button onClick={handleRetomarRascunho} className={`${btn('p')} w-full`}><i className="ri-play-line" />Continuar</button>
+          <button onClick={handleNovaContagemLimpa} className={`${btn('perigo')} w-full`}>Descartar e começar do zero</button>
+          <button onClick={() => setModalRascunho(null)} className={`${btn('ghost')} w-full`}>Voltar</button>
+        </Janela>
       )}
 
-      {/* Modal para escolher entre retomar rascunho ou começar nova */}
-      {showDraftModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-md mx-4 overflow-hidden">
-            <div className="flex items-start gap-4 px-6 py-5 bg-amber-50 border-b border-amber-200">
-              <div className="w-10 h-10 flex items-center justify-center bg-amber-100 rounded-xl flex-shrink-0 mt-0.5">
-                <i className="ri-draft-line text-amber-600 text-xl" />
-              </div>
-              <div>
-                <h2 className="text-sm font-bold text-zinc-900 mb-1">Rascunho de contagem encontrado</h2>
-                <p className="text-xs text-zinc-600 leading-relaxed">
-                  Você tem uma contagem de inventário que não foi concluída. Deseja continuar de onde parou ou descartar o rascunho e começar uma nova?
-                </p>
-              </div>
-            </div>
-            <div className="px-6 py-4 bg-zinc-50 border-t border-zinc-100 flex flex-col gap-3">
-              <button
-                onClick={handleRetomarRascunho}
-                className="w-full py-3 bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center justify-center gap-2"
-              >
-                <i className="ri-play-line" />
-                Continuar Rascunho
-              </button>
-              <button
-                onClick={handleNovaContagemLimpa}
-                className="w-full py-3 border border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 text-sm font-semibold rounded-xl cursor-pointer whitespace-nowrap transition-colors flex items-center justify-center gap-2"
-              >
-                <i className="ri-add-line" />
-                Nova Contagem (descartar rascunho)
-              </button>
-              <button
-                onClick={() => setShowDraftModal(false)}
-                className="w-full py-2 text-zinc-400 hover:text-zinc-600 text-xs font-medium cursor-pointer transition-colors"
-              >
-                Cancelar
-              </button>
-            </div>
+      {/* Descartar: pergunta antes de apagar */}
+      {modalRascunho === 'descartar' && (
+        <Janela titulo="Descartar a contagem começada?" onFechar={() => setModalRascunho(null)}
+          texto="O que você já contou nela será apagado e a contagem recomeça do zero. As contagens já confirmadas não mudam.">
+          <button onClick={handleNovaContagemLimpa} className="inline-flex items-center justify-center gap-1.5 font-bold cursor-pointer min-h-[42px] px-4 rounded-xl text-[13.5px] bg-red-600 hover:bg-red-700 text-white w-full">
+            Descartar e começar do zero
+          </button>
+          <button onClick={() => setModalRascunho(null)} className={`${btn('out')} w-full`}>Voltar e continuar de onde parou</button>
+        </Janela>
+      )}
+    </Pagina>
+  );
+}
+
+/** Janela de pergunta (centro da tela). */
+function Janela({ titulo, texto, onFechar, children }: { titulo: string; texto: string; onFechar: () => void; children: React.ReactNode }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onFechar}>
+      <div role="dialog" aria-modal="true" aria-label={titulo} onClick={(e) => e.stopPropagation()} className="bg-white rounded-2xl w-full max-w-md overflow-hidden">
+        <div className="flex items-start gap-3 px-5 py-4 bg-amber-50 border-b border-amber-200">
+          <span className="w-9 h-9 flex items-center justify-center bg-amber-100 rounded-xl flex-shrink-0"><i className="ri-draft-line text-amber-600 text-lg" /></span>
+          <div className="min-w-0">
+            <h2 className="text-sm font-extrabold text-zinc-900 mb-1">{titulo}</h2>
+            <p className="text-xs text-zinc-600 leading-relaxed">{texto}</p>
           </div>
         </div>
-      )}
+        <div className="px-5 py-4 flex flex-col gap-2">{children}</div>
+      </div>
     </div>
+  );
+}
+
+/** Cartão de uma contagem feita: quando, quem, quantos, quanto deu de diferença e o que mais pesou. */
+function CartaoContagem({ session, hoje, maisRecente, onAbrir }: {
+  session: InventarioSession; hoje: string; maisRecente: boolean; onAbrir: () => void;
+}) {
+  const r = resumirContagem(session.itens);
+  const temDif = session.itensComDiferenca > 0;
+  const valorEstoque = session.itens.reduce((s, i) => s + i.qtdContada * i.precoUnitario, 0);
+  const ymd = dataBRparaYmd(session.data);
+  const dia = ymd ? diaCurto(ymd, hoje) : session.data;
+
+  return (
+    <CartaoBarra cor={temDif ? 'amber' : 'green'} onClick={onAbrir}>
+      <div className="flex items-start gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-[14.5px] font-extrabold text-zinc-900 leading-snug">
+              #{session.numero} · {dia} às {session.hora}
+              <span className="font-semibold text-zinc-500"> · {session.operador}</span>
+            </p>
+            {session.numero === 1 && <Etiqueta tom="blue">contagem inicial</Etiqueta>}
+          </div>
+          <p className="text-[12.5px] text-zinc-600 mt-1">
+            {session.itensContados} {plural(session.itensContados, 'contado', 'contados')}
+            {' · '}
+            {temDif
+              ? <b className="text-amber-700">{session.itensComDiferenca} com diferença</b>
+              : <b className="text-emerald-700">nenhuma diferença</b>}
+            {temDif && (
+              <>
+                {' · '}
+                <b className={session.valorAjusteLiquido < 0 ? 'text-red-600' : session.valorAjusteLiquido > 0 ? 'text-emerald-700' : 'text-zinc-600'}>{reaisComSinal(session.valorAjusteLiquido)}</b>
+              </>
+            )}
+          </p>
+          {r.explicam && (
+            <p className="text-[12px] text-zinc-500 mt-0.5">
+              {r.explicam.n} {plural(r.explicam.n, 'item explica', 'itens explicam')} {Math.round(r.explicam.fracao * 100)}% da diferença
+            </p>
+          )}
+          <p className="text-[11.5px] text-zinc-400 mt-0.5">Estoque contado: {brl(valorEstoque)}</p>
+        </div>
+        <button onClick={(e) => { e.stopPropagation(); onAbrir(); }} className={btn('out', 'sm')}>
+          Abrir<i className="ri-arrow-right-s-line" />
+        </button>
+      </div>
+      {maisRecente && <DivergenciaPanel session={session} />}
+    </CartaoBarra>
   );
 }

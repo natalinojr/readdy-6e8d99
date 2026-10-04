@@ -13,7 +13,8 @@ interface InsumoModalProps {
   categoriasDisponiveis: string[];
   dreCategories?: never[];
   onClose: () => void;
-  onSave: (data: Omit<Insumo, 'estoqueAtual' | 'ultimaEntrada' | 'fichaTecnica' | 'esgotado'> & { id?: string }) => void;
+  /** Pode devolver Promise: a janela espera e só fecha se der certo (erro = fica aberta). */
+  onSave: (data: Omit<Insumo, 'estoqueAtual' | 'ultimaEntrada' | 'fichaTecnica' | 'esgotado'> & { id?: string }) => void | Promise<unknown>;
 }
 
 export default function InsumoModal({ insumo, nomeInicial, categoriasDisponiveis, onClose, onSave }: InsumoModalProps) {
@@ -71,9 +72,12 @@ export default function InsumoModal({ insumo, nomeInicial, categoriasDisponiveis
     && Number.isFinite(fatorContagemNum) && fatorContagemNum > 0;
   const podeSubmeter = nome.trim().length > 0;
 
-  const handleSalvar = () => {
-    if (!podeSubmeter) return;
-    onSave({
+  const [salvando, setSalvando] = useState(false);
+  const handleSalvar = async () => {
+    if (!podeSubmeter || salvando) return;
+    setSalvando(true);
+    try {
+    await onSave({
       id: insumo?.id,
       nome: nome.trim(),
       unidade,
@@ -92,6 +96,12 @@ export default function InsumoModal({ insumo, nomeInicial, categoriasDisponiveis
       purchaseFactor: usePurchaseUnit ? (parseFloat(purchaseFactor) || 1) : 1,
       dreCategoryId: insumo?.dreCategoryId ?? null,
     });
+    } catch {
+      // Quem chamou já mostrou o erro; a janela continua aberta com o que foi digitado.
+      setSalvando(false);
+      return;
+    }
+    setSalvando(false);
     onClose();
   };
 
@@ -456,11 +466,11 @@ export default function InsumoModal({ insumo, nomeInicial, categoriasDisponiveis
         <div className="flex gap-2 mt-5">
           <button onClick={onClose} className="flex-1 py-2 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-lg hover:bg-zinc-200 transition-colors cursor-pointer whitespace-nowrap">Cancelar</button>
           <button
-            onClick={handleSalvar}
-            disabled={!podeSubmeter}
+            onClick={() => { void handleSalvar(); }}
+            disabled={!podeSubmeter || salvando}
             className="flex-1 py-2 text-sm font-semibold text-white bg-amber-500 rounded-lg hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer whitespace-nowrap"
           >
-            {isEdit ? 'Salvar' : 'Cadastrar'}
+            {salvando ? 'Salvando…' : isEdit ? 'Salvar' : 'Cadastrar'}
           </button>
         </div>
       </div>

@@ -47,6 +47,8 @@ interface Props {
   saving?: boolean;
   onSave: (item: Item) => void;
   onClose: () => void;
+  /** Abre já nesta aba (ex.: link "Fazer ficha" do Estoque › CMV abre na Ficha Técnica). */
+  abaInicial?: TabLocal;
 }
 
 const novosGrupo = (): GrupoOpcoes => ({
@@ -83,16 +85,16 @@ const novaSubProducao = (estacaoNome = 'Grelha', estacaoId = ''): SubproducaoIte
   slaMinutos: 10,
 });
 
-type TabLocal = 'info' | 'producao' | 'opcoes' | 'promocoes' | 'observacoes' | 'ficha' | 'delivery' | 'fiscal';
+export type TabLocal = 'info' | 'producao' | 'opcoes' | 'promocoes' | 'observacoes' | 'ficha' | 'delivery' | 'fiscal';
 
-export default function ItemModal({ item, categorias, obsGlobais, estacoes, saving, onSave, onClose }: Props) {
+export default function ItemModal({ item, categorias, obsGlobais, estacoes, saving, onSave, onClose, abaInicial }: Props) {
   const { user } = useAuth();
   const { hasPermissao } = usePermissoes();
   const podeAlterarPreco = hasPermissao('cardapio_alterar_preco');
   const { insumos } = useEstoque();
   const { recipes, getBatchesByRecipeId } = useProducao();
   const estacoesNomes = estacoes.map(e => e.nome);
-  const [tab, setTab] = useState<TabLocal>('info');
+  const [tab, setTab] = useState<TabLocal>(abaInicial ?? 'info');
   const [nome, setNome] = useState(item?.nome ?? '');
   const [descricao, setDescricao] = useState(item?.descricao ?? '');
   const [preco, setPreco] = useState(String(item?.preco ?? ''));
@@ -146,6 +148,9 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
     setUploadError(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item ? JSON.stringify({ id: item.id, subproducao: item.subproducao, nome: item.nome, descricao: item.descricao, preco: item.preco, categoriaId: item.categoriaId, slaMinutos: item.slaMinutos, fotoUrl: item.fotoUrl, status: item.status, semPreparo: item.semPreparo, somenteDelivery: item.somenteDelivery, gruposOpcoes: item.gruposOpcoes, promocoes: item.promocoes, observacoesPadrao: item.observacoesPadrao, fichaTecnica: item.fichaTecnica, delivery: item.delivery, fiscal: item.fiscal, horario: item.horario }) : 'undefined', categorias]);
+
+  // Abre na aba pedida: roda DEPOIS do efeito acima (que sempre volta para 'info') e só ao abrir o modal.
+  useEffect(() => { if (abaInicial) setTab(abaInicial); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const slaCalculado = producaoDividida && subproducao.length > 0
     ? subproducao.reduce((acc, s) => acc + (s.slaMinutos || 0), 0)

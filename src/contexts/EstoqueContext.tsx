@@ -54,6 +54,8 @@ interface DBStockMovement {
   ingredient_name: string;
   type: string;
   quantity: number;
+  /** Efeito real no estoque, com sinal (null = sinal histórico desconhecido) */
+  signed_quantity?: number | null;
   ingredient_unit?: string | null;
   reason?: string | null;
   operator_name?: string | null;
@@ -273,7 +275,8 @@ interface EstoqueContextValue {
   setRastrearEstoque: (insumoId: string, rastrear: boolean) => Promise<void>;
   /** Tira/põe o insumo na contagem de inventário (não mexe em estoque nem CMV). */
   setContaInventario: (insumoId: string, conta: boolean) => Promise<void>;
-  upsertInsumo: (insumo: Partial<Insumo> & { nome: string }) => Promise<string | undefined>;
+  /** `lancarErro`: o erro do servidor vira exceção (a tela mostra e não fecha); sem ele, devolve undefined como antes. */
+  upsertInsumo: (insumo: Partial<Insumo> & { nome: string }, opcoes?: { lancarErro?: boolean }) => Promise<string | undefined>;
   setInsumos: React.Dispatch<React.SetStateAction<Insumo[]>>;
   reloadInsumos: () => Promise<void>;
   reloadMovimentacoes: (dateFrom?: Date, dateTo?: Date, ingredientId?: string, busca?: string, tiposDb?: string[]) => Promise<void>;
@@ -476,6 +479,8 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
           pedidoNumero: r.order_number ?? null,
           itemVendidoNome: r.sold_item_name ?? null,
           custo,
+          // + ou − de verdade (ajuste de contagem pode somar ou tirar); sem o dado, fica undefined
+          sinal: r.signed_quantity != null ? Math.sign(Number(r.signed_quantity)) : undefined,
         };
       });
       setMovimentacoes(movs);
@@ -874,7 +879,7 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
     return { editados, bloqueados };
   }, [user, registrarEvento, broadcastStockUpdate, loadInsumos, recarregarMovimentacoes, loadInventarioSessions]);
 
-  const upsertInsumo = useCallback(async (insumo: Partial<Insumo> & { nome: string }): Promise<string | undefined> => {
+  const upsertInsumo = useCallback(async (insumo: Partial<Insumo> & { nome: string }, opcoes?: { lancarErro?: boolean }): Promise<string | undefined> => {
     if (!user?.tenantId) return;
     const isNew = !insumo.id;
     const existing = insumo.id ? insumos.find((i) => i.id === insumo.id) : null;
@@ -922,7 +927,11 @@ export function EstoqueProvider({ children }: { children: ReactNode }) {
         await new Promise((r) => setTimeout(r, 800 * attempt));
       }
     }
-    if (error) { console.error('[EstoqueContext] upsertInsumo error após retries:', error); return; }
+    if (error) {
+      console.error('[EstoqueContext] upsertInsumo error após retries:', error);
+      if (opcoes?.lancarErro) throw new Error(error.message || 'Não foi possível salvar o insumo.');
+      return;
+    }
 
     let ingredientId: string | undefined;
     if (typeof resultData === 'object' && resultData !== null) {

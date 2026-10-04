@@ -524,7 +524,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
         <div className="w-16 h-16 flex items-center justify-center bg-emerald-50 rounded-full mb-4">
           <i className="ri-check-double-line text-3xl text-emerald-500" />
         </div>
-        <h3 className="text-base font-bold text-zinc-800 mb-1">Inventário Confirmado!</h3>
+        <h3 className="text-base font-bold text-zinc-800 mb-1">Contagem confirmada!</h3>
         <p className="text-sm text-zinc-500">Estoque atualizado · {ajustesFeitos} ajuste{ajustesFeitos !== 1 ? 's' : ''} registrado{ajustesFeitos !== 1 ? 's' : ''}</p>
         <div className="flex items-center gap-2 mt-4 text-zinc-400 text-xs">
           <i className="ri-loader-4-line animate-spin" />
@@ -540,14 +540,16 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-bold text-zinc-800">Nova Contagem de Inventário</h3>
+            <h3 className="text-[15px] font-extrabold text-zinc-900">Contagem cheia</h3>
             {temRascunhoCarregado && (
               <span className="text-[11px] font-semibold bg-amber-50 text-amber-700 px-2 py-0.5 rounded-md">
                 Rascunho carregado
               </span>
             )}
           </div>
-          <p className="text-xs text-zinc-400">Operador: <span className="font-semibold">{operador}</span> · {insumos.length} insumos a contar</p>
+          <p className="text-xs text-zinc-400">
+            {insumos.length} insumos a contar · só muda no estoque o que você digitar ou conferir · Operador: <span className="font-semibold">{operador}</span>
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <span className="flex items-center gap-1.5 px-1 py-2 text-xs font-medium text-zinc-500 whitespace-nowrap">
@@ -944,7 +946,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
               <div>
                 <h2 className="text-sm font-bold text-zinc-900 mb-1">Cancelar contagem?</h2>
                 <p className="text-xs text-zinc-600 leading-relaxed">
-                  Você tem {itensComDiferenca.length} iten{itensComDiferenca.length !== 1 ? 's' : ''} com diferença na contagem atual. A contagem já está salva: dá para sair e terminar depois (neste ou em outro celular), ou descartar tudo.
+                  Você tem {itensComDiferenca.length} {itensComDiferenca.length === 1 ? 'item' : 'itens'} com diferença na contagem atual. A contagem já está salva: dá para sair e terminar depois (neste ou em outro celular), ou descartar tudo.
                 </p>
               </div>
             </div>

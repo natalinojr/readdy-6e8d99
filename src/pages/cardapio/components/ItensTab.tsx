@@ -47,7 +47,10 @@ function CanalToggle({ item, onChange, disabled }: { item: Item; onChange: (v: D
   );
 }
 
-export default function ItensTab() {
+/** Entrada por link (?item=<id>&ficha=1 ou ?busca=<nome>), vinda de fora do Cardápio — ex.: "Fazer ficha" do Estoque › CMV. */
+export interface EntradaItens { itemId: string | null; ficha: boolean; busca: string | null }
+
+export default function ItensTab({ entrada, onEntradaUsada }: { entrada?: EntradaItens | null; onEntradaUsada?: () => void } = {}) {
   const { itens, setItens, categorias, obsGlobais, estacoes, salvarItem, excluirItem, reordenarItens, definirCanalCategoria, saving, itemNoHorario } = useCardapio();
   const [busca, setBusca] = useState('');
   const [filtroCategoria, setFiltroCategoria] = useState('');
@@ -56,6 +59,21 @@ export default function ItensTab() {
   const [modalItem, setModalItem] = useState<Item | null | undefined>(undefined);
   const [vistaLista, setVistaLista] = useState(true);
   const [duplicando, setDuplicando] = useState<string | null>(null);
+  const [abaModal, setAbaModal] = useState<'ficha' | undefined>(undefined);
+
+  // Chegou por link: abre o item (na ficha técnica, se pedido); sem achar o item, a lista vem com a busca preenchida.
+  useEffect(() => {
+    if (!entrada) return;
+    const alvo = entrada.itemId ? itens.find(i => i.id === entrada.itemId) : undefined;
+    if (alvo) {
+      setAbaModal(entrada.ficha ? 'ficha' : undefined);
+      setModalItem(alvo);
+    } else if (entrada.busca) {
+      setBusca(entrada.busca);
+    }
+    onEntradaUsada?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entrada]);
 
   // Sincroniza modalItem com o array itens atualizado quando o cardapio recarrega
   useEffect(() => {
@@ -120,6 +138,7 @@ export default function ItensTab() {
   const handleSave = async (saved: Item) => {
     await salvarItem(saved);
     setModalItem(undefined);
+    setAbaModal(undefined);
   };
 
   const toggleStatus = async (item: Item) => {
@@ -728,7 +747,8 @@ export default function ItensTab() {
           estacoes={estacoes}
           saving={saving}
           onSave={handleSave}
-          onClose={() => setModalItem(undefined)}
+          onClose={() => { setModalItem(undefined); setAbaModal(undefined); }}
+          abaInicial={abaModal}
         />
       )}
 

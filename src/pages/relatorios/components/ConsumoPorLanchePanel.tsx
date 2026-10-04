@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { ChevronDown, ChevronUp, Utensils, AlertCircle } from 'lucide-react';
 import { useConsumoPorLanche } from '@/hooks/useConsumoPorLanche';
@@ -62,23 +62,23 @@ export default function ConsumoPorLanchePanel({ dateFrom, dateTo }: Props) {
   return (
     <div className="space-y-4">
       {/* Cards de resumo */}
-      <div className="grid grid-cols-3 gap-3">
-        <div className="bg-white border border-zinc-100 rounded-xl p-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="bg-white border border-zinc-200 rounded-2xl p-3">
           <p className="text-[10px] text-zinc-400 uppercase tracking-wide">Pratos com ficha</p>
           <p className="text-xl font-bold text-zinc-800">{dados.length}</p>
         </div>
-        <div className="bg-white border border-zinc-100 rounded-xl p-3">
+        <div className="bg-white border border-zinc-200 rounded-2xl p-3">
           <p className="text-[10px] text-zinc-400 uppercase tracking-wide">Unidades vendidas</p>
           <p className="text-xl font-bold text-zinc-800">{totalVendidas}</p>
         </div>
-        <div className="bg-white border border-zinc-100 rounded-xl p-3">
+        <div className="bg-white border border-zinc-200 rounded-2xl p-3">
           <p className="text-[10px] text-zinc-400 uppercase tracking-wide">Custo total insumos</p>
           <p className="text-xl font-bold text-zinc-800">{fmt(totalCusto)}</p>
         </div>
       </div>
 
       {/* Gráfico Top 10 */}
-      <div className="bg-white border border-zinc-100 rounded-xl p-4">
+      <div className="bg-white border border-zinc-200 rounded-2xl p-4">
         <p className="text-xs font-semibold text-zinc-600 mb-3">Top 10 Pratos — Custo de Insumos</p>
         <ResponsiveContainer width="100%" height={200}>
           <BarChart
@@ -115,7 +115,7 @@ export default function ConsumoPorLanchePanel({ dateFrom, dateTo }: Props) {
       </div>
 
       {/* Tabela detalhada */}
-      <div className="bg-white border border-zinc-100 rounded-xl overflow-hidden">
+      <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
@@ -133,9 +133,8 @@ export default function ConsumoPorLanchePanel({ dateFrom, dateTo }: Props) {
                 const exp = expanded.has(item.itemId);
                 const custoUnit = item.qtdVendida > 0 ? item.custoTotal / item.qtdVendida : 0;
                 return (
-                  <>
+                  <Fragment key={item.itemId}>
                     <tr
-                      key={item.itemId}
                       className="border-b border-zinc-50 hover:bg-zinc-50/50 cursor-pointer transition-colors"
                       onClick={() => toggle(item.itemId)}
                     >
@@ -171,7 +170,7 @@ export default function ConsumoPorLanchePanel({ dateFrom, dateTo }: Props) {
                     </tr>
 
                     {exp && item.ingredientes.length > 0 && (
-                      <tr key={`${item.itemId}-detail`}>
+                      <tr>
                         <td colSpan={6} className="bg-amber-50/30 px-6 py-2">
                           <p className="text-[10px] font-semibold text-zinc-500 mb-1.5 uppercase">
                             Insumos consumidos (total do período)
@@ -195,7 +194,7 @@ export default function ConsumoPorLanchePanel({ dateFrom, dateTo }: Props) {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>
