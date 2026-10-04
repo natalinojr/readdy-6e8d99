@@ -153,8 +153,8 @@ export default function VouchersAba() {
   return (
     <div className="p-4 md:p-6 space-y-4">
       {/* Atalhos */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 md:gap-3">
-        <div className="col-span-2 md:col-span-3 xl:col-span-1 bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl px-4 py-3 text-white">
+      <div className="grid grid-cols-3 xl:grid-cols-6 gap-2 md:gap-3">
+        <div className="col-span-3 xl:col-span-1 bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl px-4 py-3 text-white">
           <p className="text-[11px] text-rose-100">Saldo em gift cards</p>
           <p className="text-lg font-black leading-tight">{loading || erroLista ? '—' : formatCurrency(stats.saldoGC)}</p>
           <p className="text-[10px] text-rose-100 mt-0.5">compromisso da loja com clientes</p>
@@ -166,14 +166,14 @@ export default function VouchersAba() {
               key={c.id}
               title={c.hint}
               onClick={() => setAtalho(ativo ? 'todos' : c.id)}
-              className={`text-left bg-white border rounded-xl px-3 py-3 flex items-center gap-2.5 cursor-pointer transition-all ${ativo ? 'border-rose-400 ring-2 ring-rose-100' : 'border-zinc-100 hover:border-zinc-300'}`}
+              className={`text-left bg-white border rounded-xl px-2.5 sm:px-3 py-2.5 sm:py-3 flex items-center gap-2.5 cursor-pointer transition-all ${ativo ? 'border-rose-400 ring-2 ring-rose-100' : 'border-zinc-100 hover:border-zinc-300'}`}
             >
-              <div className={`w-9 h-9 flex items-center justify-center rounded-xl flex-shrink-0 ${c.color}`}>
+              <div className={`w-9 h-9 hidden sm:flex items-center justify-center rounded-xl flex-shrink-0 ${c.color}`}>
                 <i className={`${c.icon} text-base`} />
               </div>
               <div className="min-w-0">
                 <p className="text-base font-bold text-zinc-800 leading-tight">{loading || erroLista ? '—' : c.value}</p>
-                <p className="text-[11px] text-zinc-400 leading-tight">{c.label}</p>
+                <p className="text-[10.5px] sm:text-[11px] text-zinc-400 leading-tight">{c.label}</p>
               </div>
             </button>
           );
@@ -193,7 +193,7 @@ export default function VouchersAba() {
           />
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1 overflow-x-auto bg-zinc-100 rounded-xl p-1 max-w-full">
+          <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide bg-zinc-100 rounded-xl p-1 max-w-full">
             <button onClick={() => setFilterType('all')} className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors ${filterType === 'all' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>Todos os tipos</button>
             {(Object.keys(TYPE_LABELS) as VoucherType[]).map((t) => (
               <button key={t} onClick={() => setFilterType(t)} className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors ${filterType === t ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}>
