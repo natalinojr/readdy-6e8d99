@@ -4,14 +4,17 @@ import { useAuth } from '../../../contexts/AuthContext';
 
 interface Props {
   onClose: () => void;
+  /** Já abre com este insumo escolhido (ex.: ficha do insumo). */
+  insumoIdInicial?: string | null;
 }
 
-export default function RegistrarSaidaModal({ onClose }: Props) {
+export default function RegistrarSaidaModal({ onClose, insumoIdInicial }: Props) {
   const { insumos, addMovimentacao } = useEstoque();
   const { user } = useAuth();
 
-  const [busca, setBusca] = useState('');
-  const [insumoId, setInsumoId] = useState('');
+  const inicial = insumoIdInicial ? insumos.find((i) => i.id === insumoIdInicial) : undefined;
+  const [busca, setBusca] = useState(inicial?.nome ?? '');
+  const [insumoId, setInsumoId] = useState(inicial?.id ?? '');
   const [quantidade, setQuantidade] = useState('');
   const [motivo, setMotivo] = useState('');
   // Texto do "Outro" separado da escolha: antes o texto trocava o motivo e o campo sumia na 1ª letra.
