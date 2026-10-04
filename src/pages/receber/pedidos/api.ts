@@ -1,6 +1,6 @@
 // Pedidos de pagamento (reembolso, freelancer, fornecedor sem nota) — Edge pedidos-pagamento (2026-09-24).
 // O pedido só vira conta a pagar quando o dono aprova. POST único, sem retry (a ref evita duplicar).
-import { SUPABASE_URL, SUPABASE_ANON_KEY, ensureFreshSession } from '@/lib/supabase';
+import { SUPABASE_URL, SUPABASE_ANON_KEY, ensureFreshSession, supabase } from '@/lib/supabase';
 
 // 'prestador' (2026-09-28): pedido mensal do prestador MEI — só nasce pela recorrência, ninguém cria pela tela
 // 'beneficio' (2026-09-30): boleto da VR/VA dividido por funcionário → RH › Benefícios ao aprovar
@@ -69,6 +69,26 @@ export interface Pedido {
   competencia?: string | null;
   linha_digitavel?: string | null;
   beneficio_detalhe?: BeneficioDetalhe | null;
+}
+
+/** Reembolso de mercadoria (2026-10-04): a compra ligada — itens e o cupom/nota (sem foto quando lido na SEFAZ). */
+export interface CompraLigada {
+  fornecedor: string | null; numero: string | null; chave: string | null;
+  itens: { descricao: string; quantidade: number; unidade: string | null; valor: number | null }[];
+}
+
+/** Lê a compra direto (RLS por loja): o cupom lido na SEFAZ vale como comprovante e não tem foto. */
+export async function lerCompraLigada(tenantId: string, purchaseId: string): Promise<CompraLigada | null> {
+  const [{ data: c }, { data: its }] = await Promise.all([
+    supabase.from('fin_purchases').select('supplier, invoice_number, notes').eq('tenant_id', tenantId).eq('id', purchaseId).maybeSingle(),
+    supabase.from('fin_purchase_items').select('description, quantity, unit_label, total_price').eq('tenant_id', tenantId).eq('purchase_id', purchaseId).limit(100),
+  ]);
+  if (!c) return null;
+  return {
+    fornecedor: c.supplier ?? null, numero: c.invoice_number ?? null,
+    chave: /chave (\d{44})/.exec(String(c.notes ?? ''))?.[1] ?? null,
+    itens: (its ?? []).map((i) => ({ descricao: String(i.description ?? ''), quantidade: Number(i.quantity) || 0, unidade: i.unit_label ?? null, valor: i.total_price != null ? Number(i.total_price) : null })),
+  };
 }
 
 export interface BeneficioDetalhe {

@@ -4,7 +4,7 @@
 // registra em "Já comprei" (nº do pedido + quanto saiu). Sem conta a pagar: o custo vem da nota.
 import { useCallback, useEffect, useState } from 'react';
 import { brl, dataBR } from '../api';
-import { ICONE_TIPO, ROTULO_TIPO, chamarPedidos, situacao, type Categoria, type Pedido } from './api';
+import { ICONE_TIPO, ROTULO_TIPO, chamarPedidos, lerCompraLigada, situacao, type Categoria, type CompraLigada, type Pedido } from './api';
 import { Categorias, lerValor } from './ui';
 import { ConferePix, ResumoLido } from './NovoPedido';
 import { lerPixCopia } from './pixCopia';
@@ -150,6 +150,48 @@ function Detalhes({ p }: { p: Pedido }) {
           {itens.map((i) => (
             <p key={i.employee_id} className="text-sm flex justify-between gap-3"><span className="text-zinc-700">{i.nome}</span><span className="text-zinc-800 font-semibold">{brl(Number(i.valor))}</span></p>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Reembolso de mercadoria: o que foi comprado (itens da compra lançada) e o cupom. Cupom lido na SEFAZ
+ *  não tem foto — a chave é o comprovante (dono, 2026-10-04: "não consigo ver os itens nem a foto"). */
+function CompraDoReembolso({ p, tenantId }: { p: Pedido; tenantId: string }) {
+  const [c, setC] = useState<CompraLigada | null>(null);
+  const [copiou, setCopiou] = useState(false);
+  useEffect(() => {
+    if (!p.purchase_id) return;
+    let vivo = true;
+    lerCompraLigada(tenantId, p.purchase_id).then((r) => { if (vivo) setC(r); }).catch(() => {});
+    return () => { vivo = false; };
+  }, [tenantId, p.purchase_id]);
+  if (!c) return null;
+  const qtd = (n: number, u: string | null) => `${String(n).replace('.', ',')}${u && u !== 'un' ? ` ${u}` : '×'}`;
+  return (
+    <div className="mt-3 pt-3 border-t border-zinc-100 space-y-1">
+      <p className="text-xs font-bold text-zinc-500 uppercase tracking-wide">O que foi comprado</p>
+      {c.itens.length === 0 && <p className="text-sm text-zinc-400">A compra não tem itens lançados.</p>}
+      {c.itens.map((i, k) => (
+        <p key={k} className="text-sm flex justify-between gap-3">
+          <span className="text-zinc-700 min-w-0"><span className="text-zinc-400">{qtd(i.quantidade, i.unidade)}</span> {i.descricao}</span>
+          {i.valor != null && <span className="text-zinc-800 font-semibold whitespace-nowrap">{brl(i.valor)}</span>}
+        </p>
+      ))}
+      {(c.numero || c.chave) && (
+        <div className="mt-2 bg-zinc-50 rounded-2xl px-3 py-2.5 space-y-1">
+          <p className="text-sm text-zinc-700"><i className="ri-receipt-line text-zinc-400" /> {c.chave ? 'Cupom' : 'Nota'}{c.numero ? ` nº ${c.numero}` : ''}{c.fornecedor ? ` · ${c.fornecedor}` : ''}</p>
+          {c.chave && !p.tem_comprovante && <p className="text-xs text-zinc-500">Lido na SEFAZ: vale como comprovante, por isso não tem foto.</p>}
+          {c.chave && (
+            <div className="flex items-center gap-3 pt-0.5">
+              <button type="button" onClick={() => { navigator.clipboard?.writeText(c.chave!).then(() => { setCopiou(true); setTimeout(() => setCopiou(false), 1500); }).catch(() => {}); }}
+                className="text-sm font-semibold text-amber-600 cursor-pointer">{copiou ? 'Chave copiada' : 'Copiar chave'}</button>
+              {c.chave.startsWith('41') && (
+                <a href="https://www.fazenda.pr.gov.br/nfce/consulta" target="_blank" rel="noreferrer" className="text-sm font-semibold text-amber-600">Consultar na SEFAZ-PR</a>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -320,6 +362,7 @@ function CartaoMeu({ p, tenantId, onErro, onFeito, onJanela, mostrarQuem }: { p:
       {/* Decididos mostram a que o pedido se refere (dias, função, obs., classificação) e o comprovante,
           não só quem aprovou e quando pagou (dono, 2026-09-28) */}
       {(mostrarQuem || (p.tipo === 'compra_online' && p.status === 'comprada') || p.tipo === 'beneficio') && <Detalhes p={p} />}
+      {mostrarQuem && <CompraDoReembolso p={p} tenantId={tenantId} />}
       {mostrarQuem && p.tipo === 'beneficio' && p.status === 'aprovada' && !p.pago && <Pix chave={p.linha_digitavel ?? p.pix_copia_e_cola ?? null} rotulo={p.linha_digitavel ? 'Linha digitável' : 'Pix copia e cola'} />}
       {mostrarQuem && p.tem_comprovante && <div className="mt-3 flex"><BotaoComprovante p={p} tenantId={tenantId} onErro={onErro} /></div>}
       {mostrarQuem && onJanela && p.tipo === 'compra_online' && !p.pix_copia_e_cola && !p.ja_pago && p.status === 'aprovada' && <JaComprei p={p} tenantId={tenantId} onErro={onErro} onFeito={onFeito} />}
@@ -397,6 +440,7 @@ function CartaoAprovar({ p, tenantId, categorias, onErro, onFeito, onJanela }: {
     <div className="bg-white rounded-3xl border-2 border-amber-200 p-4">
       <Cabecalho p={p} mostrarQuem />
       <Detalhes p={p} />
+      <CompraDoReembolso p={p} tenantId={tenantId} />
       {!compra && <Pix chave={p.pix_chave} />}
       {beneficio && <Pix chave={p.linha_digitavel ?? p.pix_copia_e_cola ?? null} rotulo={p.linha_digitavel ? 'Linha digitável' : 'Pix copia e cola'} />}
       {beneficio && <p className="mt-3 text-xs text-sky-800 bg-sky-50 rounded-xl px-3 py-2">Aprovar lança em RH › Benefícios: uma conta de {brl(p.valor)} para {p.favorecido_nome} e o valor de cada funcionário.{p.linha_digitavel ? ' O boleto sai pelo Inter com o seu PIN.' : ' Pix de boleto de operadora o Inter não paga por aqui: copie o código acima e pague pelo app do banco — a conciliação dá baixa.'}</p>}
