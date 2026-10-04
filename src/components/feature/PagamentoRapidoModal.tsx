@@ -97,6 +97,8 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
   const [voucherCode, setVoucherCode] = useState('');
   const [voucherLoading, setVoucherLoading] = useState(false);
   const [voucherAplicado, setVoucherAplicado] = useState<{ code: string; applicable_amount: number; tipo: string } | null>(null);
+  // Código do voucher já baixado NESTE pedido: o reenvio após falha parcial não baixa de novo.
+  const voucherBaixadoRef = useRef<string | null>(null);
   const [voucherError, setVoucherError] = useState('');
 
   // ── Desconto manual (com autorização) ────────────────────────────────────
@@ -355,6 +357,10 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
 
   function handleRemoverVoucher() {
     if (bloquearSeAprovado()) return;
+    if (voucherBaixadoRef.current) {
+      toastError('Voucher já baixado', `O voucher ${voucherBaixadoRef.current.split(':').pop()} já foi baixado neste pedido. Termine o pagamento com ele.`);
+      return;
+    }
     setVoucherAplicado(null);
     setVoucherCode('');
     setVoucherError('');
@@ -589,6 +595,34 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
         }
       }
 
+      // Baixa o voucher ANTES de gravar desconto e pagamento (2026-10-04): antes o desconto ia
+      // para o pedido primeiro e a falha da baixa nem era conferida — o voucher ficava valendo
+      // e o pedido saía com desconto. Falhou (ex.: usado agora em outro caixa) → para aqui, sem
+      // gravar nada do pagamento. O servidor também não baixa duas vezes para o mesmo pedido.
+      if (voucherAplicado && semLinkados && voucherValor > 0.001 && voucherBaixadoRef.current !== `${orderId}:${voucherAplicado.code}`) {
+        const { data: resgate, error: resgateErr } = await invokeWithAuth<{ ok?: boolean; error?: string }>('voucher-write', {
+          body: {
+            action: 'redeem_voucher',
+            active_tenant_id: user?.tenantId,
+            code: voucherAplicado.code,
+            amount: voucherAplicado.applicable_amount,
+            order_id: orderId,
+          },
+        });
+        const erroResgate = resgateErr ? (resgateErr.message || String(resgateErr)) : (resgate?.error ?? null);
+        if (erroResgate) {
+          // Cartão já aprovado na maquininha: parar aqui deixaria o caixa preso (não dá para
+          // tirar o voucher nem fechar a tela). Fecha a venda como antes, com aviso alto.
+          const cartaoJaCobrado = pagamentosFinais.some((p) => p.cobrancaId && p.cobrancaId !== MANUAL);
+          if (!cartaoJaCobrado) {
+            throw new Error(`O voucher ${voucherAplicado.code} não foi baixado: ${erroResgate}. O pagamento não foi registrado — remova o voucher ou tente de novo.`);
+          }
+          toastError('Voucher não foi baixado', `Pedido #${numeroDisplay}: o cartão já foi cobrado, então o pedido fecha com o desconto, mas o voucher ${voucherAplicado.code} não foi baixado (${erroResgate}). Avise o gerente.`);
+        } else {
+          voucherBaixadoRef.current = `${orderId}:${voucherAplicado.code}`;
+        }
+      }
+
       gravandoPagamentos = true;
 
       // Parte do desconto de cada pedido vinculado (antes do principal e dos pagamentos)
@@ -618,18 +652,7 @@ export default function PagamentoRapidoModal({ orderId, numeroDisplay, total, de
             ? `Voucher ${voucherAplicado.code}${descontoManual > 0 ? ` + desconto (aut. ${descontoAutorizadoPor ?? '—'})` : ''}`
             : `Desconto no PDV Caixa (pagamento rápido)${descontoAutorizadoPor ? ` — aut. ${descontoAutorizadoPor}` : ''}`,
         });
-        // Resgata o voucher (baixa saldo/uso) vinculando ao pedido — só vale sem vinculados
-        if (voucherAplicado && semLinkados) {
-          await invokeWithAuth('voucher-write', {
-            body: {
-              action: 'redeem_voucher',
-              active_tenant_id: user?.tenantId,
-              code: voucherAplicado.code,
-              amount: voucherAplicado.applicable_amount,
-              order_id: orderId,
-            },
-          });
-        }
+        // A baixa do voucher foi feita lá em cima, antes de gravar qualquer coisa do pagamento.
       }
 
       // ── Dados do cliente (cpf/e-mail/telefone) no pedido ──

@@ -41,6 +41,8 @@ export default function VoucherDetalheModal({ voucher, onClose, onCancelled }: P
   const [transactions, setTransactions] = useState<VoucherTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState(false);
+  const [erroHistorico, setErroHistorico] = useState('');
+  const [erroCancelar, setErroCancelar] = useState('');
 
   useEffect(() => {
     loadTransactions();
@@ -48,11 +50,16 @@ export default function VoucherDetalheModal({ voucher, onClose, onCancelled }: P
 
   async function loadTransactions() {
     setLoading(true);
+    setErroHistorico('');
     try {
-      const { data } = await invokeWithAuth('voucher-write', {
+      const { data, error } = await invokeWithAuth('voucher-write', {
         body: { action: 'get_voucher_transactions', voucher_id: voucher.id, active_tenant_id: user?.tenantId },
       });
+      // Antes o erro virava "Nenhuma transação registrada" — parecia voucher nunca usado.
+      if (error) { setErroHistorico(error.message || 'Não consegui carregar o histórico.'); return; }
       setTransactions(((data as { data?: VoucherTransaction[] })?.data ?? []) as VoucherTransaction[]);
+    } catch (e) {
+      setErroHistorico(e instanceof Error ? e.message : 'Não consegui carregar o histórico.');
     } finally {
       setLoading(false);
     }
@@ -61,10 +68,13 @@ export default function VoucherDetalheModal({ voucher, onClose, onCancelled }: P
   async function handleCancel() {
     if (!(await confirmar({ titulo: `Cancelar o voucher ${voucher.code}?`, confirmarLabel: 'Cancelar voucher', perigo: true }))) return;
     setCancelling(true);
+    setErroCancelar('');
     try {
-      await invokeWithAuth('voucher-write', {
+      const { error } = await invokeWithAuth('voucher-write', {
         body: { action: 'cancel_voucher', voucher_id: voucher.id, active_tenant_id: user?.tenantId },
       });
+      // Antes: falhou (sem permissão, rede…) e mesmo assim auditava "cancelado" e fechava.
+      if (error) { setErroCancelar(error.message || 'Não consegui cancelar o voucher.'); return; }
       registrarEvento({
         tipo: 'pedido_cancelado',
         severidade: 'aviso',
@@ -75,6 +85,8 @@ export default function VoucherDetalheModal({ voucher, onClose, onCancelled }: P
         entidadeId: voucher.code,
       });
       onCancelled();
+    } catch (e) {
+      setErroCancelar(e instanceof Error ? e.message : 'Não consegui cancelar o voucher.');
     } finally {
       setCancelling(false);
     }
@@ -229,6 +241,16 @@ export default function VoucherDetalheModal({ voucher, onClose, onCancelled }: P
               <div className="flex items-center justify-center h-20">
                 <div className="w-5 h-5 border-2 border-rose-500 border-t-transparent rounded-full animate-spin" />
               </div>
+            ) : erroHistorico ? (
+              <div className="flex items-center justify-between gap-3 px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-xs text-red-700 min-w-0 break-words">{erroHistorico}</p>
+                <button
+                  onClick={() => loadTransactions()}
+                  className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-red-200 text-red-700 hover:bg-red-100 cursor-pointer"
+                >
+                  Tentar de novo
+                </button>
+              </div>
             ) : transactions.length === 0 ? (
               <p className="text-xs text-zinc-400 text-center py-4">Nenhuma transação registrada</p>
             ) : (
@@ -268,7 +290,10 @@ export default function VoucherDetalheModal({ voucher, onClose, onCancelled }: P
 
         {/* Footer */}
         {voucher.status === 'active' && (
-          <div className="px-6 py-4 border-t border-zinc-100 flex-shrink-0">
+          <div className="px-6 py-4 border-t border-zinc-100 flex-shrink-0 space-y-2">
+            {erroCancelar && (
+              <p className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 break-words">{erroCancelar}</p>
+            )}
             <button
               onClick={handleCancel}
               disabled={cancelling}

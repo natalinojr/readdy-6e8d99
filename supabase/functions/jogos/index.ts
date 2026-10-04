@@ -10,7 +10,8 @@
 //              O número que o celular diz ter feito não é usado.
 //   ranking  → top 10 da semana (nome curto + 2 últimos dígitos do celular).
 // Ações da loja (login, admin/gerente ou gestao_promocoes):
-//   admin_get / admin_save / admin_award / admin_unaward
+//   admin_get / admin_save / admin_award / admin_unaward / admin_desclassificar
+//   (desclassificar tira uma pontuação do ranking; exige a migração jogos_desclassificar)
 //
 // Semana = segunda 00:00 até domingo 23:59 (horário de Brasília).
 // Auth: verify_jwt = false no deploy; JWT validado aqui nas ações admin_*.
@@ -92,14 +93,15 @@ async function lerConfig(admin: any, tenantId: string) {
   return normalizarConfig(data);
 }
 
-interface Linha { customer_id: string | null; player_phone: string; player_name: string; score: number; created_at: string }
+interface Linha { id: string; customer_id: string | null; player_phone: string; player_name: string; score: number; frames: number; created_at: string }
 const chaveJogador = (r: { customer_id?: string | null; player_phone: string }) => r.customer_id ? "c:" + r.customer_id : "f:" + r.player_phone;
 
-/** Melhor pontuação de cada pessoa na semana; empate = quem fez primeiro fica na frente. */
+/** Melhor pontuação de cada pessoa na semana; empate = quem fez primeiro fica na frente.
+ *  Pontuação desclassificada pela loja (disqualified_at) não conta. */
 async function rankingSemana(admin: any, tenantId: string, semana: string, jogo: string): Promise<Linha[]> {
   const { data, error } = await admin.from("game_scores")
-    .select("customer_id, player_phone, player_name, score, created_at")
-    .eq("tenant_id", tenantId).eq("week_start", semana).eq("game", jogo)
+    .select("id, customer_id, player_phone, player_name, score, frames, created_at")
+    .eq("tenant_id", tenantId).eq("week_start", semana).eq("game", jogo).is("disqualified_at", null)
     .order("score", { ascending: false }).order("created_at", { ascending: true })
     .limit(5000);
   if (error) throw error;
@@ -316,6 +318,13 @@ Deno.serve(async (req: Request) => {
 
     if (action === "admin_get") {
       const cfg = await lerConfig(admin, tenantId);
+      // sem o clube ligado ninguém joga (regra 2026-09-27): a tela avisa a loja
+      const clube_ativo = await programaLigado(admin, tenantId);
+      // partida roda a 60 quadros/s ⇒ duração = quadros / 60
+      const linhaAdmin = (r: Linha, i: number) => ({
+        posicao: i + 1, nome: r.player_name, telefone: r.player_phone, pontos: r.score,
+        score_id: r.id, duracao_s: Math.round((Number(r.frames) || 0) / 60),
+      });
       const semanas = [0, 1, 2, 3, 4].map((i) => somarDias(semana, -7 * i));
       const { data: premiados } = await admin.from("game_awards").select("*")
         .eq("tenant_id", tenantId).gte("week_start", semanas[semanas.length - 1]);
@@ -331,18 +340,38 @@ Deno.serve(async (req: Request) => {
             jogadores: l.length,
             top: l.slice(0, 3).map((r, i) => {
               const p = (premiados ?? []).find((a: any) => a.week_start === w && a.game === jogo && a.position === i + 1);
-              return { posicao: i + 1, nome: r.player_name, telefone: r.player_phone, pontos: r.score, entregue_em: p?.delivered_at ?? null, premio: p?.prize ?? null };
+              return { ...linhaAdmin(r, i), entregue_em: p?.delivered_at ?? null, premio: p?.prize ?? null };
             }),
           });
         }
         jogos[jogo] = {
-          semana_atual: { semana, termina_em: fimDaSemana(semana), jogadores: atual.length, top: atual.slice(0, 10).map((r, i) => ({ posicao: i + 1, nome: r.player_name, telefone: r.player_phone, pontos: r.score })) },
+          semana_atual: { semana, termina_em: fimDaSemana(semana), jogadores: atual.length, top: atual.slice(0, 10).map(linhaAdmin) },
           anteriores,
         };
       }
       const { count: partidas } = await admin.from("game_scores").select("id", { count: "exact", head: true })
         .eq("tenant_id", tenantId).eq("week_start", semana);
-      return ok({ config: cfg, semana, jogos, partidas_semana: partidas ?? 0 });
+      return ok({ config: cfg, clube_ativo, semana, jogos, partidas_semana: partidas ?? 0 });
+    }
+
+    // Desclassificar trapaça: tira UMA pontuação (a da linha do ranking) da contagem. Se a pessoa
+    // tiver outra partida na semana, a melhor das outras passa a valer. Não mexe em semana que
+    // já tem prêmio marcado como entregue (o ranking mudaria por baixo do que foi entregue).
+    if (action === "admin_desclassificar") {
+      const scoreId = String(body.score_id ?? "");
+      if (!/^[0-9a-f-]{36}$/i.test(scoreId)) return jsonErr("dados inválidos");
+      const { data: s } = await admin.from("game_scores").select("id, week_start, game")
+        .eq("id", scoreId).eq("tenant_id", tenantId).maybeSingle();
+      if (!s) return jsonErr("Pontuação não encontrada.", 404);
+      const { count: entregues } = await admin.from("game_awards").select("id", { count: "exact", head: true })
+        .eq("tenant_id", tenantId).eq("week_start", s.week_start).eq("game", s.game);
+      if ((entregues ?? 0) > 0) return jsonErr("Esta semana já tem prêmio marcado como entregue. Desmarque a entrega antes de desclassificar.", 409);
+      const { data: alterada, error } = await admin.from("game_scores")
+        .update({ disqualified_at: new Date().toISOString(), disqualified_by: caller.userId ?? null })
+        .eq("id", s.id).eq("tenant_id", tenantId).is("disqualified_at", null).select("id");
+      if (error) throw error;
+      if (!alterada?.length) return jsonErr("Esta pontuação já foi desclassificada.", 409);
+      return ok({});
     }
 
     if (action === "admin_save") {

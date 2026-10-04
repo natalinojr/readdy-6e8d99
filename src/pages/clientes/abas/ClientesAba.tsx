@@ -4,9 +4,15 @@
 // antiga "Segmentação RFM" desta tela usava cortes fixos que contradiziam o funil.
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useClientes, type ClienteCRM } from '@/hooks/useClientes';
+import { useAuth } from '@/contexts/AuthContext';
+import { usePermissoes } from '@/hooks/usePermissoes';
 import ClientePerfil from '../components/ClientePerfil';
 import EditarClienteModal from '../components/EditarClienteModal';
 import BirthdayVoucherModal from '../components/BirthdayVoucherModal';
+import {
+  AVISO_OPT_OUT, abrirWhatsApp as abrirConversa, aniversarioEsteMes, baixarCsv, celularComDDI,
+  diasAteAniversario, diasDesde, haDias, isInativo, mensagemWhatsApp, montarCsv,
+} from '../clienteUtils';
 
 type Filtro = 'todos' | 'frequente' | 'vip' | 'novo' | 'inativo' | 'aniversario' | 'sem_compra';
 type SortField = 'recente' | 'visitas' | 'gasto' | 'ticket' | 'aniversario' | 'nome';
@@ -17,9 +23,7 @@ function fmtData(d: string) {
 function fmtMoeda(v: number) {
   return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
-function diasSemVisita(ultima: string) {
-  return Math.floor((Date.now() - new Date(ultima).getTime()) / (1000 * 60 * 60 * 24));
-}
+const diasSemVisita = diasDesde;
 // Aniversário (dia/mês) a partir de 'YYYY-MM-DD'. Lê direto da string p/ evitar
 // deslocamento de fuso (new Date('YYYY-MM-DD') é UTC e pode "pular" o dia).
 function fmtAniversario(d: string | null): string {
@@ -27,59 +31,18 @@ function fmtAniversario(d: string | null): string {
   const [, mes, dia] = d.slice(0, 10).split('-');
   return dia && mes ? `${dia}/${mes}` : '—';
 }
-// Dia do mês do aniversário (1-31) para ordenação; sem data vai pro fim.
-function diaAniversario(c: ClienteCRM): number {
-  if (!c.dataNascimento) return 999;
-  const dia = Number(c.dataNascimento.slice(8, 10));
-  return dia || 999;
-}
-
-// Verifica se o cliente faz aniversário este mês, usando a data de nascimento real.
-// Sem data de nascimento, não há como saber — não conta como aniversariante.
-function aniversarioEsteMes(c: ClienteCRM): boolean {
-  if (!c.dataNascimento) return false;
-  // dataNascimento vem como 'YYYY-MM-DD' (coluna date). Lemos o mês direto da string
-  // para evitar deslocamento de fuso (new Date('YYYY-MM-DD') é UTC e pode "pular" o mês).
-  const mesNasc = Number(c.dataNascimento.slice(5, 7));
-  if (!mesNasc) return false;
-  return mesNasc === new Date().getMonth() + 1;
-}
 // Faz aniversário HOJE (dia e mês).
 function aniversarioHoje(c: ClienteCRM): boolean {
-  if (!c.dataNascimento) return false;
-  const mes = Number(c.dataNascimento.slice(5, 7));
-  const dia = Number(c.dataNascimento.slice(8, 10));
-  const hoje = new Date();
-  return mes === hoje.getMonth() + 1 && dia === hoje.getDate();
-}
-// Cliente comprador que sumiu há mais de 30 dias. Quem nunca comprou NÃO é inativo.
-function isInativo(c: ClienteCRM): boolean {
-  return c.totalVisitas > 0 && diasSemVisita(c.ultimaVisita) > 30;
+  return diasAteAniversario(c) === 0;
 }
 
-// ── Mensagem de WhatsApp contextual — o texto muda conforme a relação do cliente ──
-function mensagemWhatsApp(c: ClienteCRM): string {
-  const nome = c.nome.split(' ')[0];
-  if (aniversarioEsteMes(c)) {
-    return `Olá, ${nome}! \u{1F382} Passando para desejar um feliz aniversário! Queremos comemorar com você — venha nos visitar e aproveite um mimo especial da casa. \u{1F973}`;
-  }
-  if (c.totalVisitas === 0) {
-    return `Olá, ${nome}! Que bom ter você na nossa lista. \u{1F60A} Ainda não teve a chance de experimentar nossos pratos? Venha nos conhecer, vamos adorar te receber!`;
-  }
-  if (isInativo(c)) {
-    return `Olá, ${nome}! Sentimos sua falta por aqui. \u{1F49B} Já faz um tempinho desde sua última visita — preparamos novidades que você vai gostar. Que tal passar para conferir?`;
-  }
-  if (c.tags.includes('vip') || c.tags.includes('frequente')) {
-    return `Olá, ${nome}! Obrigado por ser um cliente tão especial. \u{1F64C} Temos novidades no cardápio que combinam com o seu gosto — venha experimentar!`;
-  }
-  return `Olá, ${nome}! Tudo bem? Passando para lembrar que estamos com novidades por aqui. Venha nos visitar e aproveitar! \u{1F60A}`;
+/** Dá para mandar mensagem? (tem celular e não pediu para sair) */
+function podeMensagem(c: ClienteCRM): boolean {
+  return !!celularComDDI(c.celular) && !c.optOut;
 }
-// Abre o WhatsApp do cliente (mesmo padrão do ClientePerfil): wa.me/55<dígitos>.
 function abrirWhatsApp(cliente: ClienteCRM) {
-  const numero = (cliente.celular ?? '').replace(/\D/g, '');
-  if (!numero) return;
-  const msg = encodeURIComponent(mensagemWhatsApp(cliente));
-  window.open(`https://wa.me/55${numero}?text=${msg}`, '_blank');
+  if (cliente.optOut) return;
+  abrirConversa(cliente.celular, mensagemWhatsApp(cliente));
 }
 
 const TAG_STYLE: Record<string, string> = {
@@ -100,48 +63,39 @@ const FILTROS: { id: Filtro; label: string; icon?: string; count?: (c: ClienteCR
 ];
 
 function exportarCSV(clientes: ClienteCRM[]) {
-  const headers = ['Nome', 'Celular', 'Aniversário', 'Tags', 'Compras', 'Total Gasto (R$)', 'Ticket Médio (R$)', 'Primeira Compra', 'Última Compra', 'Dias sem Comprar'];
+  const headers = ['Nome', 'Celular', 'E-mail', 'Aniversário', 'Tags', 'Compras', 'Total Gasto (R$)', 'Ticket Médio (R$)', 'Primeira Compra', 'Última Compra', 'Dias sem Comprar', 'Aceita marketing', 'Não quer mensagens'];
   const rows = clientes.map(c => [
     c.nome,
     c.celular || '',
+    c.email || '',
     fmtAniversario(c.dataNascimento),
-    c.tags.join(', '),
+    [...c.tags, ...c.manualTags].join(', '),
     c.totalVisitas,
     c.valorTotal.toFixed(2).replace('.', ','),
     c.ticketMedio.toFixed(2).replace('.', ','),
     c.totalVisitas === 0 ? '' : fmtData(c.primeiraVisita),
     c.totalVisitas === 0 ? '' : fmtData(c.ultimaVisita),
     c.totalVisitas === 0 ? '' : diasSemVisita(c.ultimaVisita),
+    c.aceitaMarketing ? 'sim' : 'não',
+    c.optOut ? 'sim' : '',
   ]);
-  const csv = [headers, ...rows].map(r => r.join(';')).join('\n');
-  baixarArquivo(csv, `clientes_${new Date().toISOString().slice(0, 10)}.csv`);
+  baixarCsv(montarCsv([headers, ...rows], ';', [1]), `clientes_${new Date().toISOString().slice(0, 10)}.csv`);
 }
 
 // Exporta no formato de Público Personalizado do Meta Ads (Gerenciador de Anúncios).
 // Colunas reconhecidas pelo Meta: phone, email, fn (primeiro nome), ln (sobrenome), country.
+// Quem pediu para não receber mensagens fica de fora.
 function exportarMetaCSV(clientes: ClienteCRM[]) {
   const headers = ['phone', 'email', 'fn', 'ln', 'country'];
   const rows = clientes
-    .filter(c => (c.celular ?? '').replace(/\D/g, '').length >= 10)
+    .filter(c => !c.optOut && !!celularComDDI(c.celular))
     .map(c => {
-      const tel = (c.celular ?? '').replace(/\D/g, '');
       const partes = c.nome.trim().split(/\s+/);
       const fn = partes[0] ?? '';
       const ln = partes.slice(1).join(' ');
-      return [`+55${tel}`, '', fn, ln, 'BR'];
+      return [`+${celularComDDI(c.celular)}`, c.email ?? '', fn, ln, 'BR'];
     });
-  const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
-  baixarArquivo(csv, `meta_ads_publico_${new Date().toISOString().slice(0, 10)}.csv`);
-}
-
-function baixarArquivo(csv: string, nome: string) {
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = nome;
-  a.click();
-  URL.revokeObjectURL(url);
+  baixarCsv(montarCsv([headers, ...rows], ',', [0]), `meta_ads_publico_${new Date().toISOString().slice(0, 10)}.csv`);
 }
 
 // ── Modal de campanha de WhatsApp em massa ───────────────────────────────────
@@ -149,12 +103,12 @@ function baixarArquivo(csv: string, nome: string) {
 // isso evita o bloqueio de popups do navegador (abrir várias abas de uma vez é barrado).
 function CampanhaWhatsAppModal({ clientes, onClose, onContato }: { clientes: ClienteCRM[]; onClose: () => void; onContato?: (id: string) => void }) {
   const [soOptIn, setSoOptIn] = useState(false);
+  // Quem pediu para não receber mensagens nunca entra na campanha.
   const comTelefone = useMemo(
-    () => clientes.filter(c =>
-      (c.celular ?? '').replace(/\D/g, '').length >= 10 && (!soOptIn || c.aceitaMarketing)
-    ),
+    () => clientes.filter(c => podeMensagem(c) && (!soOptIn || c.aceitaMarketing)),
     [clientes, soOptIn],
   );
+  const foraPorOptOut = useMemo(() => clientes.filter(c => !!c.optOut).length, [clientes]);
   const [idx, setIdx] = useState(0);
   const [enviados, setEnviados] = useState(0);
   const atual = comTelefone[idx] ?? null;
@@ -179,7 +133,10 @@ function CampanhaWhatsAppModal({ clientes, onClose, onContato }: { clientes: Cli
             </div>
             <div>
               <h3 className="text-sm font-bold text-zinc-900">Campanha WhatsApp</h3>
-              <p className="text-[11px] text-zinc-400">{comTelefone.length} cliente{comTelefone.length !== 1 ? 's' : ''} com telefone</p>
+              <p className="text-[11px] text-zinc-400">
+                {comTelefone.length} cliente{comTelefone.length !== 1 ? 's' : ''} com telefone
+                {foraPorOptOut > 0 && ` · ${foraPorOptOut} não quer${foraPorOptOut !== 1 ? 'em' : ''} mensagens (fora)`}
+              </p>
             </div>
           </div>
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 text-zinc-400 cursor-pointer">
@@ -249,6 +206,23 @@ function CampanhaWhatsAppModal({ clientes, onClose, onContato }: { clientes: Cli
   );
 }
 
+/** Loja sem nenhum cliente ainda (ex.: só vende no tablet/balcão sem identificar ninguém):
+ *  explica de onde os clientes vêm em vez de um "nenhum cliente" seco. */
+function SemClientes() {
+  return (
+    <div className="max-w-sm mx-auto">
+      <div className="w-12 h-12 mx-auto mb-3 flex items-center justify-center rounded-2xl bg-gradient-to-br from-amber-100 to-rose-100">
+        <i className="ri-user-heart-line text-xl text-rose-500" />
+      </div>
+      <p className="text-sm font-semibold text-zinc-700">Nenhum cliente identificado ainda</p>
+      <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+        Os clientes entram sozinhos quando pedem pelo delivery próprio ou entram no clube de fidelidade
+        (tablet, QR da mesa e caixa). Pedido sem cliente identificado não aparece aqui.
+      </p>
+    </div>
+  );
+}
+
 interface Props {
   /** Abre o modal de voucher (fica na página, compartilhado com o Funil). */
   onEnviarVoucher: (cliente: ClienteCRM) => void;
@@ -257,7 +231,12 @@ interface Props {
 }
 
 export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
-  const { clientes, loading, error, atualizarCliente, registrarContato } = useClientes();
+  const { clientes, loading, error, recarregar, atualizarCliente, registrarContato } = useClientes();
+  const { user } = useAuth();
+  const { hasPermissao } = usePermissoes();
+  // Emitir voucher/gift card e mexer no voucher de aniversário é da aba Vouchers: quem só
+  // vê clientes (ex.: Líder) não emite (o servidor confere de novo no voucher-write).
+  const podeVoucher = user?.perfil === 'admin' || hasPermissao('gestao_vouchers');
   const [busca, setBusca] = useState('');
   const [filtro, setFiltro] = useState<Filtro>('todos');
   const [soDuplicados, setSoDuplicados] = useState(false);
@@ -346,7 +325,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
         case 'visitas': r = a.totalVisitas - b.totalVisitas; break;
         case 'gasto': r = a.valorTotal - b.valorTotal; break;
         case 'ticket': r = a.ticketMedio - b.ticketMedio; break;
-        case 'aniversario': r = diaAniversario(a) - diaAniversario(b); break;
+        case 'aniversario': r = diasAteAniversario(a) - diasAteAniversario(b); break;
         case 'recente':
         default: r = new Date(a.ultimaVisita).getTime() - new Date(b.ultimaVisita).getTime();
       }
@@ -366,7 +345,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
   const compradores = clientes.filter((c) => c.totalVisitas > 0).length;
   const retornaram = clientes.filter((c) => c.totalVisitas >= 2).length;
   const taxaRetorno = compradores > 0 ? (retornaram / compradores) * 100 : 0;
-  const comTelefone = lista.filter((c) => (c.celular ?? '').replace(/\D/g, '').length >= 10).length;
+  const comTelefone = lista.filter(podeMensagem).length;
 
   const algumFiltro = !!busca || filtro !== 'todos' || soDuplicados;
 
@@ -398,8 +377,8 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
 
   return (
     <div className="p-4 md:p-6 space-y-4">
-      {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 md:gap-3">
+      {/* KPIs — no celular, 3 por linha e sem o ícone (antes ocupavam a primeira tela inteira) */}
+      <div className="grid grid-cols-3 xl:grid-cols-6 gap-2 md:gap-3">
         {kpis.map((s) => {
           const ativo = !!s.filtro && s.filtro !== 'todos' && filtro === s.filtro;
           const clicavel = !!s.filtro || !!s.acao;
@@ -410,16 +389,16 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
               title={s.hint}
               disabled={!clicavel}
               onClick={() => (s.acao ? s.acao() : s.filtro && aplicarFiltro(s.filtro))}
-              className={`text-left bg-white border rounded-xl px-3 py-3 flex items-center gap-2.5 transition-all ${
+              className={`text-left bg-white border rounded-xl px-2.5 sm:px-3 py-2.5 sm:py-3 flex items-center gap-2.5 transition-all ${
                 ativo ? 'border-amber-400 ring-2 ring-amber-100' : 'border-zinc-100'
               } ${clicavel ? 'cursor-pointer hover:border-zinc-300' : 'cursor-default'}`}
             >
-              <div className={`w-9 h-9 flex items-center justify-center rounded-xl flex-shrink-0 ${s.color}`}>
+              <div className={`w-9 h-9 hidden sm:flex items-center justify-center rounded-xl flex-shrink-0 ${s.color}`}>
                 <i className={`${s.icon} text-base`} />
               </div>
               <div className="min-w-0">
-                <p className="text-base font-bold text-zinc-800 truncate leading-tight">{loading ? '—' : s.value}</p>
-                <p className="text-[11px] text-zinc-400 leading-tight">{s.label}</p>
+                <p className="text-[15px] sm:text-base font-bold text-zinc-800 truncate leading-tight">{loading ? '—' : s.value}</p>
+                <p className="text-[10.5px] sm:text-[11px] text-zinc-400 leading-tight">{s.label}</p>
               </div>
             </button>
           );
@@ -461,7 +440,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             <select
-              className="border border-zinc-200 rounded-xl px-3 py-2 text-xs text-zinc-600 focus:outline-none cursor-pointer bg-white"
+              className="min-w-0 flex-1 sm:flex-none border border-zinc-200 rounded-xl px-3 py-2 text-xs text-zinc-600 focus:outline-none cursor-pointer bg-white"
               value={sortField}
               onChange={(e) => { setSortField(e.target.value as SortField); setSortDir(e.target.value === 'nome' || e.target.value === 'aniversario' ? 'asc' : 'desc'); }}
               title="Ordenar"
@@ -470,7 +449,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
               <option value="visitas">Mais compras</option>
               <option value="gasto">Maior gasto</option>
               <option value="ticket">Maior ticket</option>
-              <option value="aniversario">Aniversário (dia)</option>
+              <option value="aniversario">Próximo aniversário</option>
               <option value="nome">Nome (A-Z)</option>
             </select>
             <button
@@ -479,22 +458,26 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors bg-green-500 hover:bg-green-600 text-white disabled:opacity-40 disabled:cursor-not-allowed"
               title="Abrir o WhatsApp de cada cliente da lista abaixo, um por vez"
             >
-              <i className="ri-whatsapp-line" /> WhatsApp{algumFiltro ? ` (${comTelefone})` : ' em massa'}
+              <i className="ri-whatsapp-line" /> WhatsApp{algumFiltro ? ` (${comTelefone})` : <span className="hidden sm:inline">&nbsp;em massa</span>}
             </button>
-            <button
-              onClick={() => setShowBirthday(true)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors border border-pink-200 bg-pink-50 hover:bg-pink-100 text-pink-700"
-              title="Configurar e gerar vouchers de aniversário"
-            >
-              <i className="ri-cake-3-line" /> Aniversários
-            </button>
+            {podeVoucher && (
+              <button
+                onClick={() => setShowBirthday(true)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors border border-pink-200 bg-pink-50 hover:bg-pink-100 text-pink-700"
+                title="Configurar e gerar vouchers de aniversário"
+                aria-label="Aniversários"
+              >
+                <i className="ri-cake-3-line" /><span className="hidden sm:inline">Aniversários</span>
+              </button>
+            )}
             <div className="relative" ref={menuRef}>
               <button
                 onClick={() => setMenuExportar((v) => !v)}
                 disabled={lista.length === 0}
+                aria-label="Exportar"
                 className="flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-600 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors disabled:opacity-40"
               >
-                <i className="ri-download-line" /> Exportar <i className="ri-arrow-down-s-line" />
+                <i className="ri-download-line" /><span className="hidden sm:inline">Exportar</span> <i className="ri-arrow-down-s-line" />
               </button>
               {menuExportar && (
                 <div className="absolute right-0 mt-1 w-64 bg-white border border-zinc-200 rounded-xl shadow-lg z-20 overflow-hidden">
@@ -515,7 +498,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
                     <i className="ri-meta-line text-sky-600 mt-0.5" />
                     <span>
                       <span className="block text-xs font-semibold text-zinc-800">Público do Meta Ads</span>
-                      <span className="block text-[11px] text-zinc-400">{comTelefone} com celular válido</span>
+                      <span className="block text-[11px] text-zinc-400">{comTelefone} com celular válido (sem quem pediu para sair)</span>
                     </span>
                   </button>
                 </div>
@@ -524,7 +507,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
           </div>
         </div>
 
-        <div className="px-3 md:px-4 py-2.5 flex items-center gap-1.5 overflow-x-auto">
+        <div className="px-3 md:px-4 py-2.5 flex items-center gap-1.5 overflow-x-auto scrollbar-hide">
           {FILTROS.map((f) => {
             const ativo = filtro === f.id;
             return (
@@ -556,8 +539,11 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
       </div>
 
       {error && (
-        <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
-          {error}
+        <div className="flex items-center justify-between gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">
+          <span><i className="ri-error-warning-line mr-1" />{error}</span>
+          <button onClick={() => recarregar()} className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-white border border-red-200 font-semibold hover:bg-red-100 cursor-pointer">
+            Tentar de novo
+          </button>
         </div>
       )}
 
@@ -567,14 +553,16 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
           <i className="ri-cake-line text-pink-600 text-xl flex-shrink-0" />
           <div className="flex-1">
             <p className="text-sm font-semibold text-pink-800">{lista.length} cliente{lista.length > 1 ? 's' : ''} com aniversário este mês!</p>
-            <p className="text-xs text-pink-600">Mande um parabéns pelo WhatsApp ou gere os vouchers de aniversário.</p>
+            <p className="text-xs text-pink-600">Mande um parabéns pelo WhatsApp{podeVoucher ? ' ou gere os vouchers de aniversário' : ''}.</p>
           </div>
-          <button
-            onClick={() => setShowBirthday(true)}
-            className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-pink-500 hover:bg-pink-600 text-white cursor-pointer"
-          >
-            Gerar vouchers
-          </button>
+          {podeVoucher && (
+            <button
+              onClick={() => setShowBirthday(true)}
+              className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-pink-500 hover:bg-pink-600 text-white cursor-pointer"
+            >
+              Gerar vouchers
+            </button>
+          )}
         </div>
       )}
 
@@ -615,10 +603,10 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
                   <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
                     <button onClick={() => setSort('gasto')} className="inline-flex items-center gap-1 hover:text-zinc-700 cursor-pointer uppercase">Total gasto <SortArrow field="gasto" /></button>
                   </th>
-                  <th className="text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+                  <th className="hidden 2xl:table-cell text-right px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
                     <button onClick={() => setSort('ticket')} className="inline-flex items-center gap-1 hover:text-zinc-700 cursor-pointer uppercase">Ticket <SortArrow field="ticket" /></button>
                   </th>
-                  <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+                  <th className="hidden xl:table-cell text-center px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
                     <button onClick={() => setSort('aniversario')} className="inline-flex items-center gap-1 hover:text-zinc-700 cursor-pointer uppercase">Aniv. <SortArrow field="aniversario" /></button>
                   </th>
                   <th className="text-right px-5 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
@@ -678,8 +666,13 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
                               🎂 hoje!
                             </span>
                           )}
+                          {cliente.optOut && (
+                            <span title={AVISO_OPT_OUT} className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500 border border-zinc-200">
+                              <i className="ri-chat-off-line" /> sem msg
+                            </span>
+                          )}
                           {cliente.notes && (
-                            <i className="ri-sticky-note-line text-zinc-400 text-xs" title={cliente.notes} />
+                            <i className="ri-sticky-note-line text-amber-500 text-xs" title={cliente.notes} />
                           )}
                         </div>
                       </td>
@@ -689,10 +682,10 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
                       <td className="px-4 py-3 text-right">
                         <span className="text-sm font-bold text-zinc-800">{fmtMoeda(cliente.valorTotal)}</span>
                       </td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="hidden 2xl:table-cell px-4 py-3 text-right">
                         <span className="text-sm text-zinc-600">{fmtMoeda(cliente.ticketMedio)}</span>
                       </td>
-                      <td className="px-4 py-3 text-center">
+                      <td className="hidden xl:table-cell px-4 py-3 text-center">
                         {cliente.dataNascimento ? (
                           <span className={`inline-flex items-center gap-1 text-xs font-medium ${isAniversario ? 'text-pink-600 font-bold' : 'text-zinc-600'}`}>
                             {fmtAniversario(cliente.dataNascimento)}
@@ -708,7 +701,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
                           <>
                             <p className="text-sm text-zinc-600">{fmtData(cliente.ultimaVisita)}</p>
                             <p className={`text-[11px] ${dias > 30 ? 'text-red-500' : dias > 14 ? 'text-amber-500' : 'text-green-600'}`}>
-                              {dias === 0 ? 'hoje' : `há ${dias} dias`}
+                              {haDias(dias)}
                             </p>
                           </>
                         )}
@@ -722,18 +715,20 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
                           >
                             <i className="ri-pencil-line text-base" />
                           </button>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); onEnviarVoucher(cliente); }}
-                            title="Enviar voucher / gift card"
-                            className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-amber-600 hover:bg-amber-50 cursor-pointer transition-colors"
-                          >
-                            <i className="ri-gift-line text-base" />
-                          </button>
+                          {podeVoucher && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onEnviarVoucher(cliente); }}
+                              title="Enviar voucher / gift card"
+                              className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-amber-600 hover:bg-amber-50 cursor-pointer transition-colors"
+                            >
+                              <i className="ri-gift-line text-base" />
+                            </button>
+                          )}
                           <button
                             onClick={(e) => { e.stopPropagation(); abrirWhatsApp(cliente); registrarContato([cliente.id]); }}
-                            disabled={!cliente.celular}
-                            title={cliente.celular ? 'Enviar mensagem no WhatsApp' : 'Cliente sem telefone'}
-                            className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-green-600 hover:bg-green-50 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer transition-colors"
+                            disabled={!podeMensagem(cliente)}
+                            title={cliente.optOut ? AVISO_OPT_OUT : cliente.celular ? 'Enviar mensagem no WhatsApp' : 'Cliente sem telefone'}
+                            className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-green-600 hover:bg-green-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed cursor-pointer transition-colors"
                           >
                             <i className="ri-whatsapp-line text-base" />
                           </button>
@@ -745,7 +740,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
                 {lista.length === 0 && (
                   <tr>
                     <td colSpan={8} className="px-5 py-12 text-center text-zinc-400 text-sm">
-                      {clientes.length === 0 ? 'Nenhum cliente cadastrado ainda' : 'Nenhum cliente encontrado para os filtros selecionados'}
+                      {error ? 'Lista não carregada.' : clientes.length === 0 ? <SemClientes /> : 'Nenhum cliente encontrado para os filtros selecionados'}
                     </td>
                   </tr>
                 )}
@@ -781,11 +776,17 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
                         {cliente.tags.slice(0, 2).map((tag) => (
                           <span key={tag} className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full capitalize ${TAG_STYLE[tag] ?? ''}`}>{tag}</span>
                         ))}
+                        {cliente.manualTags.slice(0, 2).map((tag) => (
+                          <span key={`m-${tag}`} className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">{tag}</span>
+                        ))}
                       </div>
                       <p className="text-xs text-zinc-400 truncate">
                         {cliente.celular || '—'} · {cliente.totalVisitas} compra{cliente.totalVisitas === 1 ? '' : 's'}
                         {cliente.dataNascimento && <> · 🎂 {fmtAniversario(cliente.dataNascimento)}</>}
                       </p>
+                      {cliente.notes && (
+                        <p className="text-[11px] text-amber-700 truncate"><i className="ri-sticky-note-line" /> {cliente.notes}</p>
+                      )}
                     </div>
                     <div className="text-right flex-shrink-0">
                       <p className="text-sm font-bold text-zinc-800">{fmtMoeda(cliente.valorTotal)}</p>
@@ -793,7 +794,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
                         <p className="text-[10px] text-zinc-400 italic">Sem compras</p>
                       ) : (
                         <p className={`text-[10px] ${dias > 30 ? 'text-red-500' : dias > 14 ? 'text-amber-500' : 'text-green-600'}`}>
-                          {dias === 0 ? 'hoje' : `há ${dias}d`}
+                          {haDias(dias)}
                         </p>
                       )}
                     </div>
@@ -801,17 +802,20 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
                   <div className="flex items-center gap-1.5 mt-2 pl-[52px]">
                     <button
                       onClick={(e) => { e.stopPropagation(); abrirWhatsApp(cliente); registrarContato([cliente.id]); }}
-                      disabled={!cliente.celular}
+                      disabled={!podeMensagem(cliente)}
+                      title={cliente.optOut ? AVISO_OPT_OUT : undefined}
                       className="flex items-center gap-1 h-8 px-2.5 rounded-lg text-xs font-semibold border border-green-200 bg-green-50 text-green-700 disabled:opacity-30 cursor-pointer"
                     >
-                      <i className="ri-whatsapp-line" /> WhatsApp
+                      <i className={cliente.optOut ? 'ri-chat-off-line' : 'ri-whatsapp-line'} /> {cliente.optOut ? 'Sem msg' : 'WhatsApp'}
                     </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onEnviarVoucher(cliente); }}
-                      className="flex items-center gap-1 h-8 px-2.5 rounded-lg text-xs font-semibold border border-amber-200 bg-amber-50 text-amber-700 cursor-pointer"
-                    >
-                      <i className="ri-gift-line" /> Voucher
-                    </button>
+                    {podeVoucher && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onEnviarVoucher(cliente); }}
+                        className="flex items-center gap-1 h-8 px-2.5 rounded-lg text-xs font-semibold border border-amber-200 bg-amber-50 text-amber-700 cursor-pointer"
+                      >
+                        <i className="ri-gift-line" /> Voucher
+                      </button>
+                    )}
                     <button
                       onClick={(e) => { e.stopPropagation(); setEditarCliente(cliente); }}
                       title="Editar cadastro"
@@ -825,7 +829,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
             })}
             {lista.length === 0 && (
               <div className="px-5 py-12 text-center text-zinc-400 text-sm">
-                {clientes.length === 0 ? 'Nenhum cliente cadastrado ainda' : 'Nenhum cliente encontrado'}
+                {error ? 'Lista não carregada.' : clientes.length === 0 ? <SemClientes /> : 'Nenhum cliente encontrado'}
               </div>
             )}
           </div>
@@ -835,7 +839,13 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
       {selecionado && (
         <>
           <div className="fixed inset-0 bg-black/30 z-40" onClick={() => setSelecionado(null)} />
-          <ClientePerfil cliente={selecionado} onClose={() => setSelecionado(null)} />
+          <ClientePerfil
+            cliente={clientes.find((c) => c.id === selecionado.id) ?? selecionado}
+            onClose={() => setSelecionado(null)}
+            onEditar={() => setEditarCliente(clientes.find((c) => c.id === selecionado.id) ?? selecionado)}
+            onContato={() => registrarContato([selecionado.id])}
+            podeVoucher={podeVoucher}
+          />
         </>
       )}
 
@@ -852,6 +862,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
           cliente={editarCliente}
           onClose={() => setEditarCliente(null)}
           onSave={(patch) => atualizarCliente(editarCliente.id, patch)}
+          onOptOutDesfeito={() => recarregar(true)}
         />
       )}
 

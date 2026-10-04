@@ -1,4 +1,22 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
+import { temPermissao } from '../_shared/permissao-servidor.ts';
+
+// Quem pode o quê (2026-10-04, revisão de Clientes & Marketing). Antes a Edge só conferia
+// "é da loja": um garçom ou o tablet emitia gift card chamando a função direto.
+// - Gestão (tela Vouchers & Gift Cards, aniversário, assistente do dono): chave gestao_vouchers.
+// - Leitura no perfil do cliente / config de aniversário: clientes_ver OU gestao_vouchers.
+// - Usar no caixa (validar/baixar): qualquer papel que opere PDV/garçom — fora os abaixo.
+const ACOES_GESTAO = new Set([
+  'issue_voucher', 'cancel_voucher', 'refund_voucher_redemption', 'list_vouchers',
+  'get_voucher_transactions', 'set_birthday_config', 'generate_birthday_vouchers',
+]);
+const ACOES_LEITURA_CLIENTE = new Set(['list_customer_vouchers', 'get_birthday_config']);
+const ACOES_PDV = new Set(['validate_voucher', 'redeem_voucher']);
+// Papéis que não operam caixa (tablet/totem não usa voucher-write; os outros são presos a módulo).
+const PAPEIS_SEM_PDV = new Set(['tablet', 'customer', 'tasks_only', 'accountant', 'financeiro']);
+const TIPOS_VOUCHER = new Set(['gift_card', 'discount', 'cashback', 'free_item']);
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -12,11 +30,15 @@ function json(data: unknown, status = 200) {
   });
 }
 
-/** Gera um código alfanumérico legível (ex: GC-A3F9-X2K1) */
+/** Gera um código alfanumérico legível (ex: GC-A3F9-X2K1). Aleatório de verdade
+ *  (crypto): Math.random é previsível e o código vale dinheiro. 32 símbolos → byte % 32 é uniforme. */
 function generateVoucherCode(prefix = 'GC'): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const seg = (n: number) =>
-    Array.from({ length: n }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
+  const seg = (n: number) => {
+    const bytes = new Uint8Array(n);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => chars[b % chars.length]).join('');
+  };
   return `${prefix}-${seg(4)}-${seg(4)}`;
 }
 
@@ -65,14 +87,32 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     if (!tenantRows || tenantRows.length === 0) return json({ error: 'User does not belong to any tenant' }, 403);
 
     let tenantId: string;
+    let callerRole: string | null;
     if (requestedTenantId) {
       const match = tenantRows.find((r: { tenant_id: string }) => r.tenant_id === requestedTenantId);
       if (!match) return json({ error: 'User does not belong to the requested tenant' }, 403);
       tenantId = match.tenant_id;
+      callerRole = (match as { role?: string | null }).role ?? null;
     } else if (tenantRows.length === 1) {
       tenantId = tenantRows[0].tenant_id;
+      callerRole = (tenantRows[0] as { role?: string | null }).role ?? null;
     } else {
       return json({ error: 'Multiple tenants found — active_tenant_id required' }, 403);
+    }
+
+    // ── Permissão por ação (a tela esconde; quem decide é aqui) ──────────────
+    if (ACOES_GESTAO.has(action)) {
+      if (!(await temPermissao(admin, tenantId, user.id, callerRole, 'gestao_vouchers'))) {
+        return json({ error: 'Sem permissão: emitir, cancelar, estornar e listar vouchers é de quem tem acesso a "Vouchers & Gift Cards" (Clientes & Marketing).', code: 'forbidden' }, 403);
+      }
+    } else if (ACOES_LEITURA_CLIENTE.has(action)) {
+      const pode = (await temPermissao(admin, tenantId, user.id, callerRole, 'clientes_ver'))
+        || (await temPermissao(admin, tenantId, user.id, callerRole, 'gestao_vouchers'));
+      if (!pode) return json({ error: 'Sem permissão para ver os vouchers dos clientes desta loja.', code: 'forbidden' }, 403);
+    } else if (ACOES_PDV.has(action)) {
+      if (!callerRole || PAPEIS_SEM_PDV.has(callerRole)) {
+        return json({ error: 'Este acesso não pode usar voucher no caixa.', code: 'forbidden' }, 403);
+      }
     }
 
     // O auth.uid do usuário logado nem sempre corresponde a uma linha em public.users
@@ -104,15 +144,32 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       if (!voucher_type || original_amount == null) {
         return json({ error: 'voucher_type and original_amount are required' }, 400);
       }
+      if (!TIPOS_VOUCHER.has(String(voucher_type))) {
+        return json({ error: 'Tipo de voucher inválido.' }, 400);
+      }
+      // Valor do voucher sempre positivo (gift card de R$ 0 ou negativo não existe).
+      const valorOriginal = Number(original_amount);
+      if (!Number.isFinite(valorOriginal) || valorOriginal <= 0) {
+        return json({ error: 'O valor do voucher precisa ser maior que zero.' }, 400);
+      }
 
       // Validações por tipo
       if (voucher_type === 'discount') {
         if (!discount_type || discount_value == null) {
           return json({ error: 'discount_type and discount_value are required for discount vouchers' }, 400);
         }
-        if (discount_type === 'percent' && (discount_value <= 0 || discount_value > 100)) {
-          return json({ error: 'discount_value must be between 1 and 100 for percent discounts' }, 400);
+        if (!['percent', 'fixed'].includes(String(discount_type))) {
+          return json({ error: 'Tipo de desconto inválido (percentual ou fixo).' }, 400);
         }
+        const valorDesconto = Number(discount_value);
+        if (!Number.isFinite(valorDesconto) || valorDesconto <= 0) {
+          return json({ error: 'O desconto precisa ser maior que zero.' }, 400);
+        }
+        if (discount_type === 'percent' && valorDesconto > 100) {
+          return json({ error: 'Desconto percentual não pode passar de 100%.' }, 400);
+        }
+      } else if (discount_value != null && Number(discount_value) < 0) {
+        return json({ error: 'O desconto não pode ser negativo.' }, 400);
       }
 
       if (voucher_type === 'free_item' && !free_item_id) {
@@ -223,7 +280,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       if (voucher.expires_at && new Date(voucher.expires_at) < new Date()) {
         // Marca como expirado se ainda não estava
         if (voucher.status === 'active') {
-          await admin.from('vouchers').update({ status: 'expired' }).eq('id', voucher.id);
+          await admin.from('vouchers').update({ status: 'expired' }).eq('id', voucher.id).eq('tenant_id', tenantId);
           await admin.from('voucher_transactions').insert({
             tenant_id: tenantId,
             voucher_id: voucher.id,
@@ -296,83 +353,128 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     // Usa o voucher em um pagamento — desconta saldo e registra transação
     // ════════════════════════════════════════════════════════════════════════
     if (action === 'redeem_voucher') {
-      const { code, amount, order_id, order_amount } = body;
+      const { code, order_id, order_amount } = body;
+      const amount = Number(body.amount);
 
-      if (!code || amount == null) {
+      if (!code || body.amount == null) {
         return json({ error: 'code and amount are required' }, 400);
       }
-      if (amount <= 0) {
-        return json({ error: 'amount must be greater than 0' }, 400);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return json({ error: 'O valor a baixar do voucher precisa ser maior que zero.' }, 400);
       }
 
       const { data: voucher, error: fetchErr } = await admin
         .from('vouchers')
         .select('*')
         .eq('tenant_id', tenantId)
-        .eq('code', code.trim().toUpperCase())
+        .eq('code', String(code).trim().toUpperCase())
         .maybeSingle();
 
       if (fetchErr) throw fetchErr;
-      if (!voucher) return json({ error: 'Voucher not found' }, 404);
+      if (!voucher) return json({ error: 'Voucher não encontrado nesta loja.' }, 404);
+
+      // Mesmo pedido já baixou este voucher (reenvio depois de falha parcial no caixa):
+      // devolve a baixa que já existe em vez de debitar de novo.
+      if (order_id) {
+        const { data: jaFeitas, error: jaErr } = await admin
+          .from('voucher_transactions')
+          .select('id, transaction_type, amount, balance_after')
+          .eq('tenant_id', tenantId)
+          .eq('voucher_id', voucher.id)
+          .eq('order_id', order_id)
+          .in('transaction_type', ['redeemed', 'refunded']);
+        if (jaErr) throw jaErr;
+        const linhas = (jaFeitas ?? []) as { id: string; transaction_type: string; amount: number; balance_after: number }[];
+        const usado = linhas.filter((t) => t.transaction_type === 'redeemed').reduce((s, t) => s + Number(t.amount), 0);
+        const estornado = linhas.filter((t) => t.transaction_type === 'refunded').reduce((s, t) => s + Number(t.amount), 0);
+        if (usado - estornado > 0.004) {
+          const ultima = linhas.find((t) => t.transaction_type === 'redeemed');
+          return json({
+            ok: true,
+            already_redeemed: true,
+            voucher_id: voucher.id,
+            amount_redeemed: round2(usado - estornado),
+            balance_after: Number(voucher.current_balance),
+            transaction_id: ultima?.id ?? null,
+          });
+        }
+      }
 
       // Verifica expiração
-      if (voucher.expires_at && new Date(voucher.expires_at) < new Date()) {
+      const agora = new Date();
+      if (voucher.expires_at && new Date(voucher.expires_at) < agora) {
         if (voucher.status === 'active') {
-          await admin.from('vouchers').update({ status: 'expired' }).eq('id', voucher.id);
+          await admin.from('vouchers').update({ status: 'expired' }).eq('id', voucher.id).eq('tenant_id', tenantId).eq('status', 'active');
         }
-        return json({ error: 'Voucher has expired' }, 422);
+        return json({ error: 'Voucher expirado.' }, 422);
       }
 
       // Verifica início de validade
-      if (voucher.valid_from && new Date(voucher.valid_from) > new Date()) {
-        return json({ error: 'Voucher is not yet valid' }, 422);
+      if (voucher.valid_from && new Date(voucher.valid_from) > agora) {
+        return json({ error: 'Voucher ainda não está valendo.' }, 422);
       }
 
       if (voucher.status !== 'active') {
-        return json({ error: `Voucher is ${voucher.status}` }, 422);
+        const motivo: Record<string, string> = { depleted: 'já foi usado', cancelled: 'foi cancelado', expired: 'expirou' };
+        return json({ error: `Este voucher ${motivo[voucher.status] ?? `está ${voucher.status}`}.` }, 422);
       }
 
       // Pedido mínimo do voucher (safety-net; a validação principal é no validate)
       const redeemMinOrder = Number(voucher.min_order_amount ?? 0);
       if (redeemMinOrder > 0 && order_amount != null && Number(order_amount) < redeemMinOrder) {
-        return json({ error: 'Order amount below voucher minimum', min_order_amount: redeemMinOrder }, 422);
+        return json({ error: 'Pedido abaixo do mínimo deste voucher.', min_order_amount: redeemMinOrder }, 422);
       }
 
+      const isSaldo = ['gift_card', 'cashback'].includes(voucher.voucher_type);
+      const saldoLido = Number(voucher.current_balance ?? 0);
+
       // Para gift_card e cashback: verifica saldo suficiente
-      if (['gift_card', 'cashback'].includes(voucher.voucher_type)) {
-        if (voucher.current_balance < amount) {
-          return json({
-            error: 'Insufficient voucher balance',
-            current_balance: voucher.current_balance,
-            requested: amount,
-          }, 422);
-        }
+      if (isSaldo && saldoLido + 0.004 < amount) {
+        return json({
+          error: 'Saldo do voucher insuficiente.',
+          current_balance: saldoLido,
+          requested: amount,
+        }, 422);
       }
 
       // Para discount: o amount é o desconto calculado (não desconta do saldo de forma recorrente)
-      // Para free_item: amount = 0, apenas registra o uso
 
       const maxUses = Math.max(1, Number(voucher.max_uses ?? 1));
       const newUseCount = Number(voucher.use_count ?? 0) + 1;
 
       let newBalance: number;
       let newStatus: string;
-      if (['gift_card', 'cashback'].includes(voucher.voucher_type)) {
-        newBalance = voucher.current_balance - amount;
+      if (isSaldo) {
+        newBalance = Math.max(0, round2(saldoLido - amount)); // nunca negativo
         newStatus = newBalance <= 0 ? 'depleted' : 'active';
       } else {
         // discount e free_item: consumo por número de usos (max_uses)
         newStatus = newUseCount >= maxUses ? 'depleted' : 'active';
-        newBalance = newStatus === 'depleted' ? 0 : voucher.current_balance;
+        newBalance = newStatus === 'depleted' ? 0 : saldoLido;
       }
 
-      // Atualiza saldo, status e contagem de usos
-      const { error: updateErr } = await admin
+      // Baixa CONDICIONAL (compare-and-swap): só grava se o voucher ainda está exatamente como
+      // foi lido (ativo, mesmo saldo, mesmo nº de usos) e dentro da validade. Dois caixas usando
+      // o mesmo voucher ao mesmo tempo: o segundo pega 0 linhas e recebe erro (mesma trava do
+      // delivery-write). Antes: os dois liam o mesmo saldo e os dois gravavam (uso duplo).
+      const { data: baixados, error: updateErr } = await admin
         .from('vouchers')
         .update({ current_balance: newBalance, status: newStatus, use_count: newUseCount })
-        .eq('id', voucher.id);
+        .eq('id', voucher.id)
+        .eq('tenant_id', tenantId)
+        .eq('status', 'active')
+        .eq('use_count', voucher.use_count)
+        .eq('current_balance', voucher.current_balance)
+        .or(`expires_at.is.null,expires_at.gt."${agora.toISOString()}"`)
+        .select('id');
 
       if (updateErr) throw updateErr;
+      if (!baixados || baixados.length === 0) {
+        return json({
+          error: 'Este voucher acabou de ser usado em outro pedido. Confira o saldo e tente de novo.',
+          code: 'voucher_concurrent',
+        }, 409);
+      }
 
       // Registra transação
       const { data: txn, error: txnErr } = await admin
@@ -389,7 +491,18 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         .select('id')
         .maybeSingle();
 
-      if (txnErr) throw txnErr;
+      if (txnErr) {
+        // Sem o registro da baixa o saldo some sem rastro: devolve o voucher como estava
+        // (condicional: só se ninguém mexeu nele depois desta baixa).
+        await admin
+          .from('vouchers')
+          .update({ current_balance: voucher.current_balance, status: voucher.status, use_count: voucher.use_count })
+          .eq('id', voucher.id)
+          .eq('tenant_id', tenantId)
+          .eq('use_count', newUseCount)
+          .eq('current_balance', newBalance);
+        throw txnErr;
+      }
 
       return json({
         ok: true,
@@ -419,15 +532,25 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       if (!voucher) return json({ error: 'Voucher not found' }, 404);
 
       if (['cancelled', 'expired'].includes(voucher.status)) {
-        return json({ error: `Voucher is already ${voucher.status}` }, 422);
+        return json({ error: voucher.status === 'cancelled' ? 'Este voucher já está cancelado.' : 'Este voucher já expirou.' }, 422);
       }
 
-      const { error: updateErr } = await admin
+      // NÃO mexe em `notes`: é o texto que o cliente vê no link (/voucher) e a chave do
+      // "não duplicar" do aniversário (fn_generate_birthday_vouchers). Antes o cancelamento
+      // gravava o motivo (ou null) por cima. Condicional: se o voucher foi usado no meio, 409.
+      const { data: cancelados, error: updateErr } = await admin
         .from('vouchers')
-        .update({ status: 'cancelled', notes: reason ?? null })
-        .eq('id', voucher_id);
+        .update({ status: 'cancelled' })
+        .eq('id', voucher_id)
+        .eq('tenant_id', tenantId)
+        .eq('status', voucher.status)
+        .eq('current_balance', voucher.current_balance)
+        .select('id');
 
       if (updateErr) throw updateErr;
+      if (!cancelados || cancelados.length === 0) {
+        return json({ error: 'O voucher mudou agora há pouco (foi usado?). Abra de novo e confira.', code: 'voucher_concurrent' }, 409);
+      }
 
       // Registra transação de cancelamento
       await admin.from('voucher_transactions').insert({
@@ -439,6 +562,21 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         processed_by: issuerId,
       });
 
+      // Motivo (vem do assistente): voucher_transactions não tem campo de texto, então fica
+      // na Auditoria (audit_log.details). user_id é NOT NULL com FK em users → só com issuerId.
+      const motivo = typeof reason === 'string' ? reason.trim().slice(0, 500) : '';
+      if (motivo && issuerId) {
+        const { error: audErr } = await admin.from('audit_log').insert({
+          tenant_id: tenantId,
+          user_id: issuerId,
+          action_type: 'voucher_cancelado',
+          entity_type: 'Voucher',
+          entity_id: voucher_id,
+          details: { severity: 'aviso', description: `Voucher cancelado — motivo: ${motivo}`, notes: motivo },
+        });
+        if (audErr) console.warn('[voucher-write] motivo do cancelamento não foi para a auditoria:', audErr.message);
+      }
+
       return json({ ok: true });
     }
 
@@ -449,19 +587,28 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     if (action === 'list_vouchers') {
       const { status: filterStatus, customer_id, voucher_type } = body;
 
-      let query = admin
-        .from('vouchers')
-        .select('*')
-        .eq('tenant_id', tenantId)
-        .order('created_at', { ascending: false });
+      // Em blocos de 1000 (limite do PostgREST) até acabar: com uma consulta só, a loja com
+      // mais de 1000 vouchers via o saldo em gift cards e os contadores do topo errados.
+      const PAGINA = 1000;
+      const todos: unknown[] = [];
+      for (let pagina = 0; pagina < 200; pagina++) {
+        let query = admin
+          .from('vouchers')
+          .select('*')
+          .eq('tenant_id', tenantId)
+          .order('created_at', { ascending: false })
+          .order('id', { ascending: true });
 
-      if (filterStatus) query = query.eq('status', filterStatus);
-      if (customer_id) query = query.eq('customer_id', customer_id);
-      if (voucher_type) query = query.eq('voucher_type', voucher_type);
+        if (filterStatus) query = query.eq('status', filterStatus);
+        if (customer_id) query = query.eq('customer_id', customer_id);
+        if (voucher_type) query = query.eq('voucher_type', voucher_type);
 
-      const { data, error } = await query;
-      if (error) throw error;
-      return json({ data });
+        const { data, error } = await query.range(pagina * PAGINA, pagina * PAGINA + PAGINA - 1);
+        if (error) throw error;
+        todos.push(...(data ?? []));
+        if (!data || data.length < PAGINA) break;
+      }
+      return json({ data: todos });
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -501,6 +648,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       const { data: txns, error } = await admin
         .from('voucher_transactions')
         .select('*')
+        .eq('tenant_id', tenantId)
         .eq('voucher_id', voucher_id)
         .order('created_at', { ascending: false });
 
@@ -510,11 +658,11 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       const orderIds = [...new Set((txns ?? []).map((t: { order_id: string | null }) => t.order_id).filter(Boolean))] as string[];
       const nameByOrder: Record<string, string | null> = {};
       if (orderIds.length > 0) {
-        const { data: orders } = await admin.from('orders').select('id, customer_id').in('id', orderIds);
+        const { data: orders } = await admin.from('orders').select('id, customer_id').eq('tenant_id', tenantId).in('id', orderIds);
         const custIds = [...new Set((orders ?? []).map((o: { customer_id: string | null }) => o.customer_id).filter(Boolean))] as string[];
         const nameById: Record<string, string> = {};
         if (custIds.length > 0) {
-          const { data: custs } = await admin.from('customers').select('id, name').in('id', custIds);
+          const { data: custs } = await admin.from('customers').select('id, name').eq('tenant_id', tenantId).in('id', custIds);
           for (const c of custs ?? []) nameById[(c as { id: string }).id] = (c as { name: string }).name;
         }
         for (const o of orders ?? []) {
@@ -536,50 +684,117 @@ Deno.serve({ verify_jwt: false }, async (req) => {
     // Estorna um uso de voucher (ex: pedido cancelado)
     // ════════════════════════════════════════════════════════════════════════
     if (action === 'refund_voucher_redemption') {
-      const { voucher_id, amount, order_id } = body;
-      if (!voucher_id || amount == null) {
+      // Estorno de UM uso: exige o uso (transaction_id da baixa) ou o pedido (order_id), e só
+      // devolve até (usado − já estornado) daquele uso. Antes aceitava qualquer valor (inclusive
+      // negativo) sem olhar o uso, e reativava voucher cancelado/expirado.
+      // Nenhuma tela chama esta ação hoje (2026-10-04); só o assistente, pelo JWT do dono.
+      const { voucher_id, transaction_id } = body;
+      const amount = Number(body.amount);
+      if (!voucher_id || body.amount == null) {
         return json({ error: 'voucher_id and amount are required' }, 400);
+      }
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return json({ error: 'O valor do estorno precisa ser maior que zero.' }, 400);
+      }
+      if (!transaction_id && !body.order_id) {
+        return json({ error: 'Informe qual uso estornar: transaction_id (a baixa) ou order_id (o pedido).' }, 400);
       }
 
       const { data: voucher, error: fetchErr } = await admin
         .from('vouchers')
-        .select('id, current_balance, original_amount, status, voucher_type, tenant_id')
+        .select('id, current_balance, original_amount, status, voucher_type, tenant_id, expires_at')
         .eq('id', voucher_id)
         .eq('tenant_id', tenantId)
         .maybeSingle();
 
       if (fetchErr) throw fetchErr;
-      if (!voucher) return json({ error: 'Voucher not found' }, 404);
+      if (!voucher) return json({ error: 'Voucher não encontrado nesta loja.' }, 404);
 
       // Só faz sentido estornar gift_card e cashback
       if (!['gift_card', 'cashback'].includes(voucher.voucher_type)) {
-        return json({ error: 'Only gift_card and cashback vouchers support refunds' }, 422);
+        return json({ error: 'Só gift card e cashback aceitam estorno.' }, 422);
+      }
+      // Estorno não ressuscita voucher cancelado ou vencido.
+      if (voucher.status === 'cancelled' || voucher.status === 'expired'
+        || (voucher.expires_at && new Date(voucher.expires_at) < new Date())) {
+        return json({ error: 'Voucher cancelado ou expirado não recebe estorno.' }, 422);
       }
 
-      const newBalance = Math.min(
-        voucher.current_balance + amount,
-        voucher.original_amount,
-      );
+      // Qual uso: pela baixa (transaction_id) ou pelo pedido. O "escopo" do uso é o pedido da baixa.
+      let orderDoUso: string | null = body.order_id ? String(body.order_id) : null;
+      if (transaction_id) {
+        const { data: uso, error: usoErr } = await admin
+          .from('voucher_transactions')
+          .select('id, order_id, transaction_type')
+          .eq('id', transaction_id)
+          .eq('tenant_id', tenantId)
+          .eq('voucher_id', voucher_id)
+          .maybeSingle();
+        if (usoErr) throw usoErr;
+        if (!uso || uso.transaction_type !== 'redeemed') {
+          return json({ error: 'Uso do voucher não encontrado (transaction_id não é uma baixa deste voucher).' }, 404);
+        }
+        orderDoUso = uso.order_id ?? null;
+      }
+
+      let movQuery = admin
+        .from('voucher_transactions')
+        .select('transaction_type, amount')
+        .eq('tenant_id', tenantId)
+        .eq('voucher_id', voucher_id)
+        .in('transaction_type', ['redeemed', 'refunded']);
+      movQuery = orderDoUso ? movQuery.eq('order_id', orderDoUso) : movQuery.is('order_id', null);
+      const { data: movs, error: movErr } = await movQuery;
+      if (movErr) throw movErr;
+      const usado = (movs ?? []).filter((m: { transaction_type: string }) => m.transaction_type === 'redeemed')
+        .reduce((s: number, m: { amount: number }) => s + Number(m.amount), 0);
+      const jaEstornado = (movs ?? []).filter((m: { transaction_type: string }) => m.transaction_type === 'refunded')
+        .reduce((s: number, m: { amount: number }) => s + Number(m.amount), 0);
+      const podeEstornar = round2(usado - jaEstornado);
+      if (usado <= 0) {
+        return json({ error: 'Não há uso deste voucher nesse pedido para estornar.' }, 422);
+      }
+      if (amount > podeEstornar + 0.004) {
+        return json({
+          error: `Estorno maior que o usado: dá para devolver no máximo ${podeEstornar.toFixed(2).replace('.', ',')} deste uso.`,
+          max_refundable: Math.max(0, podeEstornar),
+        }, 422);
+      }
+
+      const saldoLido = Number(voucher.current_balance ?? 0);
+      const newBalance = round2(Math.min(saldoLido + amount, Number(voucher.original_amount)));
+      const creditado = round2(newBalance - saldoLido);
+      if (creditado <= 0) {
+        return json({ error: 'O voucher já está com o saldo cheio; nada a estornar.' }, 422);
+      }
       const newStatus = newBalance > 0 ? 'active' : voucher.status;
 
-      const { error: updateErr } = await admin
+      // Condicional: se o saldo mudou entre a leitura e aqui (outro uso/estorno), 409.
+      const { data: estornados, error: updateErr } = await admin
         .from('vouchers')
         .update({ current_balance: newBalance, status: newStatus })
-        .eq('id', voucher_id);
+        .eq('id', voucher_id)
+        .eq('tenant_id', tenantId)
+        .eq('status', voucher.status)
+        .eq('current_balance', voucher.current_balance)
+        .select('id');
 
       if (updateErr) throw updateErr;
+      if (!estornados || estornados.length === 0) {
+        return json({ error: 'O voucher mudou agora há pouco. Abra de novo e confira antes de estornar.', code: 'voucher_concurrent' }, 409);
+      }
 
       await admin.from('voucher_transactions').insert({
         tenant_id: tenantId,
         voucher_id,
-        order_id: order_id ?? null,
+        order_id: orderDoUso,
         transaction_type: 'refunded',
-        amount,
+        amount: creditado,
         balance_after: newBalance,
         processed_by: issuerId,
       });
 
-      return json({ ok: true, balance_after: newBalance });
+      return json({ ok: true, amount_refunded: creditado, balance_after: newBalance });
     }
 
     // ════════════════════════════════════════════════════════════════════════

@@ -8,7 +8,7 @@
 //
 // Sub-abas: Funil (quem está onde) · Ofertas (o que sugerir em cada estágio) ·
 // Critérios (quem entra em cada estágio + travas). Nada dispara sozinho.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { ClienteCRM } from '@/hooks/useClientes';
@@ -16,6 +16,8 @@ import type { Voucher } from '@/types/vouchers';
 import NaoPediramPanel from '../components/NaoPediramPanel';
 import PainelEnvioAutomatico, { MODELO_COM_CUPOM, MODELO_SEM_CUPOM } from '../components/EnvioAutomatico';
 import { confirmar } from '@/components/base/Dialogos';
+import { AVISO_OPT_OUT, abrirWhatsApp, baixarCsv, celularComDDI, montarCsv } from '../clienteUtils';
+import { MODELO_PADRAO_MENSAGEM, montarMensagem } from '../funilMensagem';
 
 export type CrmStage =
   | 'carrinho_abandonado' | 'nunca_comprou' | 'primeira_compra' | 'recorrente'
@@ -81,6 +83,15 @@ interface ClienteFunil {
   ultimo_contato: string | null;
   pode_abordar: boolean;
   bloqueio: string | null;
+  /** Pediu para não receber mensagens (crm_opt_out_at). O servidor novo manda o campo; o antigo só o texto do bloqueio. */
+  opt_out?: boolean;
+  /** Quando pediu para não receber (customers.crm_opt_out_at). */
+  opt_out_at?: string | null;
+}
+
+const BLOQUEIO_OPT_OUT = 'pediu para não receber';
+function emOptOut(c: ClienteFunil): boolean {
+  return c.opt_out === true || c.bloqueio === BLOQUEIO_OPT_OUT;
 }
 
 export type OfertaVoucher = { tipo: 'discount_percent' | 'discount_fixed' | 'gift_card'; valor: number; validadeDias: number };
@@ -92,6 +103,8 @@ interface Props {
     oferta: OfertaVoucher | undefined,
     aoEnviar?: (voucher?: Voucher, mensagem?: string) => void,
   ) => void;
+  /** Quem só tem clientes_ver (ex.: Líder) não emite voucher: esconde o botão "Voucher". Padrão: true. */
+  podeVoucher?: boolean;
 }
 
 // Jornada normal do cliente, na ordem em que ele avança.
@@ -116,33 +129,6 @@ function fmtMoeda(v: number) {
 
 function pct(parte: number, total: number): string {
   return total > 0 ? Math.round((parte / total) * 100) + '%' : '—';
-}
-
-/** Troca os marcadores da mensagem da regra pelos dados reais. */
-function montarMensagem(modelo: string, dados: { nome: string; loja: string; cupom?: string; link?: string }): string {
-  const primeiroNome = dados.nome.split(' ')[0];
-  // Sem cupom/link (ex.: "Chamar" sem voucher), a frase que os cita sai inteira —
-  // senão a mensagem termina em "Seu cupom:" vazio.
-  let texto = modelo;
-  if (!dados.cupom) texto = semFraseCom(texto, '{cupom}');
-  if (!dados.link) texto = semFraseCom(texto, '{link}');
-  return texto
-    .replace(/\{nome\}/g, primeiroNome)
-    .replace(/\{loja\}/g, dados.loja)
-    .replace(/\{cupom\}/g, dados.cupom ?? '')
-    .replace(/\{link\}/g, dados.link ?? '')
-    // Sem cupom os marcadores somem e podem deixar sobras de pontuação.
-    .replace(/\s*:\s*—\s*$/, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-}
-
-function semFraseCom(texto: string, marcador: string): string {
-  if (!texto.includes(marcador)) return texto;
-  const frases = texto.split(/(?<=[.!?])\s+/);
-  const restantes = frases.filter((f) => !f.includes(marcador));
-  // Se o marcador está na única frase, só tira o marcador.
-  return restantes.length > 0 ? restantes.join(' ') : texto.split(marcador).join('');
 }
 
 /** A descrição do servidor tem os cortes padrão fixos no texto ("90 dias", "6 ou
@@ -180,6 +166,7 @@ const INPUT = 'w-full px-2.5 py-1.5 text-sm border border-zinc-200 rounded-lg fo
 
 export default function FunilAba(props: Props) {
   const { user } = useAuth();
+  const podeVoucher = props.podeVoucher !== false;
   const [aba, setAba] = useState<'funil' | 'regras' | 'criterios'>('funil');
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState('');
@@ -194,6 +181,8 @@ export default function FunilAba(props: Props) {
 
   const [stageAberto, setStageAberto] = useState<CrmStage | null>(null);
   const [listaCarregando, setListaCarregando] = useState(false);
+  // Falha ao carregar a lista do estágio: NÃO pode parecer "ninguém para abordar".
+  const [erroLista, setErroLista] = useState('');
   const [clientes, setClientes] = useState<ClienteFunil[]>([]);
   const [soElegiveis, setSoElegiveis] = useState(true);
   const [busca, setBusca] = useState('');
@@ -207,22 +196,44 @@ export default function FunilAba(props: Props) {
 
   const tenantId = user?.tenantId;
 
+  // Seção da lista do estágio (rolagem no celular) e controle de resposta atrasada.
+  const listaRef = useRef<HTMLElement>(null);
+  const rolarAoAbrir = useRef(false);
+  const listaReq = useRef(0);
+
   const abrirStage = useCallback(function (stage: CrmStage) {
     if (!tenantId) return;
+    const req = ++listaReq.current;
     setStageAberto(stage);
     setListaCarregando(true);
+    setErroLista('');
     setClientes([]);
     setBusca('');
     invokeWithAuth<{ clientes?: ClienteFunil[]; error?: string; message?: string }>(
       'crm-funnel', { body: { action: 'list_stage', tenant_id: tenantId, stage } },
     ).then(function (res) {
+      if (req !== listaReq.current) return; // o dono já abriu outro estágio
       setListaCarregando(false);
-      if (res.error) { setErro(res.error.message); return; }
+      if (res.error) { setErroLista(res.error.message); return; }
       const d = res.data;
-      if (!d || d.error) { setErro(d?.message || d?.error || 'Não foi possível carregar a lista.'); return; }
+      if (!d || d.error) { setErroLista(d?.message || d?.error || 'Não foi possível carregar a lista.'); return; }
       setClientes(d.clientes ?? []);
     });
   }, [tenantId]);
+
+  // Toque num cartão de estágio no celular: leva a lista para a vista (no computador
+  // o cartão e a lista já aparecem juntos). Só quando o clique é do usuário.
+  useEffect(function () {
+    if (!rolarAoAbrir.current || !stageAberto) return;
+    rolarAoAbrir.current = false;
+    if (typeof window !== 'undefined' && window.matchMedia && !window.matchMedia('(max-width: 767px)').matches) return;
+    listaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [stageAberto, listaCarregando]);
+
+  function abrirStageClicado(stage: CrmStage) {
+    rolarAoAbrir.current = true;
+    abrirStage(stage);
+  }
 
   // `silencioso`: recarrega sem trocar a tela por "Calculando o funil…". Usado
   // depois de salvar, senão o formulário que o dono acabou de mexer some.
@@ -259,6 +270,21 @@ export default function FunilAba(props: Props) {
 
   useEffect(function () { carregarOverview(); }, [carregarOverview]);
 
+  // Recalcular recarrega ofertas e critérios do servidor: com edição não salva, pede confirmação.
+  async function recalcular() {
+    if (alterado) {
+      const ok = await confirmar({
+        titulo: 'Descartar as alterações não salvas?',
+        mensagem: 'Recalcular o funil recarrega as ofertas e os critérios do servidor e perde o que você mudou e ainda não salvou.',
+        confirmarLabel: 'Descartar e recalcular',
+        cancelarLabel: 'Continuar editando',
+        perigo: true,
+      });
+      if (!ok) return;
+    }
+    carregarOverview();
+  }
+
   function regraDo(stage: CrmStage): CrmRule | undefined {
     return rules.find(function (r) { return r.stage === stage; });
   }
@@ -266,11 +292,26 @@ export default function FunilAba(props: Props) {
     return stages.find(function (s) { return s.stage === stage; });
   }
 
+  /** Resposta do crm-funnel com erro (rede, 4xx/5xx ou corpo com error)? Devolve a mensagem. */
+  function erroDaResposta(res: { data: unknown; error: Error | null }): string | null {
+    if (res.error) return res.error.message;
+    const d = res.data as { error?: string; message?: string } | null;
+    if (!d) return 'Sem resposta do servidor.';
+    if (d.error) return d.message || d.error;
+    return null;
+  }
+
   function registrarEnvio(stage: CrmStage, customerId: string, voucherId: string | null, mensagem: string) {
     if (!tenantId) return;
     invokeWithAuth('crm-funnel', {
       body: { action: 'log_send', tenant_id: tenantId, stage, customer_id: customerId, voucher_id: voucherId, message: mensagem },
-    }).then(function () {
+    }).then(function (res) {
+      const falha = erroDaResposta(res);
+      if (falha) {
+        // Não marca como abordado: o registro não foi gravado (cooldown e teto semanal não contam).
+        setErro('Não consegui registrar a abordagem (' + falha + '). Se a mensagem saiu, confira antes de chamar de novo.');
+        return;
+      }
       // Sai da lista de elegíveis (entrou em cooldown).
       setClientes(function (prev) {
         return prev.map(function (c) {
@@ -281,20 +322,20 @@ export default function FunilAba(props: Props) {
   }
 
   function textoPara(c: ClienteFunil, stage: CrmStage): string {
-    const regra = regraDo(stage);
-    const modelo = regra?.mensagem || 'Oi, {nome}! Tudo bem? Aqui é da {loja} 😊';
-    return montarMensagem(modelo, { nome: c.nome, loja: user?.loja || 'nossa loja' });
+    const modelo = regraDo(stage)?.mensagem || MODELO_PADRAO_MENSAGEM;
+    return montarMensagem(modelo, { nome: c.nome, loja: user?.loja || 'nossa loja', estagio: stage });
   }
 
   function chamarNoWhats(c: ClienteFunil, stage: CrmStage) {
+    if (emOptOut(c)) { setErro(AVISO_OPT_OUT + ': ' + c.nome + '.'); return; }
     const texto = textoPara(c, stage);
-    const numero = c.phone.replace(/\D/g, '');
-    const comDDI = numero.length <= 11 ? '55' + numero : numero;
-    window.open('https://wa.me/' + comDDI + '?text=' + encodeURIComponent(texto), '_blank');
+    if (!abrirWhatsApp(c.phone, texto)) { setErro(c.nome + ' não tem um celular válido para o WhatsApp.'); return; }
     registrarEnvio(stage, c.customer_id, null, texto);
   }
 
   function mandarVoucher(c: ClienteFunil, stage: CrmStage) {
+    if (!podeVoucher) return;
+    if (emOptOut(c)) { setErro(AVISO_OPT_OUT + ': ' + c.nome + '.'); return; }
     const regra = regraDo(stage);
     if (!regra) return;
     const tipo = regra.voucher_type === 'valor' ? 'discount_fixed' : 'discount_percent';
@@ -302,6 +343,7 @@ export default function FunilAba(props: Props) {
       {
         id: c.customer_id, nome: c.nome, celular: c.phone, email: null, cpf: null,
         dataNascimento: null, genero: null, notes: null, manualTags: [], aceitaMarketing: false,
+        optOut: c.opt_out_at ?? null,
         ultimoContato: c.ultimo_contato, primeiraVisita: c.entered_at, ultimaVisita: c.last_order_at ?? c.entered_at,
         totalVisitas: c.orders_count, valorTotal: c.total_spent,
         ticketMedio: c.orders_count > 0 ? c.total_spent / c.orders_count : 0,
@@ -318,31 +360,36 @@ export default function FunilAba(props: Props) {
     if (!tenantId) return;
     invokeWithAuth('crm-funnel', {
       body: { action: 'set_opt_out', tenant_id: tenantId, customer_id: c.customer_id, opt_out: true },
-    }).then(function () {
+    }).then(function (res) {
+      const falha = erroDaResposta(res);
+      if (falha) {
+        // Não marca localmente: o cliente continuaria recebendo e a tela diria que não.
+        setErro('Não consegui marcar "não perturbe" para ' + c.nome + ' (' + falha + '). Tente de novo.');
+        return;
+      }
       setClientes(function (prev) {
         return prev.map(function (x) {
-          return x.customer_id === c.customer_id ? { ...x, pode_abordar: false, bloqueio: 'pediu para não receber' } : x;
+          return x.customer_id === c.customer_id ? { ...x, pode_abordar: false, bloqueio: BLOQUEIO_OPT_OUT, opt_out: true, opt_out_at: x.opt_out_at ?? new Date().toISOString() } : x;
         });
       });
     });
   }
 
-  /** Público personalizado da Meta: phone,email,fn,ln,country (o mesmo formato da aba Clientes). */
+  /** Público personalizado da Meta: phone,email,fn,ln,country (o mesmo formato da aba Clientes).
+   *  Fica de fora quem pediu para não receber e quem não tem celular válido. */
   function exportarPublicoMeta(stage: CrmStage) {
-    const linhas = clientes.filter(function (c) { return !!c.phone; }).map(function (c) {
+    const linhas: unknown[][] = [['phone', 'email', 'fn', 'ln', 'country']];
+    for (const c of clientes) {
+      if (emOptOut(c)) continue;
+      const tel = celularComDDI(c.phone);
+      if (!tel) continue;
       const partes = c.nome.trim().split(/\s+/);
       const fn = (partes[0] || '').toLowerCase();
       const ln = (partes.length > 1 ? partes[partes.length - 1] : '').toLowerCase();
-      const tel = c.phone.replace(/\D/g, '');
-      return ['+55' + tel, '', fn, ln, 'br'].join(',');
-    });
-    const csv = 'phone,email,fn,ln,country\n' + linhas.join('\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'publico-meta-' + stage + '.csv';
-    a.click();
-    URL.revokeObjectURL(url);
+      linhas.push(['+' + tel, '', fn, ln, 'br']);
+    }
+    // Coluna 0 (telefone) começa com "+": sem a trava de fórmula do CSV.
+    baixarCsv(montarCsv(linhas, ',', [0]), 'publico-meta-' + stage + '.csv');
   }
 
   function alterarRegra(stage: CrmStage, patch: Partial<CrmRule>) {
@@ -478,7 +525,7 @@ export default function FunilAba(props: Props) {
     const ativo = stageAberto === stage;
     return (
       <button
-        onClick={function () { abrirStage(stage); }}
+        onClick={function () { abrirStageClicado(stage); }}
         className={'w-full h-full flex flex-col text-left bg-white rounded-xl border p-3 cursor-pointer transition-all hover:shadow-sm ' +
           (ativo ? 'border-amber-400 ring-2 ring-amber-100' : 'border-zinc-200 hover:border-zinc-300')}
       >
@@ -549,7 +596,7 @@ export default function FunilAba(props: Props) {
             <i className="ri-eye-line" /> Visitas sem pedido
           </button>
           <button
-            onClick={function () { carregarOverview(); }}
+            onClick={function () { recalcular(); }}
             className="w-8 h-8 flex items-center justify-center rounded-lg border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 cursor-pointer"
             title="Recalcular o funil"
           >
@@ -558,7 +605,14 @@ export default function FunilAba(props: Props) {
         </div>
       </div>
 
-      {erro && <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700">{erro}</div>}
+      {erro && (
+        <div role="alert" className="sticky top-2 z-20 flex items-start justify-between gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 shadow-sm">
+          <span>{erro}</span>
+          <button onClick={function () { setErro(''); }} className="flex-shrink-0 text-red-400 hover:text-red-600 cursor-pointer" title="Fechar o aviso">
+            <i className="ri-close-line" />
+          </button>
+        </div>
+      )}
 
       {carregando ? (
         <div className="flex flex-col items-center justify-center py-16 gap-3">
@@ -608,7 +662,7 @@ export default function FunilAba(props: Props) {
 
           {/* Lista do estágio aberto */}
           {stageAberto ? (
-            <section className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
+            <section ref={listaRef} className="bg-white border border-zinc-200 rounded-2xl overflow-hidden scroll-mt-3">
               {(function () {
                 const s = resumoDo(stageAberto);
                 const oferta = resumoOferta(regraDo(stageAberto));
@@ -622,7 +676,7 @@ export default function FunilAba(props: Props) {
                         <div className="min-w-0">
                           <p className="text-sm font-bold text-zinc-900">{s?.label}</p>
                           <p className="text-[11px] text-zinc-400">
-                            {listaCarregando ? 'Carregando…' : `${elegiveis.length} de ${clientes.length} podem ser abordados agora`}
+                            {listaCarregando ? 'Carregando…' : erroLista ? 'Não foi possível carregar a lista' : `${elegiveis.length} de ${clientes.length} podem ser abordados agora`}
                             {' · '}
                             {regraDo(stageAberto)?.auto_send && <span className="text-green-700 font-semibold">envio automático ligado · </span>}
                             {oferta ? <span className="text-amber-700 font-semibold">oferta {oferta}</span> : (
@@ -682,6 +736,17 @@ export default function FunilAba(props: Props) {
               <div className="max-h-[55vh] overflow-auto divide-y divide-zinc-50">
                 {listaCarregando ? (
                   <p className="text-xs text-zinc-400 text-center py-8">Carregando…</p>
+                ) : erroLista ? (
+                  <div className="text-center py-10 px-4">
+                    <i className="ri-error-warning-line text-3xl text-red-300" />
+                    <p className="text-xs text-red-600 mt-1">Não consegui carregar este estágio: {erroLista}</p>
+                    <button
+                      onClick={function () { abrirStage(stageAberto); }}
+                      className="mt-3 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700"
+                    >
+                      <i className="ri-refresh-line" /> Tentar de novo
+                    </button>
+                  </div>
                 ) : listaVisivel.length === 0 ? (
                   <div className="text-center py-10">
                     <i className="ri-checkbox-circle-line text-3xl text-zinc-200" />
@@ -698,6 +763,7 @@ export default function FunilAba(props: Props) {
                   const regra = regraDo(stageAberto);
                   // Mesmo critério do cabeçalho: oferta desligada na aba Ofertas não gera voucher.
                   const temCupom = !!resumoOferta(regra);
+                  const optOut = emOptOut(c);
                   return (
                     <div key={c.customer_id} className="px-4 py-3 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 hover:bg-zinc-50/60">
                       <div className="min-w-0 flex-1">
@@ -718,16 +784,18 @@ export default function FunilAba(props: Props) {
                       <div className="flex items-center gap-1.5 flex-shrink-0">
                         <button
                           onClick={function () { chamarNoWhats(c, stageAberto); }}
-                          disabled={!c.phone}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer border border-green-200 bg-green-50 hover:bg-green-100 text-green-700 disabled:opacity-40"
+                          disabled={!c.phone || optOut}
+                          title={optOut ? AVISO_OPT_OUT : !c.phone ? 'Sem celular cadastrado' : 'Abrir o WhatsApp com a mensagem do estágio'}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer border border-green-200 bg-green-50 hover:bg-green-100 text-green-700 disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           <i className="ri-whatsapp-line" /> Chamar
                         </button>
-                        {temCupom && (
+                        {temCupom && podeVoucher && (
                           <button
                             onClick={function () { mandarVoucher(c, stageAberto); }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700"
-                            title="Gerar voucher com a oferta do estágio"
+                            disabled={optOut}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                            title={optOut ? AVISO_OPT_OUT : 'Gerar voucher com a oferta do estágio'}
                           >
                             <i className="ri-coupon-3-line" />
                             {regra!.voucher_type === 'valor'
@@ -782,9 +850,15 @@ export default function FunilAba(props: Props) {
               if (!r) return null;
               const resumo = resumoDo(stage);
               const passaTeto = !!settings && r.voucher_type === 'percentual' && Number(r.voucher_value) > Number(settings.desconto_max_percent);
-              const previa = montarMensagem(r.mensagem || 'Oi, {nome}! Tudo bem? Aqui é da {loja} 😊', {
-                nome: 'Maria', loja: user?.loja || 'nossa loja', cupom: 'ABC123', link: 'erpos.app/v/…',
+              const modeloMsg = r.mensagem || MODELO_PADRAO_MENSAGEM;
+              const previa = montarMensagem(modeloMsg, {
+                nome: 'Maria', loja: user?.loja || 'nossa loja', cupom: 'ABC123', link: 'erpos.app/v/…', estagio: stage,
               });
+              // Mesma função do botão "Chamar" (sem cupom nem link): o dono vê exatamente o que sai.
+              const previaSemVoucher = montarMensagem(modeloMsg, {
+                nome: 'Maria', loja: user?.loja || 'nossa loja', estagio: stage,
+              });
+              const previasDiferem = previaSemVoucher !== previa;
               return (
                 <div key={stage} className={'bg-white border rounded-xl p-4 space-y-3 ' + (r.enabled ? 'border-zinc-200' : 'border-zinc-100')}>
                   <div className="flex items-center justify-between gap-3">
@@ -907,9 +981,22 @@ export default function FunilAba(props: Props) {
                       />
                       <div className="mt-1.5 flex items-start gap-2">
                         <i className="ri-whatsapp-line text-green-500 text-sm mt-0.5" />
-                        <p className="text-[11px] text-zinc-600 bg-green-50/60 border border-green-100 rounded-lg rounded-tl-none px-2.5 py-1.5 flex-1">
-                          {previa}
-                        </p>
+                        <div className="flex-1 space-y-1.5">
+                          <div>
+                            {previasDiferem && <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wide mb-0.5">Com voucher</p>}
+                            <p className="text-[11px] text-zinc-600 bg-green-50/60 border border-green-100 rounded-lg rounded-tl-none px-2.5 py-1.5">
+                              {previa}
+                            </p>
+                          </div>
+                          {previasDiferem && (
+                            <div>
+                              <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wide mb-0.5">Sem voucher (botão Chamar)</p>
+                              <p className="text-[11px] text-zinc-600 bg-green-50/60 border border-green-100 rounded-lg rounded-tl-none px-2.5 py-1.5">
+                                {previaSemVoucher}
+                              </p>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1088,7 +1175,7 @@ export default function FunilAba(props: Props) {
           fila={sequencia}
           stage={stageAberto}
           label={resumoDo(stageAberto)?.label ?? ''}
-          temCupom={!!resumoOferta(regraDo(stageAberto))}
+          temCupom={podeVoucher && !!resumoOferta(regraDo(stageAberto))}
           textoPara={textoPara}
           onChamar={chamarNoWhats}
           onVoucher={mandarVoucher}

@@ -5,7 +5,7 @@
 //             + itens do cardápio para escolher recompensas.
 //   save    → valida/normaliza e grava. Ligar o programa pela 1ª vez marca
 //             started_at (pontos valem a partir daí) e recalcula a loja.
-//             Admin/gerente, ou papel com gestao_promocoes na matriz.
+//             Admin, ou quem tem gestao_promocoes (cargo/pessoa) — gerente não passa sozinho.
 //   membros → quem está no clube, saldo, nível, giros e prêmios pendentes.
 //
 // Ações do tablet (qualquer membro da loja; o tablet usa o usuário kiosk):
@@ -22,8 +22,8 @@
 // Auth: verify_jwt = false no deploy; JWT validado aqui + vínculo com a loja.
 // deno-lint-ignore-file no-explicit-any
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
-import { authenticate, isManagerRole, tenantRole } from "../_shared/tenant-auth.ts";
-import { ajusteDaPessoaNaLoja } from "../_shared/ajuste-pessoa.ts";
+import { authenticate, tenantRole } from "../_shared/tenant-auth.ts";
+import { temPermissao } from "../_shared/permissao-servidor.ts";
 import { configPadrao, cpfValido, normalizarConfig, soDigitos } from "../_shared/fidelidade.ts";
 import { cadastrarNoClube, conferirCelularFinal, descontoClubeServidor, idsValidos, novoToken, sha256Hex, vincularClube } from "../_shared/clube-servidor.ts";
 
@@ -47,15 +47,11 @@ function ok(payload: Record<string, unknown>) {
   });
 }
 
+// Escrita da loja (salvar o programa, ver os membros): admin sempre; os demais cargos só com
+// "Promoções" (gestao_promocoes) na matriz do cargo ou no ajuste da pessoa. Antes, todo gerente
+// passava mesmo sem a permissão (revisão de Clientes & Marketing, 2026-10-04).
 async function podeEditar(admin: any, tenantId: string, role: string, userId?: string | null): Promise<boolean> {
-  if (isManagerRole(role)) return true;
-  // Ajuste da pessoa (Usuários › O que faz, 2026-10-03) vale por cima da matriz do cargo.
-  const daPessoa = await ajusteDaPessoaNaLoja(admin, tenantId, userId, ["gestao_promocoes"]);
-  if (daPessoa.has("gestao_promocoes")) return daPessoa.get("gestao_promocoes") === true;
-  const { data } = await admin.from("permissions").select("allowed")
-    .eq("tenant_id", tenantId).eq("role", role).eq("permission_key", "gestao_promocoes")
-    .limit(1).maybeSingle();
-  return data?.allowed === true;
+  return await temPermissao(admin, tenantId, userId, role, "gestao_promocoes");
 }
 
 // Mensagem de erro do Postgres (raise exception) vira texto para o cliente.
@@ -88,7 +84,10 @@ Deno.serve(async (req: Request) => {
       if (!r) return jsonErr("Sem acesso a esta loja.", 403);
       role = r;
     }
-    const editavel = caller.isServiceRole || await podeEditar(admin, tenantId, role, caller.userId);
+    // Só as ações da loja (tela de Fidelidade) conferem a permissão; o clube do tablet/delivery/mesa/caixa
+    // não paga essa consulta nem falha por causa dela.
+    const acaoDaLoja = action === "get" || action === "save" || action === "membros";
+    const editavel = caller.isServiceRole || (acaoDaLoja && await podeEditar(admin, tenantId, role, caller.userId));
 
     // Cliente tem que ser desta loja (o tablet manda o id que recebeu no buscar).
     async function clienteDaLoja(id: unknown): Promise<string | null> {
@@ -122,11 +121,13 @@ Deno.serve(async (req: Request) => {
       const janela = Math.max(0, Math.min(3650, Math.round(Number(body.janela_dias ?? config.trilha.janela_dias) || 0)));
       const dias = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
 
-      const [histTrilha, hist90, produtos] = await Promise.all([
+      const [histTrilha, hist90, produtos, loja] = await Promise.all([
         admin.rpc("fn_fidelidade_histograma", { p_tenant_id: tenantId, p_desde: janela > 0 ? dias(janela) : null }),
         admin.rpc("fn_fidelidade_histograma", { p_tenant_id: tenantId, p_desde: dias(90) }),
         admin.from("menu_items").select("id, name, price")
           .eq("tenant_id", tenantId).is("deleted_at", null).eq("is_active", true).order("name").limit(2000),
+        // slug → link da página pública do clube (/clube/<slug>) na tela da loja
+        admin.from("tenants").select("slug").eq("id", tenantId).maybeSingle(),
       ]);
       if (histTrilha.error) throw histTrilha.error;
       if (hist90.error) throw hist90.error;
@@ -142,6 +143,7 @@ Deno.serve(async (req: Request) => {
         updated_at: row?.updated_at ?? null,
         config,
         editavel,
+        slug: loja.data?.slug ?? null,
         janela_dias: janela,
         histograma: conv(histTrilha.data),
         histograma_90d: conv(hist90.data),

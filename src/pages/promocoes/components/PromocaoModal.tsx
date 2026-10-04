@@ -182,6 +182,15 @@ export default function PromocaoModal({ rule, duplicar = false, onClose, onSaved
             </div>
           )}
 
+          {/* Mesmo aviso da aba Promoções: o motor de regras não está ligado em nenhuma tela de venda. */}
+          <div className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-lg">
+            <i className="ri-error-warning-line text-amber-600 text-sm mt-0.5" />
+            <p className="text-[11px] text-amber-800">
+              A regra fica cadastrada, mas <strong>ainda não dá desconto</strong> no caixa, no garçom, no QR nem no delivery.
+              Para baixar o preço de um item, use o preço promocional no Cardápio.
+            </p>
+          </div>
+
           {/* Nome e descrição */}
           <div className="space-y-3">
             <div>

@@ -2,22 +2,37 @@
 // (mesa QR e acompanhamento do delivery). A loja liga o ranking, escreve o prêmio do
 // 1º ao 3º lugar e, depois que a semana fecha (domingo 23:59), marca quem já recebeu.
 // A pontuação é conferida no servidor (Edge `jogos` refaz a partida); só joga valendo
-// quem tem pedido de verdade na loja nas últimas 12h.
+// quem é membro do clube de fidelidade e tem pedido de verdade na loja nas últimas 12h.
+// Trapaça: "Desclassificar" tira a pontuação do ranking (Edge `admin_desclassificar`).
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { invokeWithAuth } from '@/lib/supabase';
+import { confirmar } from '@/components/base/Dialogos';
 
 interface Premio { posicao: number; descricao: string }
 interface Config { ranking_ativo: boolean; jogos: string[]; premios: Premio[]; regras: string }
-interface LinhaAdmin { posicao: number; nome: string; telefone: string; pontos: number; entregue_em?: string | null; premio?: string | null }
+interface LinhaAdmin {
+  posicao: number; nome: string; telefone: string; pontos: number;
+  score_id?: string; duracao_s?: number; entregue_em?: string | null; premio?: string | null;
+}
 interface DadosJogo {
   semana_atual: { semana: string; termina_em: string; jogadores: number; top: LinhaAdmin[] };
   anteriores: { semana: string; jogadores: number; top: LinhaAdmin[] }[];
 }
-interface Resposta { config: Config; semana: string; jogos: Record<string, DadosJogo>; partidas_semana: number; error?: string; message?: string }
+interface Resposta {
+  config: Config; clube_ativo?: boolean; semana: string; jogos: Record<string, DadosJogo>; partidas_semana: number;
+  error?: string; message?: string;
+}
 
 const NOMES: Record<string, string> = { voa: 'Voa Voa', corre: 'Corre Corre' };
 const MEDALHA = ['🥇', '🥈', '🥉'];
+
+/** 75 → '1m15s'; 0/ausente → '' (não inventa duração que a Edge não mandou). */
+function duracao(s?: number) {
+  if (!s || s <= 0) return '';
+  return s < 60 ? s + 's' : Math.floor(s / 60) + 'm' + String(s % 60).padStart(2, '0') + 's';
+}
 
 function fone(t: string) {
   return t.length === 11 ? '(' + t.slice(0, 2) + ') ' + t.slice(2, 7) + '-' + t.slice(7) : '(' + t.slice(0, 2) + ') ' + t.slice(2, 6) + '-' + t.slice(6);
@@ -34,11 +49,14 @@ export default function JogosAba() {
   const tenantId = user?.tenantId;
   const [dados, setDados] = useState<Resposta | null>(null);
   const [cfg, setCfg] = useState<Config | null>(null);
+  // última config que o servidor confirmou (para avisar "salve para valer" no interruptor)
+  const [cfgSalva, setCfgSalva] = useState<Config | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [salvoEm, setSalvoEm] = useState<number | null>(null);
   const [jogoVer, setJogoVer] = useState('voa');
   const [marcando, setMarcando] = useState<string | null>(null);
+  const [params, setParams] = useSearchParams();
 
   const carregar = useCallback(async () => {
     if (!tenantId) return;
@@ -47,9 +65,28 @@ export default function JogosAba() {
     setErro(null);
     setDados(data);
     setCfg(function (c) { return c ?? data.config; });
+    setCfgSalva(function (c) { return c ?? data.config; });
   }, [tenantId]);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  // "Salvo" some sozinho depois de uns 3 segundos
+  useEffect(() => {
+    if (!salvoEm) return;
+    const t = setTimeout(() => setSalvoEm(null), 3000);
+    return () => clearTimeout(t);
+  }, [salvoEm]);
+
+  function tentarDeNovo() {
+    setErro(null);
+    carregar();
+  }
+
+  function abrirFidelidade() {
+    const p = new URLSearchParams(params);
+    p.set('aba', 'fidelidade');
+    setParams(p, { replace: true });
+  }
 
   async function salvar() {
     if (!tenantId || !cfg) return;
@@ -60,6 +97,7 @@ export default function JogosAba() {
     setSalvando(false);
     if (error || !data || data.error) { setErro(data?.message || error?.message || 'Não foi possível salvar.'); return; }
     setCfg(data.config!);
+    setCfgSalva(data.config!);
     setSalvoEm(Date.now());
     carregar();
   }
@@ -76,6 +114,25 @@ export default function JogosAba() {
     carregar();
   }
 
+  // Trapaça: tira a pontuação daquela linha do ranking (some do top e do top 3 do fechamento).
+  async function desclassificar(l: LinhaAdmin) {
+    if (!tenantId || !l.score_id) return;
+    const sim = await confirmar({
+      titulo: `Desclassificar ${l.nome}?`,
+      mensagem: `A pontuação de ${l.pontos} pts sai do ranking. Se a pessoa tiver outra partida nesta semana, a melhor das outras passa a valer. Por aqui não dá para desfazer.`,
+      confirmarLabel: 'Desclassificar',
+      perigo: true,
+    });
+    if (!sim) return;
+    setMarcando(l.score_id);
+    const { data, error } = await invokeWithAuth<{ error?: string; message?: string }>('jogos', {
+      body: { action: 'admin_desclassificar', tenant_id: tenantId, score_id: l.score_id },
+    });
+    setMarcando(null);
+    if (error || data?.error) { setErro(data?.message || error?.message || 'Não foi possível desclassificar.'); return; }
+    carregar();
+  }
+
   function premioTexto(p: number) {
     return cfg?.premios.find((x) => x.posicao === p)?.descricao ?? '';
   }
@@ -88,7 +145,18 @@ export default function JogosAba() {
   if (!dados || !cfg) {
     return (
       <div className="p-6">
-        {erro ? <p className="text-sm text-red-600">{erro}</p> : (
+        {erro ? (
+          <div className="flex flex-col items-start gap-3">
+            <p className="text-sm text-red-600">{erro}</p>
+            <button
+              type="button"
+              onClick={tentarDeNovo}
+              className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm font-bold cursor-pointer"
+            >
+              Tentar de novo
+            </button>
+          </div>
+        ) : (
           <div className="flex items-center justify-center py-20">
             <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
           </div>
@@ -98,14 +166,46 @@ export default function JogosAba() {
   }
 
   const dj = dados.jogos[jogoVer];
+  const rankingMudou = !!cfgSalva && cfg.ranking_ativo !== cfgSalva.ranking_ativo;
+
+  function botaoDesclassificar(l: LinhaAdmin) {
+    if (!l.score_id) return null;
+    return (
+      <button
+        type="button"
+        disabled={marcando === l.score_id}
+        onClick={() => desclassificar(l)}
+        className="shrink-0 text-[11px] font-semibold text-zinc-400 hover:text-red-600 cursor-pointer whitespace-nowrap disabled:opacity-50"
+        title="Tirar esta pontuação do ranking (trapaça)"
+      >
+        <i className="ri-forbid-2-line" /> Desclassificar
+      </button>
+    );
+  }
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
+      {dados.clube_ativo === false ? (
+        <div className="flex flex-wrap items-center gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3">
+          <i className="ri-error-warning-line text-amber-500 text-lg shrink-0" />
+          <p className="flex-1 min-w-[220px] text-sm text-amber-800">
+            Os jogos só aparecem para membros do clube de fidelidade — com o clube desligado, ninguém joga.
+          </p>
+          <button
+            type="button"
+            onClick={abrirFidelidade}
+            className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold cursor-pointer whitespace-nowrap"
+          >
+            Abrir Fidelidade
+          </button>
+        </div>
+      ) : null}
+
       {erro ? <p className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{erro}</p> : null}
 
       <div className="bg-white rounded-2xl border border-zinc-100 p-4 md:p-5">
         <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center shrink-0">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-400 to-rose-500 flex items-center justify-center shrink-0">
             <i className="ri-gamepad-line text-white text-lg" />
           </div>
           <div className="flex-1 min-w-0">
@@ -116,7 +216,10 @@ export default function JogosAba() {
             </p>
           </div>
           <label className="flex items-center gap-2 cursor-pointer shrink-0">
-            <span className="text-xs font-bold text-zinc-600">{cfg.ranking_ativo ? 'Ranking ligado' : 'Ranking desligado'}</span>
+            <span className="text-xs font-bold text-zinc-600 text-right">
+              {cfg.ranking_ativo ? 'Ranking ligado' : 'Ranking desligado'}
+              {rankingMudou ? <span className="block text-[10px] font-semibold text-amber-600">(salve para valer)</span> : null}
+            </span>
             <button
               type="button"
               role="switch"
@@ -192,9 +295,9 @@ export default function JogosAba() {
           </button>
         </div>
         <p className="text-[11px] text-zinc-400 mt-3 leading-relaxed">
-          Como a loja fica protegida: só joga valendo quem fez pedido na loja nas últimas 12h (mesa: pela senha do QR; delivery: pelo nº do pedido + o celular do pedido).
+          Como a loja fica protegida: só joga valendo quem é membro do clube e fez pedido na loja nas últimas 12h.
           A pontuação é refeita no servidor a partir dos toques da partida — não dá para inventar número. Máximo de 60 partidas por pedido.
-          Mesmo assim, confira o 1º lugar antes de entregar (ex.: pontuação muito acima dos outros).
+          Mesmo assim, confira o 1º lugar antes de entregar (ex.: pontuação muito acima dos outros) e use Desclassificar se for trapaça.
         </p>
       </div>
 
@@ -225,7 +328,10 @@ export default function JogosAba() {
                     <span className="w-7 text-center text-sm font-black text-zinc-500">{l.posicao <= 3 ? MEDALHA[l.posicao - 1] : l.posicao + 'º'}</span>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-zinc-800 truncate">{l.nome}</p>
-                      <p className="text-xs text-zinc-400">{fone(l.telefone)}</p>
+                      <div className="flex items-center gap-2 min-w-0 text-xs text-zinc-400">
+                        <span className="truncate">{fone(l.telefone)}{duracao(l.duracao_s) ? ' · partida de ' + duracao(l.duracao_s) : ''}</span>
+                        {botaoDesclassificar(l)}
+                      </div>
                     </div>
                     <span className="text-sm font-black text-zinc-900">{l.pontos}</span>
                   </div>
@@ -245,6 +351,8 @@ export default function JogosAba() {
                 <div className="mt-1 divide-y divide-zinc-100">
                   {w.top.map((l) => {
                     const entregue = !!l.entregue_em;
+                    // com prêmio já entregue na semana o ranking não muda mais (a Edge também recusa)
+                    const semanaComEntrega = w.top.some((x) => !!x.entregue_em);
                     const chave = w.semana + jogoVer + l.posicao;
                     const premio = premioTexto(l.posicao);
                     const msg = encodeURIComponent(`Olá, ${l.nome.split(' ')[0]}! Você ficou em ${l.posicao}º lugar no ${NOMES[jogoVer]} da semana${premio ? ' e ganhou: ' + premio : ''}. Parabéns!`);
@@ -253,7 +361,14 @@ export default function JogosAba() {
                         <span className="w-7 text-center">{MEDALHA[l.posicao - 1]}</span>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-bold text-zinc-800 truncate">{l.nome} <span className="text-zinc-400 font-medium">· {l.pontos} pts</span></p>
-                          <p className="text-xs text-zinc-400 truncate">{fone(l.telefone)}{entregue ? ' · entregue ' + new Date(l.entregue_em!).toLocaleDateString('pt-BR') : premio ? ' · ' + premio : ''}</p>
+                          <div className="flex items-center gap-2 min-w-0 text-xs text-zinc-400">
+                            <span className="truncate">
+                              {fone(l.telefone)}
+                              {duracao(l.duracao_s) ? ' · partida de ' + duracao(l.duracao_s) : ''}
+                              {entregue ? ' · entregue ' + new Date(l.entregue_em!).toLocaleDateString('pt-BR') : premio ? ' · ' + premio : ''}
+                            </span>
+                            {semanaComEntrega ? null : botaoDesclassificar(l)}
+                          </div>
                         </div>
                         <a
                           href={`https://wa.me/55${l.telefone}?text=${msg}`}
