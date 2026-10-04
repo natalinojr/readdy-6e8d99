@@ -595,8 +595,15 @@ function releaseRows(tenantId: string, bankAccountId: string, reportId: string |
   const { rows: csvRows, header } = parseReleaseCsv(csv);
   const out: Record<string, unknown>[] = [];
   let skipped = 0;
+  // Saldo da conta MP no fim do relatório: o BALANCE_AMOUNT da última liberação (qualquer tipo, inclusive
+  // payment). Vira âncora do saldo do Mercado Pago (fn_mp_refresh_balance) — 2026-10-04.
+  let closing: { balance: number; at: string } | null = null;
   for (const r of csvRows) {
     const recordType = String(r.RECORD_TYPE ?? '').toLowerCase();
+    if ((!header.includes('RECORD_TYPE') || recordType === 'release') && String(r.BALANCE_AMOUNT ?? '').trim() !== '' && brTime(r.DATE)) {
+      const t = Date.parse(String(r.DATE));
+      if (!Number.isNaN(t) && (!closing || t >= Date.parse(closing.at))) closing = { balance: round2(num(r.BALANCE_AMOUNT)), at: new Date(t).toISOString() };
+    }
     // linhas de saldo (initial_available_balance, total, available_balance) não são movimento
     if (header.includes('RECORD_TYPE') && recordType !== 'release') { skipped++; continue; }
     const description = String(r.DESCRIPTION ?? '').trim();
@@ -643,7 +650,7 @@ function releaseRows(tenantId: string, bankAccountId: string, reportId: string |
       },
     });
   }
-  return { rows: out, total: csvRows.length, skipped };
+  return { rows: out, total: csvRows.length, skipped, closing };
 }
 
 function reportFileName(item: any): string {
@@ -687,12 +694,13 @@ async function fetchReports(admin: Admin, tenantId: string, cfg: any, token: str
       continue;
     }
     try {
-      const { rows, total, skipped } = releaseRows(tenantId, cfg.bank_account_id, rep?.id ?? null, dl.text);
+      const { rows, total, skipped, closing } = releaseRows(tenantId, cfg.bank_account_id, rep?.id ?? null, dl.text);
       const inserted = await insertStatement(admin, rows);
       await setHora(admin, tenantId, cfg.bank_account_id, rows);
       await admin.from('fin_mp_reports').update({
         status: 'success', rows_count: total, inserted_count: inserted,
         imported_at: new Date().toISOString(), error_message: null,
+        ...(closing ? { closing_balance: closing.balance, closing_at: closing.at } : {}),
       }).eq('id', rep?.id);
       results.push({ file: name, rows: total, movements: rows.length, inserted, skipped });
     } catch (e) {
