@@ -110,10 +110,11 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
                   {cfg.merchants.length > 0 && <p className="text-xs text-emerald-700"><i className="ri-checkbox-circle-line" /> Autorizadas: {cfg.merchants.map((m) => m.name).join(', ')}</p>}
                   {conectado && cfg.app_type !== 'centralized' && (
                     <div className={`flex flex-wrap items-center gap-2 ${cfg.merchants.length === 0 ? 'p-2.5 rounded-lg bg-amber-50 border border-amber-200' : ''}`}>
-                      {cfg.merchants.length === 0 && <p className="text-xs text-amber-800 flex-1 min-w-[12rem]">A autorização não trouxe nenhuma loja do iFood. Se o ERPOS PDV já aparece ativo no Portal do Parceiro, clique em <b>Atualizar lojas</b>.</p>}
+                      {cfg.merchants.length === 0 && <p className="text-xs text-amber-800 flex-1 min-w-[12rem]">A autorização ainda não trouxe nenhuma loja do iFood. Se o ERPOS PDV já aparece ativo no Portal do Parceiro, clique em <b>Atualizar lojas</b>.</p>}
                       <button disabled={!!busy} onClick={() => run('refresh', 'refresh_merchants', {}, 'Lojas atualizadas.')} className="px-3 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50">
                         {busy === 'refresh' ? 'Atualizando…' : 'Atualizar lojas'}
                       </button>
+                      <p className="text-[11px] text-zinc-500 w-full">Loja recém-autorizada no Portal do Parceiro pode levar alguns minutos para aparecer aqui — se não vier, espere um pouco e clique em Atualizar lojas de novo.</p>
                     </div>
                   )}
                   {cfg.app_type === 'centralized' ? (

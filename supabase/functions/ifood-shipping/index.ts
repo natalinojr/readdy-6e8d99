@@ -1516,7 +1516,7 @@ Deno.serve(async (req) => {
       if (!cfg.shipping_merchant_id && merchants.length === 1 && !(await lojasDeOutra([merchants[0].id])).size) Object.assign(upd, { shipping_merchant_id: merchants[0].id, shipping_merchant_name: merchants[0].name });
       await admin.from('ifood_pdv_config').update(upd).eq('id', cfg.id);
       const aviso = merchants.length ? null
-        : 'O iFood aceitou o código, mas não liberou nenhuma loja para o ERPOS PDV. No Portal do Parceiro, confira em Apps se o ERPOS PDV ficou ativo na loja certa e conclua todas as etapas; depois clique em "Autorizar outra loja" e repita.';
+        : 'O iFood aceitou o código, mas a loja ainda não apareceu — pode levar alguns minutos. Espere um pouco e clique em "Atualizar lojas". Se continuar sem loja, confira no Portal do Parceiro (Integrações) se o ERPOS PDV ficou Ativo na loja certa.';
       return json({ success: true, merchants, aviso });
     }
 
@@ -1535,7 +1535,7 @@ Deno.serve(async (req) => {
         await admin.from('ifood_pdv_auths').update({ merchants: m.merchants, updated_at: new Date().toISOString() }).eq('id', a.id);
         total += m.merchants.length;
       }
-      return json({ success: true, total, aviso: total ? null : 'O iFood ainda não libera nenhuma loja para o ERPOS PDV com essa autorização. Gere um código novo ("Autorizar outra loja") e autorize de novo no Portal do Parceiro.' });
+      return json({ success: true, total, aviso: total ? null : 'O iFood ainda não libera nenhuma loja para o ERPOS PDV. Loja recém-autorizada pode levar alguns minutos — tente de novo daqui a pouco. Se continuar, confira no Portal do Parceiro (Integrações) se o ERPOS PDV está Ativo na loja.' });
     }
 
     if (action === 'delete_config') {
