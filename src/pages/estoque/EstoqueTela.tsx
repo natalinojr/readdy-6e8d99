@@ -29,6 +29,8 @@ export interface EstoqueTelaApi {
   abrirSaida: (insumoId?: string) => void;
   abrirPerda: (insumoId?: string) => void;
   abrirTransferir: () => void;
+  /** Janela "Programar o estoque": quanto pedir e as contagens programadas (só quem configura). */
+  abrirProgramar: () => void;
   abrirCompra: (insumoId?: string) => void;
   abrirNovoInsumo: () => void;
   editarInsumo: (insumoId: string) => void;
