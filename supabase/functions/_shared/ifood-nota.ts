@@ -22,11 +22,11 @@ const txt = (v: unknown, max: number) => String(v ?? '').replace(/\s+/g, ' ').tr
 
 export interface NotaIfood {
   indicadorPresenca: 1 | 4;
-  /** Só com indPres 4 (o Brasil NFe recusa intermediador com indPres 1). */
-  intermediador: { Cnpj: string; IdCadIntTran: string } | null;
-  /** Destinatário com endereço (só na entrega com CPF). null = segue o CPF na nota, se houver, como nos outros canais. */
-  cliente: { CpfCnpj: string; NmCliente: string; IndicadorIe: 9; Endereco: EnderecoNota } | null;
-  /** Por que saiu presencial em vez de entrega (para o log). */
+  /** iFood como intermediador — sempre (contadora 05/10; Brasil NFe aceita com indPres 1, 2, 3, 4 ou 9 desde 06/10). */
+  intermediador: { Cnpj: string; IdCadIntTran: string };
+  /** Destinatário com endereço (entrega). Sem CPF o Brasil NFe monta <dest> com <idEstrangeiro/> vazio. */
+  cliente: { CpfCnpj?: string; NmCliente: string; IndicadorIe: 9; Endereco: EnderecoNota } | null;
+  /** Por que a entrega saiu presencial (para o log). */
   motivoPresencial: string | null;
 }
 
@@ -34,17 +34,18 @@ export interface NotaIfood {
  * `o` = linha de ifood_orders (order_type, merchant_id, address, customer_name).
  * `codMunicipio` = código IBGE do município do endereço (resolvido fora, pela rede); `cpf` = CPF/CNPJ já validado.
  *
- * Teste em homologação na SEFAZ-PR (05/10/2026, conta Brasil NFe da Paranaguá):
- * - entrega + CPF + endereço + intermediador → AUTORIZADA (indPres 4, infIntermed, dest/enderDest);
- * - entrega SEM CPF → rejeição 787: o Brasil NFe não manda o grupo dest sem documento;
- * - retirada (indPres 1) + intermediador → o Brasil NFe recusa ("só com indicador de presença 2, 3, 4 ou 9").
- * Por isso: entrega como não presencial só quando há CPF e endereço completo; senão presencial, sem intermediador
- * (como o delivery da loja), para a nota não travar.
+ * Homologação SEFAZ-PR 05/10/2026 (conta Brasil NFe da Paranaguá): entrega + CPF + endereço + intermediador →
+ * AUTORIZADA. Sem CPF → 787 e intermediador com indPres 1 → recusado pelo Brasil NFe. O Brasil NFe liberou os dois
+ * (resposta do suporte em 05/10, no ar 06/10): <dest> com <idEstrangeiro/> vazio + nome + endereço quando
+ * IndicadorPresenca = 4 sem CpfCnpj, e Intermediador com indPres 1. Atenção (Brasil NFe): idEstrangeiro vazio no
+ * leiaute identifica comprador estrangeiro sem documento — validar com a contadora.
+ * Regra: entrega com endereço completo → indPres 4 + intermediador + destinatário (com CPF se o cliente pediu);
+ * retirada/consumo no local ou endereço incompleto → presencial + intermediador.
  */
 export function dadosNotaIfood(o: any, codMunicipio: number | null, cpf: string | null): NotaIfood {
-  const presencial = (motivo: string | null): NotaIfood => ({ indicadorPresenca: 1, intermediador: null, cliente: null, motivoPresencial: motivo });
+  const intermediador = { Cnpj: CNPJ_IFOOD, IdCadIntTran: txt(o?.merchant_id, 60) };
+  const presencial = (motivo: string | null): NotaIfood => ({ indicadorPresenca: 1, intermediador, cliente: null, motivoPresencial: motivo });
   if (String(o?.order_type ?? 'DELIVERY') !== 'DELIVERY') return presencial(null);
-  if (!cpf) return presencial('entrega sem CPF do cliente (o iFood esconde o CPF; a nota de entrega exige o destinatário)');
   const a = o?.address ?? {};
   const cep = so(a.postalCode);
   const uf = txt(a.state, 2).toUpperCase();
@@ -58,9 +59,9 @@ export function dadosNotaIfood(o: any, codMunicipio: number | null, cpf: string 
   if (faltando.length) return presencial(`endereço de entrega sem ${faltando.join(', ')}`);
   return {
     indicadorPresenca: 4,
-    intermediador: { Cnpj: CNPJ_IFOOD, IdCadIntTran: txt(o?.merchant_id, 60) },
+    intermediador,
     cliente: {
-      CpfCnpj: cpf,
+      ...(cpf ? { CpfCnpj: cpf } : {}),
       NmCliente: txt(o?.customer_name, 60) || 'Cliente iFood',
       IndicadorIe: 9,
       Endereco: {

@@ -272,7 +272,7 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
     .select('id, order_id, item_id, item_name, item_price, quantity, status')
     .in('order_id', orderIds).neq('status', 'cancelled');
   if (itErr) throw new Error(`order_items: ${itErr.message}`);
-  const items = (itemsRaw ?? []) as Array<{ id: string; order_id: string; item_id: string | null; item_name: string; item_price: number; quantity: number }>;
+  let items = (itemsRaw ?? []) as Array<{ id: string; order_id: string; item_id: string | null; item_name: string; item_price: number; quantity: number }>;
   if (items.length === 0) return { note: null, skipReason: 'Venda sem itens' };
 
   const menuIds = [...new Set(items.map((i) => i.item_id).filter(Boolean))] as string[];
@@ -303,6 +303,13 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
     if (o.option_name && !/^un\.?\s*\d+$/i.test(String(o.option_name).trim())) arr.push(String(o.option_name));
     optsByItem.set(o.order_item_id, arr);
     optsPriceByItem.set(o.order_item_id, round2((optsPriceByItem.get(o.order_item_id) ?? 0) + Number(o.additional_price ?? 0)));
+  }
+  // Pedido do iFood: linhas de R$ 0 (itens extras da "ficha do iFood", notes "parte de <produto>") são só estoque — o
+  // valor está no produto principal. Ficam fora da nota (item com vProd 0 não é venda).
+  const pedidosIfood = new Set(orders.filter((o) => o.ifood_order_id).map((o) => o.id));
+  if (pedidosIfood.size > 0) {
+    items = items.filter((i) => !(pedidosIfood.has(i.order_id) && Math.abs(Number(i.item_price ?? 0)) < 0.005 && Math.abs(optsPriceByItem.get(i.id) ?? 0) < 0.005));
+    if (items.length === 0) return { note: null, skipReason: 'Venda sem itens com valor' };
   }
   // 3. Totais e conciliação com o valor cobrado (valores.ts)
   const { unit: unitByIdx, gross, grossTotal, discount, extras, discPerItem } = calcularValores(
@@ -479,17 +486,17 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
   if (settings.serie) payload.Serie = Number(settings.serie);
   if (customerCpf) payload.Cliente = { CpfCnpj: customerCpf, NmCliente: customerName ?? undefined, IndicadorIe: 9 };
   // Pedido do iFood (contadora, 05/10): não presencial (entrega a domicílio, indPres 4, com o endereço do cliente) e o
-  // iFood como intermediador — só dá com o CPF do cliente (homologação 05/10); sem CPF e na retirada sai presencial.
+  // iFood como intermediador sempre; entrega com endereço = indPres 4 (com ou sem CPF), retirada = presencial.
   // Ver _shared/ifood-nota.ts.
   if (ifoodRows.length > 0) {
     const r = ifoodRows.find((x) => String(x.order_type ?? 'DELIVERY') === 'DELIVERY') ?? ifoodRows[0];
     const a = r.address ?? {};
     const uf = String(a.state ?? '').trim().toUpperCase();
-    const cod = String(r.order_type ?? 'DELIVERY') === 'DELIVERY' && customerCpf ? await codigoIbge(String(a.postalCode ?? '').replace(/\D/g, ''), String(a.city ?? ''), uf) : null;
+    const cod = String(r.order_type ?? 'DELIVERY') === 'DELIVERY' ? await codigoIbge(String(a.postalCode ?? '').replace(/\D/g, ''), String(a.city ?? ''), uf) : null;
     const nota = dadosNotaIfood(r, cod, customerCpf);
     payload.IndicadorPresenca = nota.indicadorPresenca;
-    if (nota.intermediador) payload.Intermediador = nota.intermediador;
-    if (nota.cliente) payload.Cliente = { ...nota.cliente, ...(customerName ? { NmCliente: customerName.slice(0, 60) } : {}) };
+    payload.Intermediador = nota.intermediador;
+    if (nota.cliente) payload.Cliente = { ...nota.cliente, ...(customerName && customerCpf ? { NmCliente: customerName.slice(0, 60) } : {}) };
     if (nota.motivoPresencial) log('INFO', 'nfce-ifood', 'presencial', { sourceId, motivo: nota.motivoPresencial });
   }
 

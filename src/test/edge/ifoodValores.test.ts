@@ -91,19 +91,22 @@ describe('dadosNotaIfood (contadora 05/10: não presencial + iFood intermediador
     expect(r.cliente).toEqual({ CpfCnpj: '52998224725', NmCliente: 'Maria', IndicadorIe: 9, Endereco: { Cep: '83203300', Logradouro: 'R. José Antônio Temporão', Numero: '91', Complemento: 'Clinica', Bairro: 'Centro Histórico', Municipio: 'Paranaguá', CodMunicipio: 4118204, Uf: 'PR', CodPais: 1058 } });
   });
 
-  it('entrega sem CPF (#1631): presencial, sem intermediador (sem CPF o Brasil NFe não manda o destinatário → 787)', () => {
+  it('entrega sem CPF (#1631): indPres 4 + intermediador + destinatário só com nome e endereço (Brasil NFe monta <idEstrangeiro/>)', () => {
     const r = n.dadosNotaIfood({ order_type: 'DELIVERY', merchant_id: merchant, customer_name: 'Maria', address: end }, 4118204, null);
-    expect(r).toMatchObject({ indicadorPresenca: 1, intermediador: null, cliente: null });
-    expect(r.motivoPresencial).toMatch(/sem CPF/);
+    expect(r).toMatchObject({ indicadorPresenca: 4, motivoPresencial: null, intermediador: { Cnpj: '14380200000121', IdCadIntTran: merchant } });
+    expect(r.cliente.CpfCnpj).toBeUndefined();
+    expect(r.cliente).toMatchObject({ NmCliente: 'Maria', IndicadorIe: 9, Endereco: { CodMunicipio: 4118204, Uf: 'PR' } });
   });
 
-  it('retirada/consumo no local: presencial, sem intermediador (Brasil NFe recusa intermediador com indPres 1)', () => {
+  it('retirada/consumo no local: presencial COM intermediador (contadora 05/10; Brasil NFe libera indPres 1)', () => {
     expect(n.dadosNotaIfood({ order_type: 'TAKEOUT', merchant_id: merchant }, null, '52998224725'))
-      .toEqual({ indicadorPresenca: 1, intermediador: null, cliente: null, motivoPresencial: null });
+      .toEqual({ indicadorPresenca: 1, intermediador: { Cnpj: '14380200000121', IdCadIntTran: merchant }, cliente: null, motivoPresencial: null });
   });
 
   it('entrega com CPF mas endereço incompleto: presencial com o motivo', () => {
-    expect(n.dadosNotaIfood({ order_type: 'DELIVERY', merchant_id: merchant, address: end }, null, '52998224725').motivoPresencial).toMatch(/código do município/);
+    const semCod = n.dadosNotaIfood({ order_type: 'DELIVERY', merchant_id: merchant, address: end }, null, '52998224725');
+    expect(semCod.motivoPresencial).toMatch(/código do município/);
+    expect(semCod).toMatchObject({ indicadorPresenca: 1, intermediador: { Cnpj: '14380200000121' } });
     expect(n.dadosNotaIfood({ order_type: 'DELIVERY', merchant_id: merchant, address: { ...end, streetName: '' } }, 4118204, '52998224725').motivoPresencial).toMatch(/rua/);
   });
 });
