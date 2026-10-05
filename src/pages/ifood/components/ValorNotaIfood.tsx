@@ -27,8 +27,8 @@ export default function ValorNotaIfood({ o }: { o: PedidoOrder }) {
   const ifoodEntrega = o.tipo === 'DELIVERY' && !n.entregaLoja;
   const candidatos: [string, number][] = [
     ['Desconto pago pelo iFood (volta no repasse)', o.promoIfood],
-    [ifoodEntrega ? 'Entrega paga pelo cliente (é do iFood)' : '', ifoodEntrega ? o.entregaCliente : 0],
-    ['Entrega grátis paga pela loja (custo cobrado pelo iFood)', n.entregaGratisForaNota],
+    // Taxa de entrega com entregador do iFood é do iFood — quem paga é o cliente ou, na entrega grátis, a loja.
+    [ifoodEntrega ? (n.entregaGratisForaNota > 0.005 ? 'Taxa de entrega do iFood (paga pela loja: entrega grátis, custo cobrado no repasse)' : 'Taxa de entrega paga pelo cliente (é do iFood)') : '', ifoodEntrega ? o.entregaCliente : 0],
     ['Taxa de serviço (é do iFood)', o.taxaServico],
   ];
   const fora = candidatos.filter(([r, v]) => r && v > 0.005);
