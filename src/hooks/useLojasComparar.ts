@@ -17,12 +17,17 @@ const SYNC_MIN_MS = 10 * 60 * 1000;
 const RECARGA_MIN_MS = 15 * 1000;
 const ultimoSync = new Map<string, number>();
 
+const chaveIfood = (l: LinhaLojasRpc, lado: 'a' | 'b') => (lado === 'a'
+  ? `${l.tenant_id}|${l.periodo.d1}|${l.periodo.d2}|a`
+  : `${l.tenant_id}|${l.periodo.c1}|${l.periodo.c2}|${l.periodo.corte ? 'corte' : ''}|b`);
+
 export function useLojasComparar(periodo: PeriodoLojas, ativo = true, minLojas = 1) {
   const { user } = useAuth();
   const [linhas, setLinhas] = useState<LinhaLojasRpc[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
-  // iFood bruto por loja e período: `${tenant}|${periodo}|a` (atual) / `|b` (anterior)
+  // iFood bruto por loja e DATAS do período (chaveIfood): o nome do período não basta — na troca de período o efeito
+  // roda uma vez com as linhas do período anterior, e a busca ficaria guardada no período novo com as datas erradas.
   const [ifood, setIfood] = useState<Record<string, PedidoValor[]>>({});
   const [ifoodTick, setIfoodTick] = useState(0);
   const req = useRef(0);
@@ -72,7 +77,7 @@ export function useLojasComparar(periodo: PeriodoLojas, ativo = true, minLojas =
   useEffect(() => {
     if (!ativo || !linhas || !temLojas) return;
     const alvo = linhas.filter((l) => l.tem_ifood && !l.oculta);
-    const chave = `${periodo}|${ifoodTick}|${alvo.map((l) => l.tenant_id).join(',')}`;
+    const chave = `${ifoodTick}|${alvo.map((l) => chaveIfood(l, 'a') + chaveIfood(l, 'b')).join(',')}`;
     if (buscados.current === chave) return;
     buscados.current = chave;
     // Sem "cancelar" na limpeza: cada recarga das linhas re-roda o efeito e descartaria a busca em andamento.
@@ -83,7 +88,7 @@ export function useLojasComparar(periodo: PeriodoLojas, ativo = true, minLojas =
       const b = janelaDeBusca(c1, c2, l.janelas_anterior, corte ? new Date(corte) : null);
       Promise.all([fetchIfoodVendas(l.tenant_id, a.from, a.to), fetchIfoodVendas(l.tenant_id, b.from, b.to)])
         .then(([ra, rb]) => {
-          setIfood((ant) => ({ ...ant, [`${l.tenant_id}|${periodo}|a`]: ra.lista, [`${l.tenant_id}|${periodo}|b`]: rb.lista }));
+          setIfood((ant) => ({ ...ant, [chaveIfood(l, 'a')]: ra.lista, [chaveIfood(l, 'b')]: rb.lista }));
         })
         .catch((e) => console.error('[useLojasComparar] iFood', l.nome, e));
     }
@@ -103,8 +108,8 @@ export function useLojasComparar(periodo: PeriodoLojas, ativo = true, minLojas =
 
   const lojas: LojaComparada[] = useMemo(() => (linhas ?? []).map((l) => montarLoja(
     l,
-    l.tem_ifood ? ifood[`${l.tenant_id}|${periodo}|a`] ?? null : [],
-    l.tem_ifood ? ifood[`${l.tenant_id}|${periodo}|b`] ?? null : [],
+    l.tem_ifood ? ifood[chaveIfood(l, 'a')] ?? null : [],
+    l.tem_ifood ? ifood[chaveIfood(l, 'b')] ?? null : [],
   )), [linhas, ifood, periodo]);
 
   /** Esconde/mostra uma loja só para esta pessoa (vale em qualquer aparelho: user_preferences). */

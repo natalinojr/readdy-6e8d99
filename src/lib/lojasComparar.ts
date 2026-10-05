@@ -149,12 +149,16 @@ export function montarLoja(l: LinhaLojasRpc, ifAtual: PedidoValor[] | null, ifAn
 
 export interface TotalLojas { faturamento: number; pedidos: number; ticket: number; variacao: number | null; abertas: number }
 
-/** Total das lojas mostradas. A variação só existe se todas têm base (senão o % mistura loja nova). */
+/**
+ * Total das lojas mostradas. A variação só existe se todas as que venderam têm base (senão o % mistura loja nova);
+ * loja zerada nos dois períodos não conta nem atrapalha.
+ */
 export function totalLojas(lojas: LojaComparada[]): TotalLojas {
   let fat = 0; let ped = 0; let ant = 0; let todasComBase = lojas.length > 0; let abertas = 0;
   for (const l of lojas) {
     fat += l.atual.faturamento; ped += l.atual.pedidos;
-    if (l.variacao === null) todasComBase = false; else ant += l.anterior.faturamento;
+    const zerada = l.atual.faturamento <= 0 && l.anterior.faturamento <= 0;
+    if (l.variacao === null) { if (!zerada) todasComBase = false; } else ant += l.anterior.faturamento;
     if (l.agora.caixa) abertas += 1;
   }
   return {
