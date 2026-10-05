@@ -176,6 +176,22 @@ export default function HistoricoPagamentos({ call, onFechar, onAcao, versao = 0
 
   useEffect(() => { setLista(null); carregar(); }, [carregar, versao]);
 
+  // Pagamento em andamento (aprovar no app do Inter, enviado…): a lista se atualiza sozinha.
+  // O boleto do Estação Mall (05/10) foi pago no Inter e aqui seguiu "Falta aprovar" até recarregar.
+  const emAndamento = !!lista?.some((p) => ['sending', 'sent', 'pending_approval', 'approved', 'scheduled'].includes(p.status));
+  useEffect(() => {
+    if (!emAndamento) return;
+    const t = setInterval(async () => {
+      if (document.hidden) return;
+      try {
+        const r = await call<{ payments: PagamentoHistorico[]; has_more: boolean }>('payments_history', { filtro });
+        // Só a 1ª página: troca as que vieram e mantém as mais antigas já carregadas com "ver mais".
+        setLista((prev) => (prev ? [...r.payments, ...prev.filter((x) => !r.payments.some((n) => n.id === x.id) && r.payments.length > 0 && x.created_at < r.payments[r.payments.length - 1].created_at)] : r.payments));
+      } catch { /* tenta de novo no próximo ciclo */ }
+    }, 10000);
+    return () => clearInterval(t);
+  }, [emAndamento, call, filtro]);
+
   const conferirStatus = async (p: PagamentoHistorico) => {
     try {
       const out = await call<{ payment: PagamentoHistorico }>('pay', { id: p.id, op: 'st' });
