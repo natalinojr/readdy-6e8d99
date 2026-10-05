@@ -1,5 +1,5 @@
 // Resumo do topo da tela Hoje (2026-10-03). Números SEMPRE da mesma conta das outras telas:
-//   faturamento de hoje = Dashboard (fn_get_dashboard_metrics + iFood), com o cartão do próprio Dashboard;
+//   faturamento de hoje = Dashboard (fn_get_dashboard_metrics + iFood do dia da loja), com o cartão do próprio Dashboard;
 //   "no banco" / "vence em 7 dias" = Financeiro › Painel (saldo das contas ativas; contas em aberto
 //   pending/overdue/partial, saldo = valor − pago, vencida se antes de hoje em Brasília);
 //   loja aberta/fechada = a mesma sessão do topo (SessaoContext).
@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useDashboardMetrics } from '@/hooks/useDashboardMetrics';
 import { useDashboardPainel } from '@/hooks/useDashboardPainel';
-import { useIfoodVendas } from '@/hooks/useIfoodVendas';
+import { useIfoodDiaLoja } from '@/hooks/useIfoodDiaLoja';
 import { useBankAccounts } from '@/hooks/useFinanceiro';
 import { todayBrasilia, somarDias } from '@/lib/dateUtils';
 import FaturamentoHero from '@/pages/dashboard/components/FaturamentoHero';
@@ -24,7 +24,8 @@ export function VendasHoje() {
   const { data: m, reload } = useDashboardMetrics();
   const { data: painel } = useDashboardPainel(null);
   const [k, setK] = useState(0);
-  const { data: ifDia } = useIfoodVendas('Hoje', null, k);
+  // Dia da loja: as sessões de caixa abertas hoje (a que passa da meia-noite conta no dia em que abriu).
+  const { data: ifDia } = useIfoodDiaLoja(user?.tenantId, painel?.dia, painel?.janelas, null, k);
   // Confere de novo a cada 5 min com a tela visível (o Dashboard é que acompanha pedido a pedido).
   useEffect(() => {
     const t = setInterval(() => { if (!document.hidden) { reload(); setK((x) => x + 1); } }, 5 * 60 * 1000);
@@ -34,10 +35,12 @@ export function VendasHoje() {
   const diaSemana = painel?.dia_semana ?? new Date().getDay();
   const meta = (painel?.metas ?? []).find((x) => x.dia_semana === diaSemana && (x.faturamento > 0 || x.pedidos > 0 || x.ticket > 0)) ?? null;
   const horaAgora = `${Number(new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hour12: false }).slice(0, 2))}h`;
+  const outroDia = !!painel?.dia && painel.dia !== todayBrasilia();
+  const titulo = outroDia ? `Faturamento do dia ${painel!.dia.slice(8, 10)}/${painel!.dia.slice(5, 7)}` : 'Faturamento hoje';
   return (
     <FaturamentoHero
-      titulo={`Faturamento hoje${user?.loja ? ` · ${user.loja}` : ''}`}
-      ajuda="A mesma conta do Dashboard: pedidos pagos no sistema hoje + vendas do iFood. Toque em Dashboard para ver por canal e por hora."
+      titulo={`${titulo}${user?.loja ? ` · ${user.loja}` : ''}`}
+      ajuda="A mesma conta do Dashboard: a soma das sessões de caixa abertas hoje (a que passa da meia-noite conta no dia em que abriu) + vendas do iFood. Toque em Dashboard para ver por canal e por hora."
       valor={valor}
       rotuloSemana=""
       meta={meta}

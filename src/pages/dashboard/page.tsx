@@ -25,8 +25,10 @@ import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
 import { useSessaoFaturamento } from '@/hooks/useSessaoFaturamento';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useIfoodVendas } from '@/hooks/useIfoodVendas';
+import { useIfoodDiaLoja } from '@/hooks/useIfoodDiaLoja';
+import { horaDoDia, inicioDoDia } from '@/lib/diaLoja';
 import { useVendasHoraComparativo } from '@/hooks/useVendasHoraComparativo';
-import { todayBrasilia } from '@/lib/dateUtils';
+import { todayBrasilia, somarDias } from '@/lib/dateUtils';
 import { diasComparacao, montarVendasHora } from '@/lib/vendasHoraComparativo';
 import { useComparacoesLigadas } from '@/components/feature/ComparacaoVendasHora';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
@@ -62,7 +64,6 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { data: m, loading, error: metricsError, reload } = useDashboardMetrics();
-  const { data: extras, loading: extrasLoading, reload: reloadExtras } = useVisaoGeralExtras('Hoje');
   const { data: situacaoEstoque, reload: reloadAlertas } = useEstoqueSituacao();
   const fin = useFinanceiroAlertas();
   const { pedidos: kdsPedidos } = useKDS();
@@ -72,6 +73,22 @@ export default function Dashboard() {
 
   const desde = modo === 'sessao' && sessao ? sessao.dataRef.toISOString() : null;
   const { data: painel, reload: reloadPainel } = useDashboardPainel(desde);
+
+  // "Hoje" = dia da loja: a soma das sessões de caixa abertas no dia (a que passa da meia-noite conta no dia em
+  // que abriu — regra do dono, 2026-10-04). Categorias e mais vendidos: do começo do dia da loja (depois do fim
+  // da sessão de ontem que entrou pela madrugada) em diante.
+  const diaLoja = painel?.dia ?? todayBrasilia();
+  const outroDia = !!painel && painel.dia !== todayBrasilia();
+  const inicioExtras = useMemo(() => {
+    if (!painel?.dia) return null;
+    let ini = inicioDoDia(painel.dia).getTime();
+    for (const j of painel.janelas ?? []) if (j.dia < painel.dia && j.fim) ini = Math.max(ini, new Date(j.fim).getTime());
+    return new Date(ini).toISOString();
+  }, [painel?.dia, painel?.janelas]); // eslint-disable-line react-hooks/exhaustive-deps
+  const intervaloExtras = useMemo(() => (modo !== 'sessao' && inicioExtras && painel?.dia
+    ? { from: inicioExtras, to: inicioDoDia(somarDias(painel.dia, 2)).toISOString() }
+    : null), [modo, inicioExtras, painel?.dia]);
+  const { data: extras, loading: extrasLoading, reload: reloadExtras } = useVisaoGeralExtras('Hoje', intervaloExtras);
 
   // refreshKey: muda a cada pedido (tempo real) e no Atualizar → o que é "agora".
   // refreshLento: só no Atualizar e a cada 15 min → financeiro e mapa de pico (não pesar o banco a cada pedido).
@@ -153,16 +170,16 @@ export default function Dashboard() {
   const sessaoIntervalo = useMemo(() => (modo === 'sessao' && sessao
     ? { from: sessao.dataRef.toISOString(), to: new Date().toISOString() }
     : null), [modo, sessao?.dataRef.getTime(), refreshKey, ifoodSync]); // eslint-disable-line react-hooks/exhaustive-deps
-  const { data: ifDia } = useIfoodVendas('Hoje', null, refreshKey + ifoodSync);
+  // Modo Hoje: iFood do dia da loja (pedido na sessão aberta na hora conta no dia dela; fora de sessão, na data).
+  const { data: ifDia } = useIfoodDiaLoja(user?.tenantId, painel?.dia, painel?.janelas, null, refreshKey + ifoodSync);
   const { data: ifSessao } = useIfoodVendas('', sessaoIntervalo, refreshKey + ifoodSync);
-  // Mesmo período da semana passada, até esta hora (janela devolvida pelo painel). Só no modo "Hoje":
-  // a sessão conta pedidos não pagos e não fecha com a regra do painel. O fim é arredondado em 5 min
-  // para não buscar o iFood da semana de novo a cada pedido.
-  const spDesde = modo === 'sessao' ? undefined : painel?.semana_passada.desde;
-  const spAte5 = modo === 'sessao' || !painel ? undefined
+  // Mesmo dia da semana passada (dia da loja), até esta hora. Só no modo "Hoje": a sessão conta pedidos não
+  // pagos e não fecha com a regra do painel. O corte é arredondado em 5 min para não buscar o iFood da semana
+  // de novo a cada pedido.
+  const spCorte5 = modo === 'sessao' || !painel ? null
     : new Date(Math.floor(new Date(painel.semana_passada.ate).getTime() / 300000) * 300000).toISOString();
-  const semanaIntervalo = useMemo(() => (spDesde && spAte5 ? { from: spDesde, to: spAte5 } : null), [spDesde, spAte5]);
-  const { data: ifSemana } = useIfoodVendas('', semanaIntervalo);
+  const { data: ifSemana } = useIfoodDiaLoja(user?.tenantId, modo === 'sessao' ? null : painel?.semana_passada.dia,
+    painel?.semana_passada.janelas, spCorte5);
   const ifood = modo === 'sessao' ? ifSessao : ifDia;
   const ifTot = ifood?.total ?? 0;
   const ifPed = ifood?.pedidos ?? 0;
@@ -189,15 +206,18 @@ export default function Dashboard() {
   // Vendas por hora do dia (PDV + iFood por cima), sempre do dia de hoje, com linhas de
   // comparação ligáveis (ontem, mesmo dia da semana passada, mesmo dia do mês passado).
   const [comparacoes, alternarComparacao] = useComparacoesLigadas('dashboard.vendasHora.comparacoes', { semana: true });
-  const hojeBR = todayBrasilia();
-  const diasComp = useMemo(() => diasComparacao(hojeBR), [hojeBR]);
+  // Horas contadas desde a 0h do dia da loja (depois da meia-noite: 24, 25…), hoje e nas comparações.
+  const diasComp = useMemo(() => diasComparacao(diaLoja), [diaLoja]);
   const seriesComp = useVendasHoraComparativo(diasComp, comparacoes);
-  const horaAgoraNum = Number(new Date().toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', hour12: false }).slice(0, 2));
+  const horaAgoraNum = horaDoDia(new Date(), diaLoja);
   const vendasPorHora = (() => {
     const pdv: Record<string, number> = {};
     for (const h of m?.vendas_por_hora ?? []) pdv[h.hora.slice(0, 2)] = (pdv[h.hora.slice(0, 2)] ?? 0) + Number(h.valor);
     const ifoodHora: Record<string, number> = {};
-    for (const [hm, v] of Object.entries(ifDia?.porHora ?? {})) ifoodHora[hm.slice(0, 2)] = (ifoodHora[hm.slice(0, 2)] ?? 0) + v;
+    for (const [h, v] of Object.entries(ifDia?.porHora ?? {})) {
+      const hh = String(h).padStart(2, '0');
+      ifoodHora[hh] = (ifoodHora[hh] ?? 0) + v;
+    }
     const ligadas = Object.fromEntries(Object.entries(seriesComp).filter(([k]) => comparacoes[k as keyof typeof comparacoes]));
     return montarVendasHora(pdv, ifoodHora, ligadas, horaAgoraNum);
   })();
@@ -302,16 +322,19 @@ export default function Dashboard() {
     });
   }
 
-  // Label contextual para o período
+  // Label contextual para o período. Depois da meia-noite, com a sessão de ontem ainda aberta, o "Hoje" segue
+  // sendo o dia em que ela abriu — o rótulo diz qual dia é.
+  const diaCurto = `${diaLoja.slice(8, 10)}/${diaLoja.slice(5, 7)}`;
   const periodoLabel = modo === 'sessao'
     ? sessao
       ? `Sessão ${sessao.numero} — aberta ${sessao.dataRef.toLocaleDateString('pt-BR')}`
       : 'Sem sessão ativa'
-    : 'Hoje';
+    : outroDia ? `Dia ${diaCurto}${sessao ? ` · caixa aberto desde ${sessao.iniciadaEm}` : ''}` : 'Hoje';
 
   const ajudaFaturamento = (modo === 'sessao'
     ? 'Tudo que a loja VENDEU desde a abertura do caixa: pedidos do sistema (mesa, balcão, delivery, totem) + iFood.\n\n'
-    : 'Tudo que a loja VENDEU hoje: pedidos do sistema (mesa, balcão, delivery, totem) + iFood.\n\n') +
+    : 'Tudo que a loja VENDEU no dia: a soma das sessões de caixa abertas hoje — pedidos do sistema (mesa, balcão, ' +
+      'delivery, totem) + iFood. A sessão que passa da meia-noite conta inteira no dia em que abriu.\n\n') +
     'É venda, não dinheiro na conta. O que já entrou (maquininha, Pix no banco, repasse do iFood) aparece em ' +
     'Financeiro › Visão Geral › "Recebido hoje", que costuma ficar abaixo deste número até as conciliações do dia.\n\n' +
     `A comparação com ${rotuloSemana} usa o mesmo período até este horário.`;
@@ -324,7 +347,7 @@ export default function Dashboard() {
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite';
-  const horaAgora = `${horaAgoraNum}h`;
+  const horaAgora = `${horaAgoraNum % 24}h`;
 
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-[1400px] mx-auto">
@@ -402,7 +425,7 @@ export default function Dashboard() {
       {/* 2. Faturamento (com a meta) + cartões */}
       <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <FaturamentoHero
-          titulo={modo === 'sessao' ? 'Faturamento da sessão' : 'Faturamento hoje'}
+          titulo={modo === 'sessao' ? 'Faturamento da sessão' : outroDia ? `Faturamento do dia ${diaCurto}` : 'Faturamento hoje'}
           ajuda={ajudaFaturamento}
           valor={faturamentoHoje}
           varSemana={varSemana}

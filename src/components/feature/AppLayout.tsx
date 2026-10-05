@@ -23,8 +23,9 @@ function PageLoader() {
 
 // Rotas publicas — acessiveis SEM autenticacao
 const PUBLIC_ROUTES = ['/login', '/onboarding', '/invite', '/autoatendimento', '/mesa/', '/mesa-qr/', '/pedido/'];
-// Rotas full-screen protegidas — sem sidebar/topbar, MAS exigem auth + tenant
-const FULL_SCREEN_PROTECTED = ['/modulos'];
+// Rotas full-screen protegidas — sem sidebar/topbar, MAS exigem auth + tenant.
+// /lojas (Comparar lojas) é de várias lojas: fica fora do menu da loja ativa, como /modulos.
+const FULL_SCREEN_PROTECTED = ['/modulos', '/lojas'];
 // Terminais — full-screen com UI propria
 const TERMINAL_ROUTES = ['/pdv/', '/kds', '/gestor-pedidos', '/gestor-entregas', '/tarefas', '/receber', '/lancar'];
 // Usuário sem loja com acesso só a módulo (user_module_access): rotas que funcionam sem tenant
@@ -133,7 +134,9 @@ export default function AppLayout() {
   if (isFullScreenProtected) {
     return (
       <>
-        <Outlet />
+        <Suspense fallback={<PageLoader />}>
+          <Outlet />
+        </Suspense>
         <AssistenteChat variant="floating" />
         {/* Convite para ligar os avisos no celular (some quando ligado; "Agora não" = 3 dias). */}
         <ConviteAvisos />

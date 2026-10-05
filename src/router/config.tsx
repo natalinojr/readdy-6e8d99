@@ -11,6 +11,8 @@ import MobileKeyboardAssist from '@/components/feature/MobileKeyboardAssist';
 // ── Páginas carregadas sob demanda (code-splitting por rota) ──────────────────
 const NotFound = lazy(() => import('../pages/NotFound'));
 const Dashboard = lazy(() => import('../pages/dashboard/page'));
+// Comparar lojas (várias lojas lado a lado, ao vivo) — fora do menu de uma loja, como /modulos
+const LojasPage = lazy(() => import('../pages/lojas/page'));
 const CardapioPage = lazy(() => import('../pages/cardapio/page'));
 const PDVDeliveryPage = lazy(() => import('../pages/pdv/delivery/page'));
 const PDVCaixaPage = lazy(() => import('../pages/pdv/caixa/page'));
@@ -103,6 +105,7 @@ const routes: RouteObject[] = [
       { path: 'hoje/piloto', element: <PilotoPage /> },
       { path: 'hoje/rotina', element: <RotinaConfigPage /> },
       { path: 'modulos', element: <ModulosPage /> },
+      { path: 'lojas', element: <LojasPage /> },
       { path: 'onboarding', element: <OnboardingPage /> },
       { path: 'invite', element: <InvitePage /> },
       { path: 'dashboard', element: <Dashboard /> },

@@ -51,7 +51,8 @@ export function montarVendasHora(
   const out: PontoVendasHora[] = [];
   for (let h = ini; h <= fim; h++) {
     const hh = String(h).padStart(2, '0');
-    const p: PontoVendasHora = { hora: `${hh}:00` };
+    // Dashboard: hora desde a 0h do dia da loja — a madrugada da sessão que passou da meia-noite vem como 24, 25…
+    const p: PontoVendasHora = { hora: `${String(h % 24).padStart(2, '0')}:00` };
     if (h <= horaAgora) {
       const ifood = hojeIfood[hh] ?? 0;
       p.valor = r2((hojePdv[hh] ?? 0) + ifood);
