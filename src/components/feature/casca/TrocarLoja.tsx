@@ -17,6 +17,8 @@ import { supabase } from '@/lib/supabase';
 import { useAuth, DB_TO_FRONTEND_ROLE } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useLojasComparar } from '@/hooks/useLojasComparar';
+import { rotuloComparacao, totalLojas } from '@/lib/lojasComparar';
+import { brl, Variacao } from '@/pages/lojas/components/ui';
 import { usePendenciasHoje } from '@/pages/hoje/hojeStore';
 import { podeSair } from '@/lib/guardaSaida';
 import { getLojaAtiva } from '@/lib/lojaAtiva';
@@ -133,6 +135,9 @@ function ConteudoTroca({ onFechar }: { onFechar: () => void }) {
 
   const pronto = lojas !== null && (cansou || ((!carregandoComparar || !!erroComparar) && itens !== null));
   const veComparar = comparadas.length >= 2;
+  // As lojas juntas hoje (as mesmas do "Suas lojas agora": sem as escondidas e as paradas).
+  const juntas = useMemo(() => comparadas.filter((l) => !l.oculta && !l.parada), [comparadas]);
+  const total = useMemo(() => totalLojas(juntas), [juntas]);
   const primeiroOutro = visiveis.find((c) => !c.aqui)?.tenantId ?? null;
 
   const entrar = useCallback(async (c: CartaoLoja) => {
@@ -177,6 +182,27 @@ function ConteudoTroca({ onFechar }: { onFechar: () => void }) {
         <div className="flex justify-center py-12"><div className="w-7 h-7 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>
       ) : (
         <div className="pb-2">
+          {veComparar && juntas.length > 0 && (
+            <button type="button" onClick={irComparar} disabled={!!ocupado}
+              className="w-full text-left rounded-[18px] bg-[#1F1A14] text-white p-3.5 mb-3 active:scale-[.99] transition-transform">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-extrabold uppercase tracking-[.1em] text-white/60">
+                  {juntas.length === 1 ? 'Sua loja hoje' : `Suas ${juntas.length} lojas juntas hoje`}
+                </span>
+                <span className="text-[11.5px] font-bold text-amber-300 whitespace-nowrap">Comparar <i className="ri-arrow-right-s-line" /></span>
+              </div>
+              <div className="flex items-end gap-2 flex-wrap mt-1">
+                <span className="text-[26px] leading-none font-black tracking-tight tabular-nums">{brl(total.faturamento)}</span>
+                <Variacao pct={total.variacao} escuro titulo={total.variacao === null ? 'Uma das lojas não tem base de comparação' : undefined} />
+              </div>
+              <div className="text-[11.5px] text-white/60 mt-1 tabular-nums">
+                {total.pedidos} {total.pedidos === 1 ? 'pedido' : 'pedidos'}
+                {total.pedidos > 0 && <> · tíquete {brl(total.ticket)}</>}
+                {' · '}{total.abertas} {total.abertas === 1 ? 'aberta' : 'abertas'}
+                {juntas[0] && <> · {rotuloComparacao('hoje', juntas[0])}</>}
+              </div>
+            </button>
+          )}
           {erroLojas && <p className="text-[12px] text-red-600 mb-2">Não consegui ler as suas lojas agora. Tente de novo em instantes.</p>}
           {visiveis.map((c) => (
             <CartaoTroca key={c.tenantId} c={c} principal={c.tenantId === primeiroOutro} ocupado={ocupado}

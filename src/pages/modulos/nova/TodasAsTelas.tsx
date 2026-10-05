@@ -14,6 +14,7 @@ import { abrirTrocarLoja } from '@/components/feature/casca/trocaLojaEstado';
 import { Bolinha, perfilLabel, useEstadoLoja } from '@/components/feature/casca/partes';
 import { Folha, MenuMais } from '@/components/kit';
 import OnboardingShareModal from '@/pages/modulos/components/OnboardingShareModal';
+import LojasAgora from '@/pages/lojas/components/LojasAgora';
 import { LinkRota, Topo } from './partes';
 
 const DESCRICAO_PRODUTO: Record<string, string> = {
@@ -160,6 +161,8 @@ export default function TodasAsTelas() {
         }
       />
       <div className="px-4 md:px-8 pb-12 max-w-6xl mx-auto">
+        {/* Suas lojas agora: o total das lojas juntas e cada uma ao vivo (quem vê o Dashboard em 2+ lojas; a página antiga já tinha) */}
+        <div className="mt-3"><LojasAgora /></div>
         <h1 className="text-[22px] md:text-[26px] font-black leading-tight mt-3">Todas as telas</h1>
         <p className="text-[13px] text-[#5B5248] mt-1">
           {total} {total === 1 ? 'tela' : 'telas'} em {grupos.length} {grupos.length === 1 ? 'grupo' : 'grupos'} — os mesmos do menu, cada uma com uma linha dizendo o que é. Só aparecem as que você pode abrir.
