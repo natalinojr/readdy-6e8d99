@@ -1237,7 +1237,7 @@ Deno.serve(async (req) => {
         const stockNow = !purchase.stock_applied_at;
         // Trava atômica ANTES do estoque: de duas confirmações simultâneas, só uma passa.
         const { data: locked, error: lockErr } = await supabase.from('fin_purchases').update({
-          delivery_confirmed_at: confirmedAt, delivery_notes: delivery_notes || null,
+          delivery_confirmed_at: confirmedAt, delivery_registered_at: confirmedAt, delivery_notes: delivery_notes || null,
           ...(stockNow ? { stock_applied_at: confirmedAt } : {}),
         }).eq('id', purchase_id).eq('tenant_id', tenant_id).is('delivery_confirmed_at', null).select('id');
         if (lockErr) throw lockErr;
