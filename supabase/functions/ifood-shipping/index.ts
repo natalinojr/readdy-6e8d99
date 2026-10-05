@@ -14,6 +14,7 @@
 //   use_system_app                                  volta a loja para o app do sistema
 //   set_options    { homologation_mode?, shipping_enabled?, default_prep_min?, shipping_merchant_id? }
 //   request_user_code / confirm_authorization { authorization_code } / delete_config   admin/gerente
+//   refresh_merchants                                renova o acesso e relê as lojas de cada autorização   admin/gerente
 //   prepare        { order_id }                     formulário pré-preenchido (endereço, telefone, itens, pagamento)
 //   quote          { order_id, lat, lng }           GET shipping/v1.0/merchants/{m}/deliveryAvailabilities
 //   create         { order_id, quote_id, customer, address, payment, prep_min }
@@ -798,10 +799,38 @@ Deno.serve(async (req) => {
     const cfg = withSystemApp(cfgRow);
     const listAuths = async () => (await admin.from('ifood_pdv_auths').select('id, merchants, authorized_at').eq('tenant_id', tenantId).order('authorized_at', { ascending: false })).data ?? [];
 
+    // A autorização traz TODAS as lojas do login do Portal do Parceiro. Loja do iFood que já é de outra loja do ERPOS
+    // (no financeiro — fin_ifood_merchants — ou ligada lá em pedidos/entregas) não pode ser ligada aqui: os dois
+    // tenants disputariam os mesmos eventos (ack) e o pedido seria contado em dobro.
+    const lojasDeOutra = async (ids: string[]): Promise<Map<string, string>> => {
+      const out = new Map<string, string>();
+      const alvo = [...new Set(ids.filter(Boolean))];
+      if (!alvo.length) return out;
+      const [{ data: fin }, { data: pdv }] = await Promise.all([
+        admin.from('fin_ifood_merchants').select('tenant_id, merchant_id').in('merchant_id', alvo).neq('tenant_id', tenantId),
+        admin.from('ifood_pdv_config').select('tenant_id, shipping_merchant_id, order_enabled, order_merchant_ids').neq('tenant_id', tenantId),
+      ]);
+      const deTenant = new Map<string, string>();
+      for (const f of fin ?? []) deTenant.set(String(f.merchant_id), f.tenant_id);
+      for (const p of pdv ?? []) for (const id of alvo) {
+        if (p.shipping_merchant_id === id || (p.order_enabled && (p.order_merchant_ids ?? []).includes(id))) deTenant.set(id, p.tenant_id);
+      }
+      if (!deTenant.size) return out;
+      const { data: ts } = await admin.from('tenants').select('id, name').in('id', [...new Set(deTenant.values())]);
+      const nome = new Map((ts ?? []).map((t: any) => [t.id, t.name as string]));
+      for (const [id, t] of deTenant) out.set(id, nome.get(t) ?? 'outra loja');
+      return out;
+    };
+
     if (action === 'get_config') {
       // Loja sem config ainda: com o app do sistema, a tela já mostra "Gerar código".
       const shown = cfg ?? withSystemApp({ tenant_id: tenantId });
-      return json({ success: true, config: safeConfig(shown, cfg ? await listAuths() : []), can_edit: isManager, system_app_available: hasSystemApp() });
+      const config = safeConfig(shown, cfg ? await listAuths() : []);
+      if (config?.merchants.length) {
+        const outra = await lojasDeOutra(config.merchants.map((m) => m.id));
+        config.merchants = config.merchants.map((m) => ({ ...m, outra_loja: outra.get(m.id) ?? null }));
+      }
+      return json({ success: true, config, can_edit: isManager, system_app_available: hasSystemApp() });
     }
 
     // ── Entregas (qualquer pessoa da loja: quem despacha é o caixa/expedição) ──
@@ -1342,6 +1371,8 @@ Deno.serve(async (req) => {
         const id = String(body.shipping_merchant_id ?? '').trim();
         const m = (await listAuths()).flatMap((a: any) => a.merchants ?? []).find((x: any) => x.id === id);
         if (id && !m) return errResp('Essa loja do iFood ainda não autorizou o app ERPOS PDV.');
+        const dona = id ? (await lojasDeOutra([id])).get(id) : undefined;
+        if (dona) return errResp(`A loja do iFood "${m?.name ?? id}" é da loja "${dona}" no ERPOS — escolha uma loja do iFood desta loja.`);
         if (id !== (cfg.shipping_merchant_id ?? '') && await temAtivas()) return errResp(MSG_ATIVAS);
         upd.shipping_merchant_id = id || null; upd.shipping_merchant_name = m?.name ?? null;
       }
@@ -1352,9 +1383,17 @@ Deno.serve(async (req) => {
         if (body.order_mode === 'funnel' && cfg.order_mode !== 'funnel') upd.funnel_since = new Date().toISOString();
       }
       if (typeof body.order_auto_confirm === 'boolean') upd.order_auto_confirm = body.order_auto_confirm;
-      if (Array.isArray(body.order_merchant_ids)) {
-        const ok = new Set((await listAuths()).flatMap((a: any) => (a.merchants ?? []).map((m: any) => m.id)));
-        const ids = body.order_merchant_ids.map(String).filter((id: string) => ok.has(id));
+      let aviso: string | null = null;
+      const pedidosLigados = (upd.order_enabled ?? cfg.order_enabled) === true;
+      if (Array.isArray(body.order_merchant_ids) || (pedidosLigados && typeof body.order_enabled === 'boolean')) {
+        const ok = new Map<string, string>((await listAuths()).flatMap((a: any) => (a.merchants ?? []).map((m: any) => [m.id, m.name])));
+        const pedidos: string[] = Array.isArray(body.order_merchant_ids) ? body.order_merchant_ids.map(String) : (cfg.order_merchant_ids ?? []);
+        let ids = pedidos.filter((id) => ok.has(id));
+        const outra = await lojasDeOutra(ids);
+        if (outra.size) {
+          aviso = 'Não ligado aqui (é de outra loja do ERPOS): ' + [...outra].map(([id, dona]) => `${ok.get(id)} → ${dona}`).join('; ') + '.';
+          ids = ids.filter((id) => !outra.has(id));
+        }
         upd.order_merchant_ids = ids;
       }
       if (typeof body.shipping_enabled === 'boolean') {
@@ -1364,7 +1403,7 @@ Deno.serve(async (req) => {
       }
       const { error } = await admin.from('ifood_pdv_config').update(upd).eq('id', cfg.id);
       if (error) return errResp('Salvar: ' + error.message, 500);
-      return json({ success: true });
+      return json({ success: true, aviso });
     }
 
     // App centralizado: token por client_credentials e a lista das lojas que o app enxerga (sem código).
@@ -1445,9 +1484,29 @@ Deno.serve(async (req) => {
       if (aErr) return errResp('Gravar autorização: ' + aErr.message, 500);
       const upd: Record<string, unknown> = { user_code: null, auth_verifier_secret: null, updated_at: now };
       // Uma loja só na autorização e nenhuma escolhida ainda → já fica escolhida.
-      if (!cfg.shipping_merchant_id && merchants.length === 1) Object.assign(upd, { shipping_merchant_id: merchants[0].id, shipping_merchant_name: merchants[0].name });
+      if (!cfg.shipping_merchant_id && merchants.length === 1 && !(await lojasDeOutra([merchants[0].id])).size) Object.assign(upd, { shipping_merchant_id: merchants[0].id, shipping_merchant_name: merchants[0].name });
       await admin.from('ifood_pdv_config').update(upd).eq('id', cfg.id);
-      return json({ success: true, merchants });
+      const aviso = merchants.length ? null
+        : 'O iFood aceitou o código, mas não liberou nenhuma loja para o ERPOS PDV. No Portal do Parceiro, confira em Apps se o ERPOS PDV ficou ativo na loja certa e conclua todas as etapas; depois clique em "Autorizar outra loja" e repita.';
+      return json({ success: true, merchants, aviso });
+    }
+
+    // Renova o acesso de cada autorização e relê as lojas que ela enxerga (loja liberada depois, ou autorização que
+    // voltou sem nenhuma loja — 05/10 Paranaguá: Apps do portal mostrava o ERPOS PDV nas 3 lojas e /merchants vinha []).
+    if (action === 'refresh_merchants') {
+      if (!cfg?.client_id) return errResp('App do iFood não configurado.');
+      const auths = (await admin.from('ifood_pdv_auths').select('*').eq('tenant_id', tenantId)).data ?? [];
+      if (!auths.length) return errResp('A loja ainda não autorizou o app ERPOS PDV.');
+      let total = 0;
+      for (const a of auths) {
+        a.token_expires_at = null; // força renovar
+        const access = await getToken(admin, cfg, a);
+        const m = await listarLojas(access, cfg.homologation_mode === true);
+        if (!m.ok) return errResp(apiError(m, 'Listar lojas'));
+        await admin.from('ifood_pdv_auths').update({ merchants: m.merchants, updated_at: new Date().toISOString() }).eq('id', a.id);
+        total += m.merchants.length;
+      }
+      return json({ success: true, total, aviso: total ? null : 'O iFood ainda não libera nenhuma loja para o ERPOS PDV com essa autorização. Gere um código novo ("Autorizar outra loja") e autorize de novo no Portal do Parceiro.' });
     }
 
     if (action === 'delete_config') {

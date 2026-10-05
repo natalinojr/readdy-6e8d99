@@ -14,7 +14,7 @@ export interface IfoodShippingConfig {
   shipping_merchant_name: string | null;
   user_code: string | null;
   verification_url: string | null;
-  merchants: { id: string; name: string }[];
+  merchants: { id: string; name: string; outra_loja?: string | null }[]; // outra_loja: já é de outra loja do ERPOS (não liga aqui)
   authorized: boolean;
   last_poll_at: string | null;
   last_poll_error: string | null;
