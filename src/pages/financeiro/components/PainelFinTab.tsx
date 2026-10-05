@@ -24,7 +24,7 @@ import { mesExtenso } from './dreUi';
 const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const ddmm = (ymd: string) => `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}`;
 // Pendências que não são de dinheiro ficam fora do Painel (continuam na caixa de Pendências).
-const FORA_DO_PAINEL = new Set(['tarefa_vencida', 'estoque_critico', 'recebimento_sem_nota', 'recebimento_parado', 'aprovacao', 'vendas_abaixo_ritmo', 'insumo_antes_do_pico']);
+const FORA_DO_PAINEL = new Set(['tarefa_vencida', 'estoque_critico', 'recebimento_sem_nota', 'recebimento_parado', 'aprovacao', 'vendas_abaixo_ritmo', 'insumo_antes_do_pico', 'fique_de_olho']);
 
 function Pergunta({ titulo, icone, acao, onAcao, destaque, children }: {
   titulo: string; icone: string; acao: string; onAcao: () => void; destaque?: 'red'; children: React.ReactNode;

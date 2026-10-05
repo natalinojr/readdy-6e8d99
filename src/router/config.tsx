@@ -26,6 +26,7 @@ const EstoquePage = lazy(() => import('../pages/estoque/page'));
 const MesaClientePage = lazy(() => import('../pages/mesa/page'));
 const AutoatendimentoPage = lazy(() => import('../pages/autoatendimento/page'));
 const TotemPage = lazy(() => import('../pages/totem/page'));
+const SenhasTvPage = lazy(() => import('../pages/senhas/page'));
 const ConfiguracoesPage = lazy(() => import('../pages/configuracoes/page'));
 const ConfigDeliveryPage = lazy(() => import('../pages/config-delivery/page'));
 const UsuariosPage = lazy(() => import('../pages/usuarios/page'));
@@ -95,6 +96,8 @@ const routes: RouteObject[] = [
   { path: '/clube/:storeSlug', element: <ClubePage /> },
   { path: '/autoatendimento', element: <AutoatendimentoPage /> },
   { path: '/totem/:token', element: <TotemPage /> },
+  // Painel de senhas na TV (pública, por token próprio; só mostra números de senha)
+  { path: '/senhas/:token', element: <SenhasTvPage /> },
   {
     path: '/',
     element: <AppLayout />,

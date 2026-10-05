@@ -17,7 +17,9 @@ import { kindConfig } from '@/contexts/PendenciasContext';
 import { useHoje, type TarefaHoje } from './useHoje';
 import { contarAgoraPorLoja, diasEntre, type ItemHoje } from './organizar';
 import CartaoHoje from './CartaoHoje';
+import FiqueDeOlho from './FiqueDeOlho';
 import AprendiComVoce from './AprendiComVoce';
+import VemAi from './VemAi';
 import { DinheiroHoje, LojaHoje, VendasHoje } from './ResumoHoje';
 import RotinaHoje from './rotina/RotinaHoje';
 import { useRotinaHoje } from './rotina/useRotina';
@@ -78,7 +80,9 @@ export default function HojePage() {
   const vis = filtro ? todos.filter((i) => i.tenantId === filtro) : todos;
   const agora = vis.filter((i) => i.bloco === 'agora');
   const emDia = vis.filter((i) => i.bloco === 'em_dia');
-  const espera = vis.filter((i) => i.bloco === 'espera');
+  // "Fique de olho" é ciência (cancelamento/desconto/sangria altos): seção própria, fora de "Pode esperar" e do número de "Agora".
+  const olhos = vis.filter((i) => i.kind === 'fique_de_olho' && i.bloco !== 'silenciado');
+  const espera = vis.filter((i) => i.bloco === 'espera' && i.kind !== 'fique_de_olho');
   const outros = vis.filter((i) => i.bloco === 'outros');
   const silenciados = vis.filter((i) => i.bloco === 'silenciado').length;
   const lista = tarefas ?? [];
@@ -232,6 +236,8 @@ export default function HojePage() {
             </section>
           )}
 
+          <FiqueDeOlho itens={olhos} hoje={hoje} mostrarLoja={varias && !filtro} abrir={abrir} marcar={marcar} onMudou={recarregar} podeDarCiencia={(t) => dono || papelDe(t) === 'admin'} />
+
           <RotinaHoje rotina={rotina} filtroLoja={filtro || undefined} />
 
           {celular && (verVendas || verDinheiro || gestor) && <div className="space-y-3">{resumoSemLoja}</div>}
@@ -303,6 +309,9 @@ export default function HojePage() {
               )}
             </section>
           )}
+
+          {/* Vem aí (2026-10-05): próximos 14 dias de todas as lojas, só o dono; recolhido. */}
+          <VemAi dono={dono} filtroLoja={filtro} abrir={abrir} />
 
           <p className="text-[12px] text-zinc-400 text-center">
             <button onClick={() => navigate('/pendencias')} className="font-semibold text-zinc-500 underline cursor-pointer">Ver todas as pendências e o histórico</button>

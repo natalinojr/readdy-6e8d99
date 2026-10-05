@@ -1,3 +1,5 @@
+import { LIMITES_OLHO } from '../../supabase/functions/_shared/fique-de-olho';
+
 export type SeveridadeAuditoria = 'info' | 'aviso' | 'critico';
 export type TipoAcao =
   | 'desconto_aplicado' | 'desconto_negado' | 'desconto_solicitado'
@@ -92,10 +94,11 @@ export const tiposParaFiltro = [
   { id: 'vouchers',label: 'Vouchers/Promoções', tipos: ['voucher_emitido','promocao_aplicada'] },
 ];
 
-// Thresholds para alertas automáticos
+// Thresholds para alertas automáticos. Valores em supabase/functions/_shared/fique-de-olho.ts: o mesmo
+// número vale para o bipe no aparelho, para o alerta da Auditoria e para o cartão "Fique de olho" da Hoje.
 export const ALERT_THRESHOLDS = {
-  cancelamentoAltoValor: 100,   // R$ 100 ou mais
-  descontoAltoValor: 50,        // R$ 50 ou mais
-  sangriaAltoValor: 500,        // R$ 500 ou mais
+  cancelamentoAltoValor: LIMITES_OLHO.cancelamento,   // R$ 100 ou mais
+  descontoAltoValor: LIMITES_OLHO.desconto,           // R$ 50 ou mais
+  sangriaAltoValor: LIMITES_OLHO.sangria,             // R$ 500 ou mais
   multiploCancelamentosMin: 3,  // 3+ cancelamentos em 30 min
 };

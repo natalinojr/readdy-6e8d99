@@ -13,6 +13,7 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef, ty
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useKioskAuth } from '@/contexts/KioskAuthContext';
+import { normalizarRecursos, type RecursosLoja } from '@/constants/recursosLoja';
 
 // ── Types (re-exportados para compatibilidade) ────────────────────────────────
 
@@ -114,6 +115,8 @@ export interface SystemSettings {
   bloquear_item_sem_insumo: boolean;
   /** Só importa com bloquear_item_sem_insumo ligado: conta também o consumo de pedidos ainda não prontos. */
   bloquear_item_sem_insumo_reserva: boolean;
+  /** Recursos novos ligados nesta loja (ver constants/recursosLoja.ts). */
+  recursos: RecursosLoja;
   motoboy_alertas: MotoboyAlertas;
   whatsapp_msgs: Record<string, string[]>;  // mensagens pro cliente por fase (status)
   updated_at?: string;
@@ -180,6 +183,7 @@ export const DEFAULT_SETTINGS: SystemSettings = {
   pager_count: 50,
   bloquear_item_sem_insumo: false,
   bloquear_item_sem_insumo_reserva: false,
+  recursos: {},
   motoboy_alertas: { categorias: [], itens: [] },
   whatsapp_msgs: {},
 };
@@ -265,6 +269,7 @@ function parseRow(data: Record<string, unknown>): SystemSettings {
     pager_count: Number(data.pager_count ?? DEFAULT_SETTINGS.pager_count),
     bloquear_item_sem_insumo: (data.bloquear_item_sem_insumo as boolean) ?? DEFAULT_SETTINGS.bloquear_item_sem_insumo,
     bloquear_item_sem_insumo_reserva: (data.bloquear_item_sem_insumo_reserva as boolean) ?? DEFAULT_SETTINGS.bloquear_item_sem_insumo_reserva,
+    recursos: normalizarRecursos(data.recursos),
     pdv_config: data.pdv_config
       ? { ...DEFAULT_PDV_CONFIG, ...(data.pdv_config as Partial<PdvConfig>) }
       : DEFAULT_PDV_CONFIG,

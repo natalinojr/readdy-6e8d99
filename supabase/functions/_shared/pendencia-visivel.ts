@@ -8,7 +8,8 @@ export const PERFIS_FINANCEIRO = ['admin', 'gerente', 'financeiro'];
 const KINDS_OPERACIONAIS = new Set(['estoque_critico', 'recebimento_sem_nota', 'recebimento_parado', 'insumo_antes_do_pico']);
 // Vendas × meta (2026-10-03): o que o Dashboard mostra é de quem vê o Dashboard (gestao_dashboard: admin e gerente).
 export const PERFIS_GESTAO = ['admin', 'gerente'];
-const KINDS_GESTAO = new Set(['vendas_abaixo_ritmo']);
+// fique_de_olho (2026-10-05): o que a equipe fez de alto valor (cancelamento, desconto, sangria) — Administrador e Supervisor.
+const KINDS_GESTAO = new Set(['vendas_abaixo_ritmo', 'fique_de_olho']);
 // "N tarefas vencidas" (2026-09-29, caso Thatiele): o cron conta as tarefas DO DONO na loja
 // (criadas por ele ou dele), então a linha é só dele.
 export const DONO_EMAIL = 'natalinojr.engel@gmail.com';

@@ -25,6 +25,7 @@ import { usePaymentMethods } from '@/hooks/usePaymentMethods';
 
 import { useToast } from '@/contexts/ToastContext';
 import PixConfigModal from './PixConfigModal';
+import RecursosLojaCard from './RecursosLojaCard';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 
@@ -335,6 +336,7 @@ export default function OperacaoTab() {
 
   return (
     <div className="space-y-5 max-w-3xl">
+      <RecursosLojaCard />
       {showPixModal && <PixConfigModal onClose={() => { setShowPixModal(false); setExtrasTick((n) => n + 1); }} />}
       {salvo && (
         <div className="flex items-center gap-2 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl">

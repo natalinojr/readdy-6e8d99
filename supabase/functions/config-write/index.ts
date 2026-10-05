@@ -70,6 +70,13 @@ Deno.serve(async (req) => {
       // O papel 'financeiro' não ganha nada aqui: ele não recebe 'configuracoes_editar'
       // (spec modulo-financeiro-sem-pdv, 2026-09-20) e só usa get_permissions, de leitura.
       const SO_ADMIN = new Set(['upsert_permissions'])
+      // Recursos novos da loja (TV de senhas, telas novas…): só Administrador e Supervisor,
+      // nunca o papel liberado pela matriz (configuracoes_editar).
+      if (action === 'set_recurso' && !isManagerRole(role)) {
+        return new Response(JSON.stringify({ success: false, error: 'Só o Administrador ou o Supervisor liga recursos novos' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403,
+        })
+      }
       if (SO_ADMIN.has(action) && roleRank(role) < 3) {
         return new Response(JSON.stringify({ success: false, error: 'Só o Admin da loja altera as permissões' }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403,
@@ -799,6 +806,26 @@ Deno.serve(async (req) => {
     // ═══════════════════════════════════════════════════════════════════════════
     // SYSTEM SETTINGS
     // ═══════════════════════════════════════════════════════════════════════════
+    if (action === 'set_recurso') {
+      const CHAVES_RECURSO = ['tv_senhas', 'whatsapp_senha_pronta', 'usuarios_novo', 'caixa_novo', 'cardapio_novo', 'gestor_novo', 'totem_novo', 'tarefas_novo']
+      const chave = String(rest.chave ?? '')
+      if (!tenant_id || !CHAVES_RECURSO.includes(chave)) {
+        return new Response(JSON.stringify({ success: false, error: 'Recurso inválido' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
+        })
+      }
+      const { data, error } = await supabaseAdmin.rpc('fn_set_recurso_loja', { p_tenant_id: tenant_id, p_chave: chave, p_ligado: rest.ligado === true })
+      if (error) {
+        console.error('[config-write] set_recurso error:', error)
+        return new Response(JSON.stringify({ success: false, error: error.message }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 500,
+        })
+      }
+      return new Response(JSON.stringify({ success: true, recursos: data ?? {} }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
+    }
+
     if (action === 'upsert_system_settings') {
       if (!tenant_id) {
         return new Response(JSON.stringify({ success: false, error: 'tenant_id é obrigatório' }), {
