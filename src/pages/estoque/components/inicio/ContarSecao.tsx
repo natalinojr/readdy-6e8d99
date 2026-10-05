@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEstoque } from '@/contexts/EstoqueContext';
 import { useToast } from '@/contexts/ToastContext';
@@ -31,37 +30,8 @@ export default function ContarSecao({ situacao, contagem, podeContar, onContar, 
   onConfigurar: () => void;
   onReload: () => void;
 }) {
-  const { user } = useAuth();
-  const toast = useToast();
-  const [criando, setCriando] = useState(false);
   const { devidos, conferir, planos, itens } = contagem;
   const pode = situacao.config.podeConfigurar;
-
-  const criarPadrao = async () => {
-    setCriando(true);
-    try {
-      const topo = maisGiram(situacao.insumos).map((i) => i.id);
-      const r1 = await supabase.rpc('fn_estoque_salvar_plano', {
-        p_tenant_id: user!.tenantId, p_id: null, p_nome: 'Contagem geral', p_frequencia: 'mensal',
-        p_dia_semana: null, p_dia_mes: 0, p_todos: true, p_itens: [],
-      });
-      if (r1.error) throw r1.error;
-      if (topo.length) {
-        const r2 = await supabase.rpc('fn_estoque_salvar_plano', {
-          p_tenant_id: user!.tenantId, p_id: null, p_nome: 'Contagem semanal', p_frequencia: 'semanal',
-          p_dia_semana: 1, p_dia_mes: null, p_todos: false, p_itens: topo,
-        });
-        if (r2.error) throw r2.error;
-      }
-      toast.success('Contagens programadas', topo.length ? 'Geral no último dia do mês e semanal toda segunda.' : 'Geral no último dia do mês.');
-      onReload();
-    } catch (e) {
-      toast.error('Não programei as contagens', (e as { message?: string })?.message ?? String(e));
-      onReload(); // se a 1ª foi gravada, o cartão some e não duplica ao tentar de novo
-    } finally {
-      setCriando(false);
-    }
-  };
 
   const proxima = planos.length
     ? [...planos].sort((a, b) => a.proxima.localeCompare(b.proxima))[0]
@@ -141,18 +111,10 @@ export default function ContarSecao({ situacao, contagem, podeContar, onContar, 
             </p>
             {pode ? (
               <div className="flex gap-2 mt-2">
-                <button disabled={criando} onClick={criarPadrao} className="flex-1 min-h-[42px] rounded-xl bg-amber-500 text-zinc-900 text-sm font-bold cursor-pointer disabled:opacity-50">
-                  {criando ? 'Criando…' : 'Criar as duas de sempre'}
-                </button>
-                <button onClick={onConfigurar} className="min-h-[42px] px-3 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-700 cursor-pointer">Do meu jeito</button>
+                <button onClick={onConfigurar} className="flex-1 min-h-[42px] rounded-xl bg-amber-500 text-zinc-900 text-sm font-bold cursor-pointer">Programar contagens</button>
               </div>
             ) : (
               <p className="text-[11.5px] text-zinc-400 mt-2">Quem programa é o supervisor ou o dono.</p>
-            )}
-            {pode && (
-              <p className="text-[11px] text-zinc-400 mt-2 leading-snug">
-                “As duas de sempre”: geral (todos os insumos da contagem) no último dia do mês e semanal toda segunda com os {Math.min(10, maisGiram(situacao.insumos).length) || 'que mais giram'} que mais giram em reais.
-              </p>
             )}
           </div>
         )}
