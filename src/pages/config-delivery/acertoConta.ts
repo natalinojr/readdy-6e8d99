@@ -2,7 +2,7 @@
 // Espelha a função do banco `_acerto_motoboy_valor` (migração 20260927120000_acerto_entregadores.sql):
 // o valor que vale de verdade é o que o banco congela quando o pedido vira "Entregue". Aqui é só a
 // estimativa da tela, calculada com a regra que está no rascunho (ainda não salva).
-import type { AcertoCfg } from './acertoCfg';
+import { MODOS_FAIXA_KM, type AcertoCfg } from './acertoCfg';
 import type { FaixaEntrega } from './config';
 
 const dinheiro = (n: number) => Math.round(n * 100) / 100;
@@ -13,7 +13,7 @@ const dinheiro = (n: number) => Math.round(n * 100) / 100;
  */
 export function valorEntregaAcerto(cfg: AcertoCfg, km: number | null | undefined, taxa: number): number {
   let v: number;
-  if (cfg.modo === 'faixa_km') {
+  if (MODOS_FAIXA_KM.includes(cfg.modo)) {
     const faixas = cfg.faixas.filter((f) => f.ate_km > 0).slice().sort((a, b) => a.ate_km - b.ate_km);
     if (km == null || !Number.isFinite(km)) {
       v = cfg.valor_entrega;
@@ -25,7 +25,7 @@ export function valorEntregaAcerto(cfg: AcertoCfg, km: number | null | undefined
   } else if (cfg.modo === 'percentual_taxa') {
     v = (Number.isFinite(taxa) ? taxa : 0) * Math.min(cfg.percentual, 100) / 100;
   } else {
-    // por_entrega e diaria_mais_entrega (a diária não depende da entrega)
+    // por_entrega e diaria_mais_entrega (a diária não depende da entrega; vale a mesma regra no diaria_mais_faixa_km)
     v = cfg.valor_entrega;
   }
   return dinheiro(Math.max(Number.isFinite(v) ? v : 0, 0));

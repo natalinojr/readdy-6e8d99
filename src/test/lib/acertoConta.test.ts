@@ -16,6 +16,14 @@ describe('valorEntregaAcerto', () => {
     expect(valorEntregaAcerto(c, 2, 8)).toBe(4);
   });
 
+  it('diária + por faixa de km: a entrega paga pela faixa (a diária não entra por pedido)', () => {
+    const c = regra({ modo: 'diaria_mais_faixa_km', valor_entrega: 5, diaria: 60, faixas: [{ ate_km: 3, valor: 4 }, { ate_km: 6, valor: 7 }] });
+    expect(valorEntregaAcerto(c, 2, 8)).toBe(4);
+    expect(valorEntregaAcerto(c, 4.5, 8)).toBe(7);
+    expect(valorEntregaAcerto(c, 9, 8)).toBe(7); // além da última, a maior
+    expect(valorEntregaAcerto(c, null, 8)).toBe(5); // sem distância
+  });
+
   it('percentual da taxa, limitado a 100%', () => {
     expect(valorEntregaAcerto(regra({ modo: 'percentual_taxa', percentual: 50 }), 3, 9)).toBe(4.5);
     expect(valorEntregaAcerto(regra({ modo: 'percentual_taxa', percentual: 150 }), 3, 9)).toBe(9);

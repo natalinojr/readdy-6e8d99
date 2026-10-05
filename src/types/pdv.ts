@@ -273,6 +273,17 @@ export interface PedidoRecente {
   session_id?: string | null;
   /** Session number (e.g. "S001") — human-readable */
   session_number?: string | null;
+  /** Telefone do cliente (orders.destination_phone, só dígitos) — delivery/QR */
+  telefone?: string | null;
+  /** Endereço de entrega (orders.delivery_address) */
+  endereco?: string | null;
+  /** Cortesia (orders.is_cortesia): total 0 de propósito */
+  cortesia?: boolean;
+  /** Nome de quem cancelou (orders.cancelled_by → users.name) e quando */
+  canceladoPor?: string | null;
+  canceladoEm?: string | null;
+  /** Saiu para entrega (orders.out_for_delivery_at) — delivery */
+  saiuEntregaTs?: string | null;
   /** For grouped cards: IDs of original orders in this group */
   pedidoIds?: string[];
   /** For grouped cards: original orders data */

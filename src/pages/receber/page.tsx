@@ -267,7 +267,7 @@ export default function ReceberPage() {
     if (r.origem === 'nota' || r.origem === 'compra') {
       res = await chamar<Resultado>('confirmar', tenantId, {
         tipo: r.origem, id: r.id, pagamento: r.pagamento ?? 'nota', forma: r.forma,
-        recebido_em: r.recebidoEm, obs: r.obs,
+        recebido_em: r.recebidoEm, recebido_hora: r.recebidaHora || null, obs: r.obs,
         itens: r.itens.map((i) => ({ key: i.key, recebido: i.recebido, ingredient_id: i.ingredient_id, units_per_package: i.units_per_package })),
       });
     } else {
@@ -283,7 +283,7 @@ export default function ReceberPage() {
       res = await chamar<Resultado>('lancar', tenantId, {
         reembolso,
         origem: r.origem, fornecedor: r.fornecedor, numero: r.numero, data_compra: r.data, chave: r.chave,
-        pagamento: r.pagamento, forma: r.forma, vencimento: r.vencimento, recebido_em: r.recebidoEm, obs: r.obs,
+        pagamento: r.pagamento, forma: r.forma, vencimento: r.vencimento, recebido_em: r.recebidoEm, recebido_hora: r.recebidaHora || null, obs: r.obs,
         ref: r.ref, forcar,
         itens: r.itens.map((i) => {
           // Conversão: fator escolhido na tela > embalagem lida do cupom > o purchase-write resolve
@@ -757,6 +757,12 @@ function Resumo({ r, onMudar, onConfirmar }: { r: Rascunho; onMudar: (p: Partial
           ))}
           <input type="date" max={hoje} value={r.recebidoEm} onChange={(e) => e.target.value && onMudar({ recebidoEm: e.target.value })} className="flex-1 min-w-0 border border-zinc-200 rounded-xl px-3 text-sm" />
         </div>
+        <div className="flex items-center gap-2 mt-3">
+          <label htmlFor="recebida-hora" className="text-sm font-semibold text-zinc-600">Que horas?</label>
+          <input id="recebida-hora" type="time" value={r.recebidaHora ?? ''} onChange={(e) => onMudar({ recebidaHora: e.target.value })} className="border border-zinc-200 rounded-xl px-3 py-2 text-sm" />
+          {r.recebidaHora && <button onClick={() => onMudar({ recebidaHora: '' })} className="text-xs text-zinc-500 underline cursor-pointer">limpar</button>}
+        </div>
+        <p className="text-xs text-zinc-500 mt-1.5">Opcional. Serve para comparar com a contagem de estoque: se a mercadoria chegou antes da contagem, ela já foi contada e não soma de novo. Sem hora, vale agora (hoje) ou meio-dia (outro dia).</p>
         <p className="text-sm font-bold text-zinc-700 mt-4 mb-2">Observação (opcional)</p>
         <textarea rows={2} value={r.obs} onChange={(e) => onMudar({ obs: e.target.value })} placeholder="Ex.: caixa amassada, entregador atrasou" className="w-full border-2 border-zinc-100 focus:border-amber-400 rounded-2xl px-3 py-2.5 text-base outline-none" />
       </div>

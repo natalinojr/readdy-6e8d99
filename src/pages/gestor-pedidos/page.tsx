@@ -103,11 +103,11 @@ function destinoToast(pedido: KDSPedido): string {
 export default function GestorPedidosPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { pedidos, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, updatePartStatusRemote, cancelOrderRemote, markOutForDeliveryRemote, reloadOrders, pedidosSalvando, fetchSessionOrdersFull } = useKDS();
+  const { pedidos, loading: kdsLoading, setPedidos, updateItemStatusRemote, updateUnitStatusRemote, updatePartStatusRemote, cancelOrderRemote, markOutForDeliveryRemote, reloadOrders, pedidosSalvando, fetchSessionOrdersFull } = useKDS();
   const { estado, sessao, loadingSession } = useSessao();
   const { user } = useAuth();
   const { hasPermissao } = usePermissoes();
-  const { error: toastErrorGestor } = useToast();
+  const { error: toastErrorGestor, info: toastInfoGestor } = useToast();
 
   const [visualizacao, setVisualizacao] = useState<Visualizacao>('kanban');
   const [filtroStatus, setFiltroStatus] = useState<FiltroStatus>('todos');
@@ -142,16 +142,29 @@ export default function GestorPedidosPage() {
   const prevIdsRef = useRef<Set<string>>(new Set(pedidos.map((p) => p.id)));
   const audioCtxRef = useRef<AudioContext | null>(null);
 
-  // Aplicar filtro de pagamento vindo do dashboard (navegação)
+  // Pedido a abrir no detalhe, vindo da tela Pedidos ("Abrir no Gestor"). Fica pendente até o quadro carregar.
+  const [abrirPedidoId, setAbrirPedidoId] = useState<string | null>(null);
+
+  // Aplicar filtro de pagamento vindo do dashboard (navegação) e/ou pedido a abrir vindo da tela Pedidos
   useEffect(() => {
-    const state = location.state as { filtroPagamento?: FiltroPagamento } | null;
-    if (state?.filtroPagamento) {
-      setFiltroPagamento(state.filtroPagamento);
-      // Limpar o state para não reaplicar em refresh
-      navigate(location.pathname, { replace: true, state: {} });
-    }
+    const state = location.state as { filtroPagamento?: FiltroPagamento; abrirPedidoId?: string } | null;
+    if (!state?.filtroPagamento && !state?.abrirPedidoId) return;
+    if (state.filtroPagamento) setFiltroPagamento(state.filtroPagamento);
+    if (state.abrirPedidoId) setAbrirPedidoId(state.abrirPedidoId);
+    // Limpar o state para não reaplicar em refresh
+    navigate(location.pathname, { replace: true, state: {} });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state]);
+
+  // Abre o detalhe do pedido pedido por "Abrir no Gestor". O Gestor só carrega os ativos e os entregues
+  // das últimas 2 h: pedido fora disso não está aqui — avisa em vez de abrir vazio.
+  useEffect(() => {
+    if (!abrirPedidoId || kdsLoading) return;
+    const achou = pedidos.some((p) => p.id === abrirPedidoId);
+    setAbrirPedidoId(null);
+    if (achou) setDetailPedidoId(abrirPedidoId);
+    else toastInfoGestor('Esse pedido já saiu do Gestor', 'O Gestor mostra os ativos e os entregues nas últimas 2 h.');
+  }, [abrirPedidoId, kdsLoading, pedidos, toastInfoGestor]);
 
   // ─── Som de alerta ───
   const tocarAlerta = useCallback(() => {
