@@ -71,7 +71,9 @@ export default function DinheiroAba({ tenantId, loja, periodo, acesso, dados, ab
     if (!tenantId) return;
     // Mais 7 dias à frente: o repasse seguinte (previsto) cai na próxima quarta.
     const ate = somarDias(diaFim < hoje ? hoje : diaFim, 7);
-    const { data, error } = await supabase.rpc('fin_ifood_repasses', { p_tenant: tenantId, p_from: diaIni, p_to: ate });
+    // Começo do mês tem 1 repasse só: mostra pelo menos as últimas 4 semanas.
+    const de = diaIni < somarDias(hoje, -28) ? diaIni : somarDias(hoje, -28);
+    const { data, error } = await supabase.rpc('fin_ifood_repasses', { p_tenant: tenantId, p_from: de, p_to: ate });
     if (error) { setErroRepasses(error.message); setRepasses([]); return; }
     setErroRepasses(null);
     setRepasses(((data ?? []) as RepasseRow[]).map((x) => ({ ...x, esperado: Number(x.esperado), recebido_inter: Number(x.recebido_inter) })));
@@ -296,7 +298,8 @@ export default function DinheiroAba({ tenantId, loja, periodo, acesso, dados, ab
                         <div key={x.data_repasse}
                           className={`flex-none min-w-[88px] rounded-xl px-2.5 py-2 border ${ok ? 'bg-emerald-50 border-emerald-200' : ruim ? 'bg-red-50 border-red-200' : 'bg-white border-dashed border-zinc-300'}`}>
                           <small className="block text-[10.5px] font-bold text-zinc-500 whitespace-nowrap">{diaSemana(x.data_repasse)} {dm(x.data_repasse)}</small>
-                          <b className="block text-[15px] font-extrabold tabular-nums text-zinc-900">{previsto ? '~' : ''}{brl0(x.esperado)}{ok && <span className="text-emerald-600"> ✓</span>}</b>
+                          <b className="block text-[15px] font-extrabold tabular-nums text-zinc-900">{brl0(x.esperado)}{ok && <span className="text-emerald-600"> ✓</span>}</b>
+                          {previsto && <small className="block text-[10px] font-bold text-zinc-400">previsto</small>}
                         </div>
                       );
                     })}
