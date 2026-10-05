@@ -119,7 +119,7 @@ export function PagarConta({ conta, boleto, fornecedor, acoes, onFechar }: { con
       {(fase === 'pin' || fase === 'enviando') && pay && (
         <form onSubmit={(e) => { e.preventDefault(); void pagar(); }} className="space-y-2 rounded-lg bg-zinc-50 border border-zinc-200 p-2.5">
           <p className="text-sm font-bold text-zinc-900">Valor final: {fmtBRL(Number(pay.amount ?? saldo))}
-            {pay.face_value != null && Math.abs(Number(pay.face_value) - Number(pay.amount)) > 0.009 && <span className="text-[11px] font-normal text-zinc-500"> (o boleto diz {fmtBRL(Number(pay.face_value))}; a diferença é multa e juros)</span>}
+            {pay.face_value != null && Math.abs(Number(pay.face_value) - Number(pay.amount)) > 0.009 && <span className="text-[11px] font-normal text-zinc-500"> (o boleto diz {fmtBRL(Number(pay.face_value))}; a diferença é {Number(pay.amount) < Number(pay.face_value) ? 'desconto por pagar em dia' : 'multa e juros'})</span>}
           </p>
           {pay.beneficiary_name && <p className="text-[11px] text-zinc-500">Para: {pay.beneficiary_name}</p>}
           <label className="block text-[11px] font-semibold text-zinc-600">Confirme com o seu PIN</label>

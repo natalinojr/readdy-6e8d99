@@ -853,11 +853,13 @@ async function executePayment(admin: Admin, tenantId: string, id: string) {
       }
       vencimento = vencimento ?? todayBR();
     }
+    let valorBoleto = Number(p.amount);
+    let idemBoleto = String(p.idempotency_key);
     const send = async (tk: string) => {
       sentToInter = true;
       if (p.kind === 'boleto') {
-        const body: Record<string, unknown> = { codBarraLinhaDigitavel: p.digitavel || p.barcode, valorPagar: Number(p.amount), dataPagamento: todayBR(), dataVencimento: vencimento };
-        return await interFetch(creds, client!, '/banking/v2/pagamento', { method: 'POST', token: tk, headers: { 'Content-Type': 'application/json', 'x-id-idempotente': p.idempotency_key }, body: JSON.stringify(body) });
+        const body: Record<string, unknown> = { codBarraLinhaDigitavel: p.digitavel || p.barcode, valorPagar: valorBoleto, dataPagamento: todayBR(), dataVencimento: vencimento };
+        return await interFetch(creds, client!, '/banking/v2/pagamento', { method: 'POST', token: tk, headers: { 'Content-Type': 'application/json', 'x-id-idempotente': idemBoleto }, body: JSON.stringify(body) });
       }
       const destinatario = p.pix_copia_e_cola ? { tipo: 'PIX_COPIA_E_COLA', pixCopiaECola: p.pix_copia_e_cola } : { tipo: 'CHAVE', chave: p.pix_key };
       const body: Record<string, unknown> = { valor: Number(p.amount), destinatario };
@@ -879,6 +881,25 @@ async function executePayment(admin: Admin, tenantId: string, id: string) {
       client = op2.client; creds = op2.creds; token = op2.token;
       r = await send(token);
     }
+    // Boleto com desconto de pontualidade (aluguel do Estação Mall, 05/10: R$ 4.226,02 de face, R$ 3.823,54
+    // em dia): o Inter recusa o valor de face e diz o máximo aceito. Pagar MENOS do que foi aprovado cabe
+    // na autorização → tenta uma vez com o máximo (chave idempotente nova; a 1ª recusa não moveu dinheiro).
+    // A Conciliação já registra a diferença como desconto na conta. Máximo ACIMA do aprovado nunca.
+    let valorOriginal: number | null = null;
+    if (!r.ok && p.kind === 'boleto') {
+      const txt = String(r.data?.detail ?? r.data?.message ?? r.raw ?? '');
+      const m = txt.match(/m[aá]ximo aceito:?\s*R\$\s*([\d.,]+)/i);
+      const max = m ? Number(/,\d{1,2}$/.test(m[1]) ? m[1].replace(/\./g, '').replace(',', '.') : m[1].replace(/,/g, '')) : NaN;
+      const aprovado = Number(p.amount);
+      if (Number.isFinite(max) && max > 0 && max < aprovado - 0.005 && max >= aprovado * 0.5) {
+        log('INFO', 'execute_payment', 'boleto com desconto: pagando o máximo aceito', { id, aprovado, max });
+        valorOriginal = aprovado;
+        valorBoleto = Math.round(max * 100) / 100;
+        idemBoleto = crypto.randomUUID();
+        await admin.from('fin_inter_payments').update({ idempotency_key: idemBoleto }).eq('id', id);
+        r = await send(token);
+      }
+    }
     if (!r.ok) {
       let msg = providerError(r, p.kind === 'boleto' ? 'Pagamento do boleto' : 'Pix');
       // O Inter só diz "Valor a pagar" inválido; o motivo quase sempre é o boleto vencido.
@@ -886,7 +907,7 @@ async function executePayment(admin: Admin, tenantId: string, id: string) {
         msg += `. Boleto vencido: o Inter exige o valor atualizado (multa + juros). Confira o valor no app do Inter ao ler o código e peça de novo com ele.`;
       }
       // Resposta crua guardada: a recusa não move dinheiro, e sem ela não dá para saber o que o Inter quis.
-      log('WARN', 'execute_payment', 'recusado', { id, status: r.status, data: r.data ?? r.raw?.slice(0, 1000), enviado: p.kind === 'boleto' ? { valorPagar: Number(p.amount), dataVencimento: vencimento } : undefined });
+      log('WARN', 'execute_payment', 'recusado', { id, status: r.status, data: r.data ?? r.raw?.slice(0, 1000), enviado: p.kind === 'boleto' ? { valorPagar: valorBoleto, dataVencimento: vencimento } : undefined });
       await admin.from('fin_inter_payments').update({ response: r.data ?? { raw: r.raw?.slice(0, 2000) ?? null } }).eq('id', id);
       throw await fail(msg, 'rejected');
     }
@@ -897,8 +918,10 @@ async function executePayment(admin: Admin, tenantId: string, id: string) {
     const { data: upd } = await admin.from('fin_inter_payments').update({
       status, inter_code: code ? String(code) : null, inter_status: raw ? String(raw) : null, response: r.data ?? null, error: null,
       sent_at: now, paid_at: status === 'paid' ? now : null, updated_at: now,
+      // Pago com desconto: amount = o que saiu (a baixa acha o débito do extrato por esse valor).
+      ...(valorOriginal != null ? { amount: valorBoleto, face_value: p.face_value ?? valorOriginal } : {}),
     }).eq('id', id).select('*').single();
-    log('INFO', 'execute_payment', 'ok', { tenantId, id, kind: p.kind, amount: p.amount, status, raw });
+    log('INFO', 'execute_payment', 'ok', { tenantId, id, kind: p.kind, amount: valorOriginal != null ? valorBoleto : p.amount, valorOriginal, status, raw });
     return upd;
   } catch (e) {
     const cur = await getPayment(admin, tenantId, id).catch(() => null);
