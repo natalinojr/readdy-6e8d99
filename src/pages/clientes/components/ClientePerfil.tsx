@@ -210,7 +210,7 @@ export default function ClientePerfil({ cliente, onClose, onEditar, onContato, p
           <div className="min-w-0">
             <p className="text-sm font-bold text-zinc-900 truncate">{cliente.nome}</p>
             <p className="text-xs text-zinc-400 truncate">
-              {cliente.celular || 'Sem telefone'}{cliente.email ? ` · ${cliente.email}` : ''}
+              {cliente.celular || (cliente.cpf ? 'Identificado pelo CPF da nota · sem celular' : 'Sem telefone')}{cliente.email ? ` · ${cliente.email}` : ''}
             </p>
           </div>
         </div>
@@ -366,7 +366,7 @@ export default function ClientePerfil({ cliente, onClose, onEditar, onContato, p
             </button>
           </div>
           {!cliente.celular && (
-            <p className="text-[10px] text-zinc-400 mt-1.5 text-center">Sem telefone cadastrado para este cliente</p>
+            <p className="text-[10px] text-zinc-400 mt-1.5 text-center">{cliente.cpf ? 'Cliente do CPF da nota: peça o celular quando ele voltar (Editar).' : 'Sem telefone cadastrado para este cliente'}</p>
           )}
           {cliente.optOut && (
             <p className="text-[10px] text-zinc-400 mt-1.5 text-center">{AVISO_OPT_OUT} — o WhatsApp fica desligado para este cliente.</p>

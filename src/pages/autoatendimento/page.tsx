@@ -20,8 +20,10 @@ import PagamentoKiosk from './components/PagamentoKiosk';
 import DestinoKiosk from './components/DestinoKiosk';
 import IdentificacaoKiosk from './components/IdentificacaoKiosk';
 import CpfKiosk from './components/CpfKiosk';
+import type { ConviteClube } from './components/ConviteClubeKiosk';
 import ClubeEntradaKiosk, { ClubePainelKiosk, PedidoGratisKiosk, type ClubeApi, type ClubeStatus } from './components/ClubeKiosk';
 import { descontoDasReservas, type ClubeResumo, type ClubeReserva } from '../../lib/fidelidade';
+import { consultarMembroClube } from '../../lib/conviteClubeKiosk';
 import FormaPagamentoKiosk from './components/FormaPagamentoKiosk';
 import KioskConfigModal from './components/KioskConfigModal';
 import PINGate, { isPINAtivo } from './components/PINGate';
@@ -352,12 +354,12 @@ function AutoatendimentoPageInner() {
       if (res.data?.encontrado && res.data.resumo) { setClube(res.data.resumo); setClubeCpf(cpf); }
       return { encontrado: !!res.data?.encontrado, resumo: res.data?.resumo };
     },
-    cadastrar: async (d) => {
+    cadastrar: async (d, aindaVale) => {
       const tenantId = kioskSession?.tenantId ?? user?.tenantId;
       const res = await kioskInvoke<{ resumo?: ClubeResumo }>('fidelidade', { action: 'clube_cadastrar', tenant_id: tenantId, ...d });
       const erro = erroDe(res, 'Não consegui fazer o cadastro agora.');
       if (erro) return { erro };
-      if (res.data?.resumo) { setClube(res.data.resumo); setClubeCpf(d.cpf); }
+      if (res.data?.resumo && (aindaVale?.() ?? true)) { setClube(res.data.resumo); setClubeCpf(d.cpf); }
       return { resumo: res.data?.resumo };
     },
     usar: async (alvo, celularFinal) => {
@@ -400,6 +402,17 @@ function AutoatendimentoPageInner() {
     },
   };
 
+  // ── Convite do clube na etapa "CPF na nota" ────────────────────────────────
+  // Quem informa o CPF na nota sem ter entrado no clube recebe um convite antes de pagar
+  // (CpfKiosk + ConviteClubeKiosk). conviteTratados: CPFs já tratados NESTE pedido (o convite
+  // aparece no máximo uma vez por CPF); pedidoEpoca muda a cada volta à tela inicial para uma
+  // resposta tardia do cadastro de um pedido que já acabou não grudar no pedido do próximo cliente.
+  const conviteTratados = useRef<Set<string>>(new Set());
+  const pedidoEpoca = useRef(0);
+  useEffect(() => {
+    if (etapa === 'welcome') { conviteTratados.current.clear(); pedidoEpoca.current += 1; }
+  }, [etapa]);
+
   // Desconto do clube sobre o carrinho atual. Produto grátis desconta o preço de
   // CARDÁPIO de 1 unidade (adicional pago continua pago); nunca passa do subtotal.
   const subtotalCarrinho = carrinho.reduce((s, i) => s + i.preco * i.quantidade, 0);
@@ -435,6 +448,30 @@ function AutoatendimentoPageInner() {
 
   // Sem sessão de caixa o pedido vai para a fila offline: aí o clube fica de fora.
   const clubeLigado = !!clubeStatus?.ativo && estado !== 'sem_sessao';
+
+  const conviteClube: ConviteClube | undefined =
+    // Sem sessão de caixa o pedido vai para a fila offline (clube fica de fora); treino não cria cliente real.
+    clubeLigado && clubeStatus && !clube && !user?.modoTreino
+      ? {
+        programa: clubeStatus.programa,
+        jaTratado: (cpf) => conviteTratados.current.has(cpf),
+        onTratado: (cpf) => { conviteTratados.current.add(cpf); },
+        // Só pergunta (clube_buscar), sem mexer no pedido: membro/erro/lento/sem internet = segue direto.
+        consultar: (cpf) => {
+          const tenantId = kioskSession?.tenantId ?? user?.tenantId;
+          if (!tenantId) return Promise.resolve('erro');
+          return consultarMembroClube(
+            () => kioskInvoke<{ encontrado?: boolean; ativo?: boolean; error?: string; message?: string }>('fidelidade', { action: 'clube_buscar', tenant_id: tenantId, cpf }),
+            { online: typeof navigator === 'undefined' ? undefined : navigator.onLine },
+          );
+        },
+        cadastrar: (d) => {
+          const epoca = pedidoEpoca.current;
+          return clubeApi.cadastrar(d, () => epoca === pedidoEpoca.current);
+        },
+      }
+      : undefined;
+
   const handleIniciar = () => setEtapa(clubeLigado ? 'clube' : 'destino');
 
   const handleSelecionarDestino = (d: 'aqui' | 'viagem') => {
@@ -1518,6 +1555,7 @@ function AutoatendimentoPageInner() {
             total={totalComClube}
             onContinuar={handleCpfConcluido}
             cpfInicial={clubeCpf ?? undefined}
+            convite={conviteClube}
             onVoltar={() => setEtapa(pularIdentificacao ? 'carrinho' : 'identificacao')}
           />
         )}

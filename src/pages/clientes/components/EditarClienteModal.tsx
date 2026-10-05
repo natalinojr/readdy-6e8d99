@@ -2,9 +2,10 @@
 // Edita perfil (nome, celular, nascimento, gênero, email, CPF) e campos de
 // relacionamento (anotações, tags manuais, aceite de marketing/LGPD).
 import { useState } from 'react';
-import type { ClienteCRM, ClientePatch } from '@/hooks/useClientes';
+import { ErroClienteDuplicado, type ClienteCRM, type ClientePatch } from '@/hooks/useClientes';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { confirmar } from '@/components/base/Dialogos';
 
 interface Props {
   cliente: ClienteCRM;
@@ -12,6 +13,8 @@ interface Props {
   onSave: (patch: ClientePatch) => Promise<void>;
   /** Depois de desfazer o "não quer mensagens" (recarrega a lista). */
   onOptOutDesfeito?: () => void;
+  /** Junta este cadastro com outro da mesma pessoa (customer-write › merge_customers). */
+  onJuntar?: (manterId: string, removerId: string) => Promise<void>;
 }
 
 const GENEROS = [
@@ -21,8 +24,12 @@ const GENEROS = [
   { value: 'outro', label: 'Outro' },
 ];
 
-export default function EditarClienteModal({ cliente, onClose, onSave, onOptOutDesfeito }: Props) {
+export default function EditarClienteModal({ cliente, onClose, onSave, onOptOutDesfeito, onJuntar }: Props) {
   const { user } = useAuth();
+  // Cliente "só CPF" (criado pelo CPF da nota): pode salvar sem celular até a pessoa informar.
+  const semCelular = !(cliente.celular ?? '').replace(/\D/g, '');
+  const [duplicado, setDuplicado] = useState<ErroClienteDuplicado | null>(null);
+  const [juntando, setJuntando] = useState(false);
   const [optOut, setOptOut] = useState(cliente.optOut ?? null);
   const [desfazendo, setDesfazendo] = useState(false);
   const [nome, setNome] = useState(cliente.nome ?? '');
@@ -48,8 +55,10 @@ export default function EditarClienteModal({ cliente, onClose, onSave, onOptOutD
 
   const salvar = async () => {
     setErro('');
+    setDuplicado(null);
     if (!nome.trim()) { setErro('O nome é obrigatório.'); return; }
-    if (celular.replace(/\D/g, '').length < 10) { setErro('Celular inválido (mínimo 10 dígitos com DDD).'); return; }
+    const digitosCel = celular.replace(/\D/g, '').length;
+    if (!(semCelular && digitosCel === 0) && digitosCel < 10) { setErro('Celular inválido (mínimo 10 dígitos com DDD).'); return; }
     if (cpf.trim() && cpf.replace(/\D/g, '').length !== 11) { setErro('CPF precisa ter 11 dígitos (ou deixe em branco).'); return; }
     if (email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setErro('E-mail inválido.'); return; }
     setSaving(true);
@@ -67,9 +76,36 @@ export default function EditarClienteModal({ cliente, onClose, onSave, onOptOutD
       });
       onClose();
     } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Erro ao salvar');
+      if (e instanceof ErroClienteDuplicado) setDuplicado(e);
+      else setErro(e instanceof Error ? e.message : 'Erro ao salvar');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // O celular/CPF digitado é de outro cliente — normalmente a mesma pessoa com dois cadastros
+  // (o "só CPF" da nota e o do celular). Fica o cadastro que tem celular; o outro some e tudo
+  // dele (pedidos, pontos, vouchers) passa para o que fica.
+  const juntar = async () => {
+    if (!duplicado || !onJuntar) return;
+    const esteTemCelular = !semCelular;
+    const manter = esteTemCelular ? cliente.id : duplicado.outro.id;
+    const remover = esteTemCelular ? duplicado.outro.id : cliente.id;
+    const ok = await confirmar({
+      titulo: 'Juntar os dois cadastros?',
+      mensagem: `"${cliente.nome}" e "${duplicado.outro.nome}" viram um cliente só, com os pedidos, pontos e vouchers dos dois. Não dá para separar depois.`,
+      confirmarLabel: 'Juntar',
+    });
+    if (!ok) return;
+    setJuntando(true);
+    setErro('');
+    try {
+      await onJuntar(manter, remover);
+      onClose();
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Não consegui juntar os cadastros.');
+    } finally {
+      setJuntando(false);
     }
   };
 
@@ -116,13 +152,39 @@ export default function EditarClienteModal({ cliente, onClose, onSave, onOptOutD
             <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">{erro}</div>
           )}
 
+          {duplicado && (
+            <div className="px-3 py-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 space-y-2">
+              <p>
+                <i className="ri-user-shared-line mr-1" />
+                {duplicado.campo === 'phone' ? 'Este celular' : 'Este CPF'} já é do cliente <b>{duplicado.outro.nome}</b>.
+                Se for a mesma pessoa, junte os dois cadastros — pedidos, pontos e vouchers ficam num só.
+              </p>
+              {onJuntar && (
+                <button
+                  onClick={juntar}
+                  disabled={juntando}
+                  className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold cursor-pointer disabled:opacity-50"
+                >
+                  {juntando ? 'Juntando…' : 'Juntar os dois cadastros'}
+                </button>
+              )}
+            </div>
+          )}
+
+          {semCelular && cliente.cpf && (
+            <div className="px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg text-[11px] text-zinc-600">
+              <i className="ri-id-card-line mr-1" />
+              Cliente identificado pelo CPF da nota. Quando ele voltar, peça o nome e o celular — o histórico de compras continua o mesmo.
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
               <label className="block text-[11px] font-semibold text-zinc-500 mb-1">Nome *</label>
               <input className={inputCls} value={nome} onChange={(e) => setNome(e.target.value)} />
             </div>
             <div>
-              <label className="block text-[11px] font-semibold text-zinc-500 mb-1">Celular *</label>
+              <label className="block text-[11px] font-semibold text-zinc-500 mb-1">Celular {semCelular ? '' : '*'}</label>
               <input className={inputCls} value={celular} onChange={(e) => setCelular(e.target.value)} placeholder="41999999999" />
             </div>
             <div>

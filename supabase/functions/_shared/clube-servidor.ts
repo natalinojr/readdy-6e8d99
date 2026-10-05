@@ -93,12 +93,14 @@ export async function cadastrarNoClube(admin: any, tenantId: string, body: any, 
   }
   const agora = new Date().toISOString();
 
-  const { data: porCpf } = await admin.from("customers").select("id, phone, loyalty_joined_at, birth_date")
+  const { data: porCpf } = await admin.from("customers").select("id, name, phone, loyalty_joined_at, birth_date")
     .eq("tenant_id", tenantId).eq("cpf", cpf).is("deleted_at", null).maybeSingle();
   // Pela internet, só CPF que a loja ainda não conhece — inclusive MEMBRO: sem isto,
   // "cadastrar" com o CPF de um membro devolvia a sessão dele (sem os 4 dígitos). CPF que
   // já existe (membro, caixa, nota) entra por "Entrar" ou passa pelo balcão.
-  if (opts.web && porCpf) return { erro: "Este CPF já tem cadastro na loja. Se já é do clube, use Entrar; se não, peça ao caixa para ativar." };
+  // (2026-10-05) Todo CPF da nota vira cliente "só CPF" — quem já comprou com CPF ativa no tablet
+  // ou no caixa, presencial, onde o cadastro "só CPF" é completado com nome e celular.
+  if (opts.web && porCpf) return { erro: "Este CPF já comprou na loja. Para juntar seus pontos, ative o clube no tablet ou no caixa — se já é do clube, use Entrar." };
   if (porCpf?.loyalty_joined_at) return { customerId: porCpf.id };
 
   const { data: porCel } = await admin.from("customers").select("id")
@@ -116,6 +118,8 @@ export async function cadastrarNoClube(admin: any, tenantId: string, body: any, 
   if (porCpf) {
     const { error } = await admin.from("customers").update({
       ...(soDigitos(porCpf.phone).length >= 10 ? {} : { phone: celular }),
+      // Cliente "só CPF" (criado pelo CPF da nota) ganha o nome de verdade no lugar do provisório.
+      ...(String(porCpf.name ?? "").startsWith("Cliente CPF ") ? { name: nome } : {}),
       birth_date: porCpf.birth_date ?? nascimento,
       loyalty_joined_at: agora, gdpr_consent_at: agora, accepts_marketing: body.aceita_ofertas === true, updated_at: agora,
     }).eq("id", porCpf.id);
