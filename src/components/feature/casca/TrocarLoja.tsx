@@ -33,8 +33,8 @@ const horaCurta = (iso: string) => new Date(iso).toLocaleTimeString('pt-BR', {
 });
 const rotuloCargo = (role: string) => perfilLabel[role] ?? role;
 
-function CartaoTroca({ c, principal, ocupado, onEntrar, onFicar }: {
-  c: CartaoLoja; principal: boolean; ocupado: string | null; onEntrar: () => void; onFicar: () => void;
+function CartaoTroca({ c, principal, ocupado, onEntrar, onFicar, rotuloAqui = 'Ficar aqui' }: {
+  c: CartaoLoja; principal: boolean; ocupado: string | null; onEntrar: () => void; onFicar: () => void; rotuloAqui?: string;
 }) {
   const vendas = linhaVendas(c);
   const eu = ocupado === c.tenantId;
@@ -65,7 +65,7 @@ function CartaoTroca({ c, principal, ocupado, onEntrar, onFicar }: {
         <div className="text-[11px] text-[#9A9086] font-semibold mt-1">Seu cargo aqui: {c.cargo}</div>
       </div>
       {c.aqui ? (
-        <button type="button" onClick={onFicar} disabled={!!ocupado} className={`${btn('out', 'sm')} flex-shrink-0 min-w-[76px]`}>Ficar aqui</button>
+        <button type="button" onClick={onFicar} disabled={!!ocupado} className={`${btn('out', 'sm')} flex-shrink-0 min-w-[76px]`}>{rotuloAqui}</button>
       ) : (
         <button type="button" onClick={onEntrar} disabled={!!ocupado} className={`${btn(principal ? 'p' : 'out', 'sm')} flex-shrink-0 min-w-[76px]`}>
           {eu ? <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" /> : 'Entrar'}
@@ -75,7 +75,11 @@ function CartaoTroca({ c, principal, ocupado, onEntrar, onFicar }: {
   );
 }
 
-function ConteudoTroca({ onFechar }: { onFechar: () => void }) {
+/**
+ * As lojas da pessoa em cartões (folha "Trocar de loja" e tela "Suas lojas"): leitura, ordem e o Entrar.
+ * `onFicar` = tocar na loja em que a pessoa já está; `aoSair` = antes de ir para outra tela (fecha a folha).
+ */
+export function useSuasLojas(onFicar: () => void, aoSair: () => void = () => {}) {
   const { user, selectTenant } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
@@ -142,7 +146,7 @@ function ConteudoTroca({ onFechar }: { onFechar: () => void }) {
 
   const entrar = useCallback(async (c: CartaoLoja) => {
     if (ocupado) return;
-    if (c.aqui) { onFechar(); return; }
+    if (c.aqui) { onFicar(); return; }
     // Algo sem salvar na tela: pergunta antes (como o topo já fazia).
     if (!(await podeSair())) return;
     setOcupado(c.tenantId);
@@ -158,54 +162,60 @@ function ConteudoTroca({ onFechar }: { onFechar: () => void }) {
     mudar({ aberta: false, trocando: null });
     setOcupado(null);
     if (entrou) toast.success(`Agora você está na ${c.nome}`);
-  }, [ocupado, onFechar, selectTenant, navigate, toast]);
+  }, [ocupado, onFicar, selectTenant, navigate, toast]);
 
   const irComparar = async () => {
     if (!(await podeSair())) return;
-    onFechar();
+    aoSair();
     navigate('/lojas');
   };
 
+  return {
+    pronto, erroLojas, visiveis, escondidas, mostrarEscondidas, setMostrarEscondidas,
+    veComparar, juntas, total, primeiroOutro, ocupado, entrar, irComparar,
+  };
+}
+
+export type SuasLojas = ReturnType<typeof useSuasLojas>;
+
+/** "Suas N lojas juntas hoje": o total do dia (as mesmas lojas do Comparar, sem as escondidas e as paradas). */
+export function TotalLojasCartao({ s }: { s: SuasLojas }) {
+  const { juntas, total } = s;
+  if (!s.veComparar || juntas.length === 0) return null;
   return (
-    <Folha
-      aberta
-      titulo="Em qual loja você vai trabalhar agora?"
-      subtitulo="As que mais precisam de você vêm primeiro"
-      onFechar={ocupado ? () => {} : onFechar}
-      rodape={veComparar ? (
-        <button type="button" onClick={irComparar} disabled={!!ocupado} className={`${btn('out')} w-full`}>
-          <i className="ri-bar-chart-grouped-line" />Comparar as lojas
-        </button>
-      ) : undefined}
-    >
-      {!pronto ? (
-        <div className="flex justify-center py-12"><div className="w-7 h-7 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>
-      ) : (
-        <div className="pb-2">
-          {veComparar && juntas.length > 0 && (
-            <button type="button" onClick={irComparar} disabled={!!ocupado}
-              className="w-full text-left rounded-[18px] bg-[#1F1A14] text-white p-3.5 mb-3 active:scale-[.99] transition-transform">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] font-extrabold uppercase tracking-[.1em] text-white/60">
-                  {juntas.length === 1 ? 'Sua loja hoje' : `Suas ${juntas.length} lojas juntas hoje`}
-                </span>
-                <span className="text-[11.5px] font-bold text-amber-300 whitespace-nowrap">Comparar <i className="ri-arrow-right-s-line" /></span>
-              </div>
-              <div className="flex items-end gap-2 flex-wrap mt-1">
-                <span className="text-[26px] leading-none font-black tracking-tight tabular-nums">{brl(total.faturamento)}</span>
-                <Variacao pct={total.variacao} escuro titulo={total.variacao === null ? 'Uma das lojas não tem base de comparação' : undefined} />
-              </div>
-              <div className="text-[11.5px] text-white/60 mt-1 tabular-nums">
-                {total.pedidos} {total.pedidos === 1 ? 'pedido' : 'pedidos'}
-                {total.pedidos > 0 && <> · tíquete {brl(total.ticket)}</>}
-                {juntas[0] && <> · {rotuloComparacao('hoje', juntas[0])}</>}
-              </div>
-            </button>
-          )}
+    <button type="button" onClick={() => { void s.irComparar(); }} disabled={!!s.ocupado}
+      className="w-full text-left rounded-[18px] bg-[#1F1A14] text-white p-4 mb-3 active:scale-[.99] transition-transform">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-extrabold uppercase tracking-[.1em] text-white/60">
+          {juntas.length === 1 ? 'Sua loja hoje' : `Suas ${juntas.length} lojas juntas hoje`}
+        </span>
+        <span className="text-[12px] font-bold text-amber-300 whitespace-nowrap">Comparar <i className="ri-arrow-right-s-line" /></span>
+      </div>
+      <div className="flex items-end gap-2 flex-wrap mt-1.5">
+        <span className="text-[30px] leading-none font-black tracking-tight tabular-nums">{brl(total.faturamento)}</span>
+        <Variacao pct={total.variacao} escuro titulo={total.variacao === null ? 'Uma das lojas não tem base de comparação' : undefined} />
+      </div>
+      <div className="text-[12px] text-white/60 mt-1.5 tabular-nums">
+        {total.pedidos} {total.pedidos === 1 ? 'pedido' : 'pedidos'}
+        {total.pedidos > 0 && <> · tíquete {brl(total.ticket)}</>}
+        {juntas[0] && <> · {rotuloComparacao('hoje', juntas[0])}</>}
+      </div>
+    </button>
+  );
+}
+
+/** Os cartões das lojas + as escondidas recolhidas. */
+export function ListaLojas({ s, onFicar, rotuloAqui }: { s: SuasLojas; onFicar: () => void; rotuloAqui?: string }) {
+  const { visiveis, escondidas, mostrarEscondidas, setMostrarEscondidas, ocupado, entrar, primeiroOutro, erroLojas } = s;
+  if (!s.pronto) {
+    return <div className="flex justify-center py-12"><div className="w-7 h-7 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>;
+  }
+  return (
+    <div className="pb-2">
           {erroLojas && <p className="text-[12px] text-red-600 mb-2">Não consegui ler as suas lojas agora. Tente de novo em instantes.</p>}
           {visiveis.map((c) => (
-            <CartaoTroca key={c.tenantId} c={c} principal={c.tenantId === primeiroOutro} ocupado={ocupado}
-              onEntrar={() => { void entrar(c); }} onFicar={onFechar} />
+            <CartaoTroca key={c.tenantId} c={c} principal={c.tenantId === primeiroOutro} ocupado={ocupado} rotuloAqui={rotuloAqui}
+              onEntrar={() => { void entrar(c); }} onFicar={onFicar} />
           ))}
           {escondidas.length > 0 && (
             <>
@@ -225,12 +235,30 @@ function ConteudoTroca({ onFechar }: { onFechar: () => void }) {
               </div>
               {mostrarEscondidas && escondidas.map((c) => (
                 <CartaoTroca key={c.tenantId} c={c} principal={false} ocupado={ocupado}
-                  onEntrar={() => { void entrar(c); }} onFicar={onFechar} />
+                  onEntrar={() => { void entrar(c); }} rotuloAqui={rotuloAqui} onFicar={onFicar} />
               ))}
             </>
           )}
-        </div>
-      )}
+    </div>
+  );
+}
+
+function ConteudoTroca({ onFechar }: { onFechar: () => void }) {
+  const s = useSuasLojas(onFechar, onFechar);
+  const { ocupado, veComparar, irComparar } = s;
+  return (
+    <Folha
+      aberta
+      titulo="Em qual loja você vai trabalhar agora?"
+      subtitulo="As que mais precisam de você vêm primeiro"
+      onFechar={ocupado ? () => {} : onFechar}
+      rodape={veComparar ? (
+        <button type="button" onClick={irComparar} disabled={!!ocupado} className={`${btn('out')} w-full`}>
+          <i className="ri-bar-chart-grouped-line" />Comparar as lojas
+        </button>
+      ) : undefined}
+    >
+      <ListaLojas s={s} onFicar={onFechar} />
     </Folha>
   );
 }

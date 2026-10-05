@@ -13,6 +13,8 @@ const NotFound = lazy(() => import('../pages/NotFound'));
 const Dashboard = lazy(() => import('../pages/dashboard/page'));
 // Comparar lojas (várias lojas lado a lado, ao vivo) — fora do menu de uma loja, como /modulos
 const LojasPage = lazy(() => import('../pages/lojas/page'));
+// Suas lojas: o que abre no "Loja" do seletor de produto da casca nova (quem tem 2+ lojas)
+const SuasLojasPage = lazy(() => import('../pages/suas-lojas/page'));
 const CardapioPage = lazy(() => import('../pages/cardapio/page'));
 const PDVDeliveryPage = lazy(() => import('../pages/pdv/delivery/page'));
 const PDVCaixaPage = lazy(() => import('../pages/pdv/caixa/page'));
@@ -112,6 +114,7 @@ const routes: RouteObject[] = [
       { path: 'hoje/rotina', element: <RotinaConfigPage /> },
       { path: 'modulos', element: <ModulosPage /> },
       { path: 'lojas', element: <LojasPage /> },
+      { path: 'suas-lojas', element: <SuasLojasPage /> },
       { path: 'onboarding', element: <OnboardingPage /> },
       { path: 'invite', element: <InvitePage /> },
       { path: 'dashboard', element: <Dashboard /> },

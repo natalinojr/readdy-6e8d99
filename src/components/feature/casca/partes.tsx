@@ -39,17 +39,19 @@ export function SeletorProduto({ produtos, telas, compacto, onEscolher }: {
 }) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const { canSwitchTenant } = useAuth();
   if (produtos.length < 2) return null;
   const atual = produtoAtual(pathname, produtos);
-  // A Loja abre na primeira tela que a pessoa vê (a Hoje para quase todo mundo).
-  const rotaDe = (p: Produto) => (p.id === 'loja' ? (telas[0]?.rota ?? '/hoje') : p.rota);
+  // A Loja abre em "Suas lojas" (total das lojas juntas + escolher a loja) para quem tem 2+ lojas; senão, na primeira
+  // tela que a pessoa vê (a Hoje para quase todo mundo).
+  const rotaDe = (p: Produto) => (p.id === 'loja' ? (canSwitchTenant ? '/suas-lojas' : (telas[0]?.rota ?? '/hoje')) : p.rota);
   return (
     <div className={`grid ${compacto ? 'grid-cols-2' : 'grid-cols-4'} gap-[3px] bg-[#F2EEE8] p-[3px] rounded-xl`}>
       {produtos.map((p) => (
         <button
           key={p.id}
           type="button"
-          onClick={() => { onEscolher?.(); if (p.id !== atual) navigate(rotaDe(p)); }}
+          onClick={() => { onEscolher?.(); if (p.id !== atual || (p.id === 'loja' && canSwitchTenant && pathname !== '/suas-lojas')) navigate(rotaDe(p)); }}
           className={`flex items-center justify-center gap-1.5 rounded-[9px] px-2 py-1.5 text-[11.5px] font-bold whitespace-nowrap cursor-pointer transition-colors ${
             p.id === atual ? 'bg-white text-[#1F1A14] shadow-[0_1px_3px_rgba(31,26,20,.12)]' : 'text-[#5B5248] hover:text-[#1F1A14]'
           }`}
