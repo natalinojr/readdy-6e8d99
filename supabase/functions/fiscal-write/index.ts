@@ -782,14 +782,16 @@ Deno.serve({ verify_jwt: false } as any, async (req: Request) => {
           // Pedido do iFood (funil): decide só a chave da loja "Emitir NFC-e dos pedidos do iFood" (Gestor de Entregas ›
           // iFood Entrega), não as chaves por canal. Vale também para o cobrado na entrega, que passa pelo caixa
           // (order-write dispara). Pedido de TESTE do iFood nunca vira nota.
-          const { data: ic } = await admin.from('ifood_pdv_config').select('order_emit_nfce').eq('tenant_id', tenantId).maybeSingle();
+          const { data: ic } = await admin.from('ifood_pdv_config').select('order_emit_nfce, order_nfce_momento').eq('tenant_id', tenantId).maybeSingle();
           if (ic?.order_emit_nfce !== true) return json({ success: false, status: 'skipped', skipped: true, message: 'Pedido do iFood: NFC-e dos pedidos do iFood desligada nesta loja' });
           const { data: testes } = await admin.from('ifood_orders').select('ifood_order_id').eq('tenant_id', tenantId).in('ifood_order_id', ifoodIdsGrupo).eq('is_test', true).limit(1);
           if ((testes ?? []).length) return json({ success: false, status: 'skipped', skipped: true, message: 'Pedido de teste do iFood: NFC-e não emitida' });
-          // Só com o pedido CONCLUÍDO no iFood (decisão do dono, 05/10). Cobrado pela loja e pago no caixa antes da
-          // conclusão: a ifood-shipping emite quando chegar o CONCLUDED.
-          const { data: abertos } = await admin.from('ifood_orders').select('ifood_order_id').eq('tenant_id', tenantId).in('ifood_order_id', ifoodIdsGrupo).neq('status', 'concluded').limit(1);
-          if ((abertos ?? []).length) return json({ success: false, status: 'skipped', skipped: true, message: 'Pedido do iFood ainda não concluído: a NFC-e sai na conclusão' });
+          // Momento escolhido pela loja (order_nfce_momento): 'saida' = pronto/saiu; 'conclusao' = iFood concluiu. Pago no
+          // caixa antes disso: a ifood-shipping emite quando chegar o evento.
+          const conclusao = ic?.order_nfce_momento === 'conclusao';
+          const ok = conclusao ? ['concluded'] : ['ready', 'dispatched', 'concluded'];
+          const { data: abertos } = await admin.from('ifood_orders').select('ifood_order_id').eq('tenant_id', tenantId).in('ifood_order_id', ifoodIdsGrupo).not('status', 'in', `(${ok.join(',')})`).limit(1);
+          if ((abertos ?? []).length) return json({ success: false, status: 'skipped', skipped: true, message: conclusao ? 'Pedido do iFood ainda não concluído: a NFC-e sai na conclusão' : 'Pedido do iFood ainda não ficou pronto: a NFC-e sai quando ficar pronto ou sair' });
         } else {
           const o = (gOrders ?? [])[0] as any;
           const canal = o?.origin_type === 'delivery' ? 'delivery' : (o?.table_session_id || o?.origin_type === 'table' || o?.origin_type === 'waiter') ? 'mesa' : 'balcao';

@@ -50,7 +50,7 @@ export default function ValorNotaIfood({ o }: { o: PedidoOrder }) {
               {fora.map(([r, v]) => <span key={r} className="block tabular-nums">· {r}: {brl(v)}</span>)}
             </>
           )}
-          <br />Comissão e taxas do iFood também ficam fora: são despesa da loja, não abatem a nota. O que o cliente pagou no app sai como forma "99 – iFood - online". A nota só sai com o pedido concluído no iFood e com a NFC-e do iFood ligada na loja.
+          <br />Comissão e taxas do iFood também ficam fora: são despesa da loja, não abatem a nota. O que o cliente pagou no app sai como forma "99 – iFood - online". A nota sai no momento escolhido na configuração do iFood (pronto/saiu ou conclusão), com a NFC-e do iFood ligada na loja.
         </Ajuda>
       </span>
       <b className="tabular-nums whitespace-nowrap text-zinc-900">{brl(n.valorVenda)}</b>
