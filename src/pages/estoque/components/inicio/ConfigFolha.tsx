@@ -142,8 +142,7 @@ export default function ConfigFolha({ aberta, situacao, onFechar, onReload }: {
                 className="mt-1 w-full rounded-xl border border-zinc-200 px-3 py-2.5 text-base font-bold focus:outline-none focus:border-amber-400" />
             </label>
           </div>
-          <p className="text-[11px] text-zinc-400 mt-1.5 leading-snug">Padrão: 60 dias (dois meses de uso) e 7 dias. Insumo sem uso registrado pede o bastante para ficar com 2× o mínimo; produção da cozinha, até 2× o mínimo.</p>
-          <button disabled={gravando} onClick={salvarConfig} className="mt-2 w-full min-h-[42px] rounded-xl bg-zinc-900 text-white text-sm font-bold cursor-pointer disabled:opacity-50">Salvar</button>
+          <button disabled={gravando} onClick={salvarConfig} className="mt-3 w-full min-h-[42px] rounded-xl bg-zinc-900 text-white text-sm font-bold cursor-pointer disabled:opacity-50">Salvar</button>
 
           <h4 className="text-sm font-extrabold text-zinc-900 mt-5">Contagens programadas</h4>
           <p className="text-[11px] text-zinc-400 mt-0.5">No dia de cada uma, o Início do Estoque mostra o que contar.</p>
