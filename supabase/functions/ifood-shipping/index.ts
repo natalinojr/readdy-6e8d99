@@ -12,7 +12,7 @@
 //   save_config    { client_id, client_secret? }    admin/gerente — só app PRÓPRIO (teste); sem isso a loja usa
 //                                                   o app ERPOS PDV do sistema (secrets IFOOD_PDV_CLIENT_ID/SECRET)
 //   use_system_app                                  volta a loja para o app do sistema
-//   set_options    { homologation_mode?, shipping_enabled?, default_prep_min?, shipping_merchant_id?, order_*?, order_emit_nfce? }
+//   set_options    { homologation_mode?, shipping_enabled?, default_prep_min?, shipping_merchant_id?, order_*?, order_emit_nfce?, order_nfce_momento? }
 //   request_user_code / confirm_authorization { authorization_code } / delete_config   admin/gerente
 //   refresh_merchants                                renova o acesso e relê as lojas de cada autorização   admin/gerente
 //   prepare        { order_id }                     formulário pré-preenchido (endereço, telefone, itens, pagamento)
@@ -522,9 +522,11 @@ async function aceiteAutomatico(admin: Admin, c: Ctx, row: any) {
 
 // ── NFC-e dos pedidos do iFood (IFOOD-PEDIDOS-FUNIL.md, etapa 5) ──
 // Só com a chave da loja order_emit_nfce (+ fiscal da loja ligado; a fiscal-write confere e calcula o valor da venda).
-// A nota sai só com o pedido CONCLUÍDO no iFood e pago (decisão do dono, 05/10: depois da conclusão não há mais risco
-// de cancelamento) — o que acontecer por último: pago no app já nasce pago, então sai no CONCLUDED; cobrado pela loja
-// sai no CONCLUDED se o caixa já recebeu, ou quando o caixa receber (order-write → fiscal-write confere a conclusão).
+// QUANDO a nota sai é escolha da loja (order_nfce_momento, dono 05/10): 'saida' = pedido pronto ou saiu para entrega
+// (recomendado: a NFC-e deve estar autorizada antes da mercadoria circular) ou 'conclusao' = iFood concluiu o pedido.
+// Sempre com o pedido pago — o que acontecer por último: pago no app já nasce pago, então sai no evento; cobrado pela
+// loja sai no evento se o caixa já recebeu, ou quando o caixa receber (order-write → fiscal-write confere o momento).
+const estadosNotaIfood = (cfg: any) => cfg?.order_nfce_momento === 'conclusao' ? ['concluded'] : ['ready', 'dispatched', 'concluded'];
 // A chamada à fiscal-write não segura o polling (até 70 s do provedor; trava de 90 s da loja): roda em segundo plano.
 function emSegundoPlano(p: Promise<unknown>) {
   // deno-lint-ignore no-explicit-any
@@ -543,7 +545,7 @@ async function chamarFiscal(body: Record<string, unknown>) {
 }
 
 async function notaFiscalIfood(admin: Admin, cfg: any, row: any) {
-  if (cfg.order_emit_nfce !== true || !row.order_id || row.is_test === true || row.status !== 'concluded') return;
+  if (cfg.order_emit_nfce !== true || !row.order_id || row.is_test === true || !estadosNotaIfood(cfg).includes(row.status)) return;
   const { data: o } = await admin.from('orders').select('id, is_paid, is_draft, status, is_training').eq('id', row.order_id).maybeSingle();
   if (!o || !o.is_paid || o.is_draft || o.status === 'cancelled' || o.is_training) return;
   // Uma tentativa automática só: qualquer documento já criado (autorizado, em andamento, rejeitado, erro, cancelado à
@@ -608,6 +610,7 @@ async function funnelAfterEvent(admin: Admin, c: Ctx, rowId: string) {
     return;
   }
   if (!row.order_id && funnelOn(c.cfg)) await criarPedidoFunil(admin, c, row);
+  else if (row.order_id) await notaFiscalIfood(admin, c.cfg, row);
 }
 
 /** A cada polling da loja no funil: pedidos que não entraram (ex.: caixa fechado), confirmações pendentes e avisos. */
@@ -812,6 +815,7 @@ function safeConfig(cfg: any, auths: any[]) {
     order_mode: cfg.order_mode === 'operate' || cfg.order_mode === 'funnel' ? cfg.order_mode : 'read_only',
     order_auto_confirm: cfg.order_auto_confirm !== false,
     order_emit_nfce: cfg.order_emit_nfce === true,
+    order_nfce_momento: cfg.order_nfce_momento === 'conclusao' ? 'conclusao' : 'saida',
     order_merchant_ids: cfg.order_merchant_ids ?? [],
   };
 }
@@ -1475,6 +1479,7 @@ Deno.serve(async (req) => {
       }
       if (typeof body.order_auto_confirm === 'boolean') upd.order_auto_confirm = body.order_auto_confirm;
       if (typeof body.order_emit_nfce === 'boolean') upd.order_emit_nfce = body.order_emit_nfce;
+      if (body.order_nfce_momento === 'saida' || body.order_nfce_momento === 'conclusao') upd.order_nfce_momento = body.order_nfce_momento;
       let aviso: string | null = null;
       const pedidosLigados = (upd.order_enabled ?? cfg.order_enabled) === true;
       if (Array.isArray(body.order_merchant_ids) || (pedidosLigados && typeof body.order_enabled === 'boolean')) {

@@ -159,7 +159,9 @@ d95420e); foi **desfeita** no mesmo dia porque o dono escolheu este desenho. Apr
   com descrição **"iFood - online"** (pedido do dono). Emissão automática de pedido do iFood só com
   `ifood_pdv_config.order_emit_nfce` (trava também o cobrado na entrega, que o order-write dispara ao receber no
   caixa). Emissão manual (Notas Fiscais, force) não depende da chave.
-- **Quando sai (decisão do dono, 05/10): só com o pedido CONCLUÍDO no iFood e pago** — o que acontecer por último
+- **Quando sai: escolha da loja (`order_nfce_momento`, dono 05/10)** — `saida` (padrão, recomendado: pronto ou saiu;
+  a NFC-e deve estar autorizada antes da mercadoria circular, Ajuste SINIEF 19/16 + FAQ SEFA-PR 1504) ou `conclusao`.
+  Versão anterior (só conclusão): com o pedido CONCLUÍDO no iFood e pago — o que acontecer por último
   (depois da conclusão não há mais risco de cancelamento). Pago no app → no CONCLUDED; cobrado pela loja → no CONCLUDED
   se o caixa já recebeu, senão quando o caixa receber (a fiscal-write recusa pedido do iFood não concluído). Tempos
   vistos: entregador do iFood conclui na validação do código (#1631: 23 min); entrega pela loja ~30 min; consumo no

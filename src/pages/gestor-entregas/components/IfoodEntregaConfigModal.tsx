@@ -214,8 +214,23 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
                           <label className="flex items-start gap-2 text-xs text-zinc-600 cursor-pointer pl-5">
                             <input type="checkbox" className="mt-0.5" checked={cfg.order_emit_nfce} disabled={!!busy}
                               onChange={(e) => run('ord-nfce', 'set_options', { order_emit_nfce: e.target.checked }, e.target.checked ? 'NFC-e dos pedidos do iFood ligada.' : 'NFC-e dos pedidos do iFood desligada.')} />
-                            <span>Emitir NFC-e dos pedidos do iFood — valor da venda (itens + entrega da loja − desconto da loja); sai quando o iFood conclui o pedido (sem risco de cancelamento); pago no app sai como "iFood - online". Precisa do fiscal da loja ligado.</span>
+                            <span>Emitir NFC-e dos pedidos do iFood — valor da venda (itens + entrega da loja − desconto da loja); pago no app sai como "iFood - online". Precisa do fiscal da loja ligado.</span>
                           </label>
+                        )}
+                        {cfg.order_mode === 'funnel' && cfg.order_emit_nfce && (
+                          <div className="pl-10 space-y-1">
+                            <p className="text-[11px] font-semibold text-zinc-500">Quando a nota sai</p>
+                            {([
+                              ['saida', 'Quando o pedido fica pronto ou sai (recomendado)', 'A NFC-e deve estar autorizada antes de a mercadoria sair (regra da SEFAZ).'],
+                              ['conclusao', 'Quando o iFood conclui o pedido', 'Sem risco de cancelamento, mas a nota sai depois de a mercadoria circular.'],
+                            ] as const).map(([v, t, d]) => (
+                              <label key={v} className="flex items-start gap-2 text-xs text-zinc-600 cursor-pointer">
+                                <input type="radio" name="ifood-nfce-momento" className="mt-0.5" checked={(cfg.order_nfce_momento ?? 'saida') === v} disabled={!!busy}
+                                  onChange={() => run('ord-nfce-mom', 'set_options', { order_nfce_momento: v }, 'Momento da nota salvo.')} />
+                                <span><b className="text-zinc-700">{t}</b> — {d}</span>
+                              </label>
+                            ))}
+                          </div>
                         )}
                       </div>
                     </div>
