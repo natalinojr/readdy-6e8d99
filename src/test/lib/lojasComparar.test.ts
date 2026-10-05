@@ -82,6 +82,15 @@ describe('totalLojas', () => {
     expect(totalLojas([a, b]).variacao).toBeNull();
     expect(totalLojas([a, b]).faturamento).toBe(4804.6);
   });
+  it('loja zerada nos dois períodos não esconde a variação do total', () => {
+    const a = montarLoja(base(), [], []);
+    const z = montarLoja(base({
+      tenant_id: 't3', primeiro_dia: null,
+      atual: { faturamento: 0, pedidos: 0, canais: {}, serie: {} }, anterior: { faturamento: 0, pedidos: 0, serie: {} },
+    }), [], []);
+    expect(z.variacao).toBeNull();
+    expect(totalLojas([a, z]).variacao).toBeCloseTo(totalLojas([a]).variacao!, 5);
+  });
 });
 
 describe('rotuloComparacao', () => {
