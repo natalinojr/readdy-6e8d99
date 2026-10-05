@@ -53,9 +53,8 @@ export default function EntradaTardiaModal({ tenantId, item, insumo, upp, onFech
 
   const toggle = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const marcados = (lista ?? []).filter((r) => sel.has(r.purchase_item_id));
-  const totalEntrada = marcados.reduce((s, r) => s + Number(r.quantidade) * upp, 0);
-  // Contado no inventário depois do recebimento: a contagem já acertou, o banco recusa a entrada
-  const temContado = marcados.some((r) => r.inventario_depois);
+  // Contado no inventário depois do recebimento: a contagem já acertou, entra só como registro (2026-10-05)
+  const totalEntrada = marcados.filter((r) => !r.inventario_depois).reduce((s, r) => s + Number(r.quantidade) * upp, 0);
 
   const aplicar = async (modo: 'entrar' | 'ignorar') => {
     if (marcados.length === 0) return;
@@ -67,9 +66,12 @@ export default function EntradaTardiaModal({ tenantId, item, insumo, upp, onFech
     });
     setBusy(false);
     if (error) { toastErr('Não foi possível salvar', error.message); return; }
-    const d = (data ?? {}) as { entraram?: number; ignorados?: number; quantidade?: number };
+    const d = (data ?? {}) as { entraram?: number; ignorados?: number; quantidade?: number; registrados?: number };
     if (modo === 'entrar') {
-      toastOk(`${d.entraram ?? 0} recebimento(s) entraram no estoque`, insumo ? `+${num(Number(d.quantidade ?? 0))} ${un(insumo.unit)} em ${insumo.name}.` : '');
+      toastOk(`${d.entraram ?? 0} recebimento(s) entraram no estoque`, [
+        insumo && d.entraram ? `+${num(Number(d.quantidade ?? 0))} ${un(insumo.unit)} em ${insumo.name}.` : '',
+        d.registrados ? `${d.registrados} de antes da contagem ficaram só na movimentação (o saldo não mudou).` : '',
+      ].filter(Boolean).join(' '));
     } else {
       toastOk(`${d.ignorados ?? 0} recebimento(s) marcados como resolvidos`, 'O estoque não mudou.');
     }
@@ -100,7 +102,8 @@ export default function EntradaTardiaModal({ tenantId, item, insumo, upp, onFech
 
         <p className="px-4 pt-3 text-xs text-zinc-500">
           Esses recebimentos foram confirmados quando o item ainda não estava ligado a um insumo, e o estoque não mudou.
-          Marque os que devem entrar agora. Se a mercadoria já foi usada ou se um inventário já acertou o estoque depois, marque e escolha <b>Não entram</b>.
+          Marque os que devem entrar agora. Os que tiveram contagem depois ficam só registrados na movimentação, sem mudar o saldo.
+          Se a mercadoria não deve aparecer em lugar nenhum, escolha <b>Não entram</b>.
         </p>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
@@ -125,7 +128,7 @@ export default function EntradaTardiaModal({ tenantId, item, insumo, upp, onFech
                 </p>
                 {r.inventario_depois && (
                   <p className="text-[11px] text-orange-700 mt-1">
-                    <i className="ri-error-warning-line" /> Teve contagem deste insumo depois{r.inventario_em ? ` (${dataHora(r.inventario_em)})` : ''}: a contagem já pôs no estoque. Só dá para marcar <b>Não entram</b>.
+                    <i className="ri-information-line" /> Teve contagem depois{r.inventario_em ? ` (${dataHora(r.inventario_em)})` : ''}: a contagem já pôs no estoque. Entra só como registro na movimentação.
                   </p>
                 )}
               </div>
@@ -141,8 +144,7 @@ export default function EntradaTardiaModal({ tenantId, item, insumo, upp, onFech
             className="px-3 py-2 rounded-lg bg-zinc-100 text-zinc-700 text-xs font-semibold hover:bg-zinc-200 disabled:opacity-50 cursor-pointer">
             Não entram
           </button>
-          <button disabled={busy || marcados.length === 0 || !insumo || temContado} onClick={() => aplicar('entrar')}
-            title={temContado ? 'Tem recebimento marcado que já foi contado no inventário: marque-o como "Não entram"' : undefined}
+          <button disabled={busy || marcados.length === 0 || !insumo} onClick={() => aplicar('entrar')}
             className="px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-semibold hover:bg-emerald-700 disabled:opacity-50 cursor-pointer">
             Dar entrada no estoque
           </button>
