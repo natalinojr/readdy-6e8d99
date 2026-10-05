@@ -1,5 +1,5 @@
 import Ajuda from '@/pages/estoque/components/inicio/Ajuda';
-import { brl } from '@/pages/estoque/components/ui/EstoqueUi';
+import { brl } from '@/components/kit';
 import type { PedidoOrder } from '@/lib/ifoodArea';
 import { valorVendaIfood } from '../../../../supabase/functions/_shared/ifood-valores';
 

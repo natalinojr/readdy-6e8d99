@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import Folha from '@/pages/estoque/components/inicio/Folha';
-import { btn } from '@/pages/estoque/components/ui/EstoqueUi';
+import { Folha } from '@/components/kit';
+import { btn } from '@/components/kit';
 import { somarDias, todayBrasilia } from '@/lib/dateUtils';
 
 // "Quais dias ver?" na área iFood. O período é uma string de getPeriodDates (src/lib/dateUtils.ts):

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { getPeriodDates, getPeriodoAnterior } from '@/lib/dateUtils';
 import { fetchPedidosIfood, resumir, type PedidoIfood } from '@/lib/ifoodDashboard';
 import { useSalesReport } from '@/hooks/useSalesReport';
-import { brl, brlInteiro, CartaoBarra, Nota, SecaoTitulo, Vazio } from '@/pages/estoque/components/ui/EstoqueUi';
+import { brl, brlInteiro, CartaoBarra, Nota, SecaoTitulo, Vazio } from '@/components/kit';
 import RelatorioIfood from '@/pages/relatorios/components/IfoodTab';
 import { nomeLoja, type AbaProps } from '../lib/tipos';
 import { dividirDescontos } from '../lib/dinheiro';

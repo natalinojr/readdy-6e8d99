@@ -111,7 +111,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           return errResp('Sem permissão para criar usuário com este perfil');
         }
         if (callerRank < 3 && !PERFIS_DO_SUPERVISOR.has(String(perfil))) {
-          return errResp('O supervisor só cria Líder, Caixa, Garçom, Cozinha, Gestor de Entregas ou Totem — os outros cargos, só o dono.');
+          return errResp('O supervisor só cria Líder, Caixa, Garçom, Cozinha, Gestor de Entregas ou Totem — os outros cargos, só o Administrador.');
         }
       } else if (TARGET_ACTIONS.has(action)) {
         const targetId = body.user_id ? String(body.user_id) : '';
@@ -128,7 +128,7 @@ Deno.serve({ verify_jwt: false }, async (req) => {
             // (2026-10-03, revisão da correção do gerente).
             const { data: modulos, error: modErr } = await db.from('user_module_access').select('module').eq('user_id', targetId).limit(1);
             if (modErr || (modulos?.length ?? 0) > 0) {
-              return errResp('Sem permissão: este usuário tem acesso a módulos de todas as lojas — só o dono altera');
+              return errResp('Sem permissão: este usuário tem acesso a módulos de todas as lojas — só o Administrador altera');
             }
             // Senha/PIN/exclusão valem para TODAS as lojas do alvo: o chamador precisa ser
             // admin (ou gerente com "Gerenciar usuários" marcado, e alvo abaixo de gerente) em cada

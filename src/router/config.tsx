@@ -24,7 +24,8 @@ const GarcomPage = lazy(() => import('../pages/pdv/garcom/page'));
 const MesasPage = lazy(() => import('../pages/mesas/page'));
 const RelatoriosPage = lazy(() => import('../pages/relatorios/page'));
 const EstoquePage = lazy(() => import('../pages/estoque/page'));
-const MesaClientePage = lazy(() => import('../pages/mesa/page'));
+// Página antiga (pages/mesa/page.tsx) aposentada em 2026-10-05: /mesa/:mesaId só avisa que o QR é antigo.
+const MesaClientePage = lazy(() => import('../pages/mesa/QrAntigo'));
 const AutoatendimentoPage = lazy(() => import('../pages/autoatendimento/page'));
 const TotemPage = lazy(() => import('../pages/totem/page'));
 const SenhasTvPage = lazy(() => import('../pages/senhas/page'));
@@ -35,7 +36,8 @@ const AuditoriaPage = lazy(() => import('../pages/auditoria/page'));
 const ClientesPage = lazy(() => import('../pages/clientes/page'));
 const PaginaEmConstrucao = lazy(() => import('../pages/common/PaginaEmConstrucao'));
 const OnboardingPage = lazy(() => import('../pages/onboarding/page'));
-const InvitePage = lazy(() => import('../pages/invite/page'));
+// Página antiga (pages/invite/page.tsx) aposentada em 2026-10-05: o convite atual é /onboarding?invite=<código>.
+const InvitePage = lazy(() => import('../pages/invite/ConviteAntigo'));
 const PerfilPage = lazy(() => import('../pages/perfil/page'));
 const AjudaPage = lazy(() => import('../pages/ajuda/page'));
 const PedidosPage = lazy(() => import('../pages/pedidos/page'));
@@ -157,7 +159,8 @@ const routes: RouteObject[] = [
     ],
   },
   { path: '/selecionar-loja', element: <SelecionarLojaPage /> },
-  { path: '/supabase-debug', element: <SupabaseDebugPage /> },
+  // Diagnóstico do banco: só em desenvolvimento (em produção cai em "Não achei essa página").
+  ...(import.meta.env.DEV ? [{ path: '/supabase-debug', element: <SupabaseDebugPage /> }] : []),
   // Só em desenvolvimento: Tarefas com dados fictícios, sem login (testar layout/celular).
   ...(import.meta.env.DEV ? [{ path: '/dev/tarefas', element: <TarefasPage /> }] : []),
   ...(import.meta.env.DEV ? [{ path: '/dev/jogos', element: <JogosDemoPage /> }] : []),

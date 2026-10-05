@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { valorDaBusca } from '@/lib/pedidosRegras';
 import type { PedidoArea } from '@/lib/ifoodArea';
-import { Chips, Faixa, MenuMais, Vazio, brl, semAcento, type OpcaoChip } from '@/pages/estoque/components/ui/EstoqueUi';
+import { Chips, Faixa, MenuMais, Vazio, brl, semAcento, type OpcaoChip } from '@/components/kit';
 import { dateKeyBrasilia } from '@/lib/dateUtils';
 import { nomeLoja, type AbaProps } from '../lib/tipos';
 import LinhaPedido, { LinhaPedidoTabela, situacaoDaArea } from './LinhaPedido';

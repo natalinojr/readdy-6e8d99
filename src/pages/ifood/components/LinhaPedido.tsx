@@ -1,4 +1,4 @@
-import { brl } from '@/pages/estoque/components/ui/EstoqueUi';
+import { brl } from '@/components/kit';
 import { situacaoPedido, rotuloCliente, type PedidoArea } from '@/lib/ifoodArea';
 
 // Uma linha de pedido do iFood (Hoje e Pedidos). Celular: lista; computador: linha de tabela (LinhaPedidoTabela).

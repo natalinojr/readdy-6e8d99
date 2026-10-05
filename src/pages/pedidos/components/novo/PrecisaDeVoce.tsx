@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from 'react';
+import { confirmar } from '@/components/base/Dialogos';
 import type { PedidoRecente } from '@/types/pdv';
 import {
   CartaoAcao, CartaoBarra, SecaoTitulo, brl, btn, type CorBarra,
-} from '@/pages/estoque/components/ui/EstoqueUi';
+} from '@/components/kit';
 import {
   META_PEDIDO_MIN, diaBR, ehEntregue, numeroCurto, ondeQuem, situacaoPedido,
   type FiltroChip, type PendenciasPedidos, type ResumoPedidos,
@@ -194,11 +195,12 @@ function CartaoEsquecidos({ ids, exemplo, acoes, onChip, onVer }: {
 
   const marcar = async () => {
     if (ocupado) return;
-    const ok = window.confirm(
-      `Marcar ${n} ${n === 1 ? 'pedido de outro dia como entregue' : 'pedidos de outros dias como entregues'}?\n\n`
-      + `${n === 1 ? 'Ele sai' : 'Eles saem'} da lista de andando e o tempo ${n === 1 ? 'dele' : 'deles'} para de correr.\n\n`
-      + 'Os itens que ainda não tinham saído da cozinha dão baixa no estoque com a data de hoje (igual a entregar pelo Gestor).',
-    );
+    const ok = await confirmar({
+      titulo: `Marcar ${n} ${n === 1 ? 'pedido de outro dia como entregue' : 'pedidos de outros dias como entregues'}?`,
+      mensagem: `${n === 1 ? 'Ele sai' : 'Eles saem'} da lista de andando e o tempo ${n === 1 ? 'dele' : 'deles'} para de correr.\n\n`
+        + 'Os itens que ainda não tinham saído da cozinha dão baixa no estoque com a data de hoje (igual a entregar pelo Gestor).',
+      confirmarLabel: 'Marcar como entregue',
+    });
     if (!ok) return;
     setOcupado(true);
     setAviso(null);

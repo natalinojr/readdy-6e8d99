@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
+import { confirmar as confirmarDialogo } from '@/components/base/Dialogos';
 import { ifoodShipping, type IfoodShippingConfig } from '@/lib/ifoodShipping';
 
 interface Props {
@@ -72,7 +73,11 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
   };
 
   const voltarParaSistema = async () => {
-    if (conectado && !window.confirm('Voltar para o app ERPOS PDV? As autorizações feitas com o app próprio deixam de valer e a loja precisa autorizar de novo.')) return;
+    if (conectado && !(await confirmarDialogo({
+      titulo: 'Voltar para o app ERPOS PDV?',
+      mensagem: 'As autorizações feitas com o app próprio deixam de valer e a loja precisa autorizar de novo.',
+      confirmarLabel: 'Voltar para o ERPOS PDV', perigo: true,
+    }))) return;
     const r = await run('sistema', 'use_system_app', {}, 'Usando o app ERPOS PDV. Gere o código para autorizar a loja.');
     if (r) setAvancado(false);
   };

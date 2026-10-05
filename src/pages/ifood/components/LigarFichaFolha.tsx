@@ -5,8 +5,8 @@ import { custoLinhaFicha } from '@/lib/unitConversion';
 import { custoFichaItens } from '@/lib/ifoodCusto';
 import { custosIfood } from '../lib/useIfoodDados';
 import { buscarAlvos, rotuloPasso, type AlvoCardapio } from '../lib/itensLogica';
-import Folha from '@/pages/estoque/components/inicio/Folha';
-import { btn, brl, semAcento } from '@/pages/estoque/components/ui/EstoqueUi';
+import { Folha } from '@/components/kit';
+import { btn, brl, semAcento } from '@/components/kit';
 
 // "Ligar à ficha" (área iFood, 2026-10-05, protótipo ifood-proposta.html › Ligar à ficha). Uma ligação só
 // para custo e estoque: junta o que eram duas telas ("Vincular itens" do Gestor de Entregas e "Compor" do

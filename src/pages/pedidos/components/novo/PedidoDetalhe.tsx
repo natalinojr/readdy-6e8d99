@@ -6,7 +6,7 @@ import {
   META_PEDIDO_MIN, ROTULO_CANAL, canalPedido, diaBR, ehAtivo, ehCancelado, ehNaoPago, ehSemNota, notaViva, numeroCurto,
   ondeQuem, situacaoPedido, tempoFases, entregaDoPedido, canalFiscal,
 } from '@/lib/pedidosRegras';
-import { Etiqueta, MenuMais, brl, btn } from '@/pages/estoque/components/ui/EstoqueUi';
+import { Etiqueta, MenuMais, brl, btn } from '@/components/kit';
 import type { TipoImpressao } from '../../lib/acoesTipos';
 import EmitirNfModal from '../EmitirNfModal';
 import { clienteNome } from '../utils';

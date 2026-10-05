@@ -2,8 +2,8 @@
 // Cria pela MESMA chamada do formulário de hoje (useUsuarios.criarUsuario → Edge user-write/create_user),
 // com as mesmas validações; só muda como se pede. Protótipo: docs/prototipos/sistema-proposta.html (folha "nova").
 import { useEffect, useMemo, useState } from 'react';
-import Folha from '@/pages/estoque/components/inicio/Folha';
-import { btn } from '@/pages/estoque/components/ui/EstoqueUi';
+import { Folha } from '@/components/kit';
+import { btn } from '@/components/kit';
 import { confirmar } from '@/components/base/Dialogos';
 import { getAppBaseUrl } from '@/lib/appUrl';
 import type { PerfilUsuario } from '@/constants/usuarios';

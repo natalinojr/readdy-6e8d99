@@ -45,7 +45,7 @@ export const TRABALHOS: readonly Trabalho[] = [
   { grupo: 'Cuidando da loja', id: 'receber', icone: 'ri-truck-line', titulo: 'Recebe mercadoria', pode: 'Confere o que o fornecedor entregou, pelo celular', keys: ['estoque_receber'] },
   { grupo: 'Cuidando da loja', id: 'contar', icone: 'ri-scales-3-line', titulo: 'Conta o estoque', pode: 'Faz a contagem no dia marcado e diz o que contar em cada dia', keys: ['estoque_inventario'] },
   { grupo: 'Cuidando da loja', id: 'estoque', icone: 'ri-archive-line', titulo: 'Cuida do estoque', pode: 'Entradas, perdas, fichas técnicas e o que comprar', keys: ['estoque_movimentar', 'relatorio_estoque'] },
-  { grupo: 'Cuidando da loja', id: 'pedir', icone: 'ri-hand-coin-line', titulo: 'Pede pagamentos', pode: 'Reembolso, freelancer, fornecedor sem nota, compra online — o dono aprova', keys: ['pag_reembolso', 'pag_freelancer', 'pag_fornecedor', 'pag_compra_online', 'pag_beneficio'] },
+  { grupo: 'Cuidando da loja', id: 'pedir', icone: 'ri-hand-coin-line', titulo: 'Pede pagamentos', pode: 'Reembolso, freelancer, fornecedor sem nota, compra online — o Administrador aprova', keys: ['pag_reembolso', 'pag_freelancer', 'pag_fornecedor', 'pag_compra_online', 'pag_beneficio'] },
 
   { grupo: 'Gestão', id: 'vendas', icone: 'ri-line-chart-line', titulo: 'Acompanha as vendas', pode: 'Loja ao vivo, faturamento e relatórios de produto e de canal', keys: ['gestao_dashboard', ...REL_VENDAS] },
   { grupo: 'Gestão', id: 'cardapio', icone: 'ri-book-open-line', titulo: 'Cuida do cardápio e dos preços', pode: 'Itens, fotos, preços, horários e promoções', keys: ['cardapio_editar', 'cardapio_alterar_preco', 'gestao_promocoes'] },

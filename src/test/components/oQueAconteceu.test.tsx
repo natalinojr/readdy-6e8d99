@@ -47,7 +47,7 @@ describe('O que aconteceu?', () => {
     for (const t of ['Paguei algo', 'Chegou mercadoria', 'Recebi uma nota ou boleto', 'Tenho que pagar alguém', 'Gastei do meu bolso']) expect(screen.getByText(t)).toBeTruthy();
     fireEvent.click(screen.getByText('Tenho que pagar alguém'));
     expect(screen.getByText('Quem você tem que pagar?')).toBeTruthy();
-    expect(screen.getAllByText('o dono aprova').length).toBe(2);
+    expect(screen.getAllByText('o Administrador aprova').length).toBe(2);
     fireEvent.click(screen.getByText('Fornecedor ou serviço'));
     expect(fechar).toHaveBeenCalled();
     expect(navegar).toHaveBeenCalledWith('/receber?pedido=fornecedor');

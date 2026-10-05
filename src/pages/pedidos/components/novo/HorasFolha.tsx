@@ -1,8 +1,8 @@
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import type { PedidoRecente } from '@/types/pdv';
 import { ehCancelado } from '@/lib/pedidosRegras';
-import Folha from '@/pages/estoque/components/inicio/Folha';
-import { Vazio, Nota } from '@/pages/estoque/components/ui/EstoqueUi';
+import { Folha } from '@/components/kit';
+import { Vazio, Nota } from '@/components/kit';
 
 // "Pedidos por hora" (o antigo "Horários de pico" do PedidosMetricas), agora numa folha aberta pelo menu ⋯.
 

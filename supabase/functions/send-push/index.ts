@@ -10,6 +10,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { enviarPush, type Subscription } from './webpush.ts';
 // App Android (Capacitor): aparelho inscrito com endpoint "fcm:<token>" recebe pelo Firebase.
 import { enviarFcm, fcmConfig } from './fcm.ts';
+// Aprovar/Recusar pelo aviso (2026-10-05): token assinado por pessoa+pedido, decidido na Edge acao-push.
+import { assinarAcao, chaveDaAcao, TIPOS_PDV_PELO_AVISO } from '../_shared/push-acao.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -86,7 +88,8 @@ Deno.serve({ verify_jwt: false }, async (req) => {
           auth: s.auth as string,
         };
         const r = sub.endpoint.startsWith('fcm:')
-          ? await enviarFcm(sub.endpoint.slice(4), payload)
+          // App Android (FCM) não tem botões na notificação: sem `acoes` (os dados viram texto no FCM).
+          ? await enviarFcm(sub.endpoint.slice(4), Object.fromEntries(Object.entries(payload).filter(([k]) => k !== 'acoes' && k !== 'acao_url')))
           : await enviarPush(sub, texto, vapid);
         if (r.ok) {
           enviados++;
@@ -205,7 +208,29 @@ Deno.serve({ verify_jwt: false }, async (req) => {
       const p = (req.payload ?? {}) as Record<string, unknown>;
       const tipo = req.tipo === 'cancelamento' ? 'Cancelamento' : req.tipo === 'desconto' ? 'Desconto' : 'Problema no item';
       const corpo = String(pend?.titulo ?? `${tipo}: ${String(p.itemNome ?? p.mesaNome ?? '')} — ${String(req.requested_by_name ?? 'caixa')} pede aprovação`);
-      const r = await despachar(destino, null, { titulo: 'Pedido de aprovação no caixa', corpo: corpo.slice(0, 200), url: '/hoje', tag: `aprovacao-${id}` });
+      const base = { titulo: 'Pedido de aprovação no caixa', corpo: corpo.slice(0, 200), url: '/hoje', tag: `aprovacao-${id}` };
+      // Desconto e cancelamento: botões Aprovar/Recusar no próprio aviso. O token é PESSOAL (um por destinatário,
+      // 15 min) — quem não pôde ser assinado (sem segredo) recebe o aviso comum, que abre o app.
+      let chave: CryptoKey | null = null;
+      if (TIPOS_PDV_PELO_AVISO.includes(String(req.tipo))) {
+        try { chave = await chaveDaAcao(Deno.env.get('PUSH_ACAO_SECRET') || serviceRoleKey); } catch { chave = null; }
+      }
+      const parciais = await Promise.all(destino.map(async (uid) => {
+        if (!chave) return despachar([uid], null, base);
+        const [aprovar, recusar] = await Promise.all([
+          assinarAcao({ k: 'pdv', id, u: uid, a: 'aprovar' }, chave),
+          assinarAcao({ k: 'pdv', id, u: uid, a: 'recusar' }, chave),
+        ]);
+        return despachar([uid], null, {
+          ...base, requireInteraction: true,
+          // Destinatário: o service worker só mostra os botões se quem está logado no aparelho é esta pessoa
+          // (tablet compartilhado em que outra pessoa ativou os avisos e saiu → aviso sem botões).
+          para: uid,
+          acao_url: `${supabaseUrl}/functions/v1/acao-push`,
+          acoes: [{ id: 'aprovar', titulo: 'Aprovar', token: aprovar }, { id: 'recusar', titulo: 'Recusar', token: recusar }],
+        });
+      }));
+      const r = parciais.reduce((t, x) => ({ enviados: t.enviados + (x.enviados ?? 0), falhas: t.falhas + (x.falhas ?? 0) }), { enviados: 0, falhas: 0 });
       return json({ success: true, ...r });
     }
 

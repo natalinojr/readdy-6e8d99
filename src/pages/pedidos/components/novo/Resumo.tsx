@@ -1,4 +1,4 @@
-import { Faixa, brl, brlInteiro, type ItemFaixa } from '@/pages/estoque/components/ui/EstoqueUi';
+import { Faixa, brl, brlInteiro, type ItemFaixa } from '@/components/kit';
 import { META_PEDIDO_MIN, type FiltroChip, type ResumoPedidos } from '@/lib/pedidosRegras';
 
 // Frase do dia + faixa de números da tela de Pedidos (protótipo docs/prototipos/pedidos-proposta.html).

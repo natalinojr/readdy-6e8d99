@@ -2,7 +2,8 @@ import { Fragment, useCallback, useEffect, useMemo, useState, type KeyboardEvent
 import type { PedidoRecente } from '@/types/pdv';
 import type { FiscalDocumentRow } from '@/lib/fiscal';
 import type { useFiscalDocs } from '@/hooks/useFiscalDocs';
-import { CartaoAcao, Nota, SecaoTitulo, Vazio, brl, btn } from '@/pages/estoque/components/ui/EstoqueUi';
+import { confirmar } from '@/components/base/Dialogos';
+import { CartaoAcao, Nota, SecaoTitulo, Vazio, brl, btn } from '@/components/kit';
 import {
   ICONE_CANAL, ROTULO_CANAL, canalPedido, entregaDoPedido, canalFiscal, ehAtivo, ehCancelado, ehNaoPago, ehSemNota, notaViva,
   numeroCurto, ondeQuem, situacaoPedido,
@@ -114,10 +115,11 @@ export default function ListaPedidos({
   const emitirLote = async () => {
     const alvo = marcados.map((l) => l.p);
     if (alvo.length === 0 || lote) return;
-    const ok0 = window.confirm(
-      `Emitir ${alvo.length} ${alvo.length === 1 ? 'NFC-e' : 'NFC-e'} (${brl(valorMarcado)})?\n\n`
-      + 'Uma nota por pedido (pagos juntos: uma para o grupo). A nota sai com a data de hoje.',
-    );
+    const ok0 = await confirmar({
+      titulo: `Emitir ${alvo.length} NFC-e (${brl(valorMarcado)})?`,
+      mensagem: 'Uma nota por pedido (pagos juntos: uma para o grupo). A nota sai com a data de hoje.',
+      confirmarLabel: alvo.length === 1 ? 'Emitir nota' : 'Emitir notas',
+    });
     if (!ok0) return;
     setLote({ total: alvo.length, feito: 0, ok: 0 });
     let ok = 0;

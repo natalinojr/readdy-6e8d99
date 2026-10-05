@@ -5,7 +5,7 @@
 // número; registrou, o item marca automático com quem produziu.
 import { useEffect, useState } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
-import Folha from '@/pages/estoque/components/inicio/Folha';
+import { Folha } from '@/components/kit';
 import type { PapelRotina } from '../../../../supabase/functions/_shared/rotina';
 import { salvarItem } from './useRotina';
 import { rotuloPapel } from './rotulos';

@@ -20,6 +20,7 @@ import { usePendencias, kindConfig } from '@/contexts/PendenciasContext';
 import { todayBrasilia, somarDias } from '@/lib/dateUtils';
 import { dreCaixaDoPeriodo } from './DRETab';
 import { mesExtenso } from './dreUi';
+import VazamentosCard from './VazamentosCard';
 
 const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const ddmm = (ymd: string) => `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}`;
@@ -204,6 +205,9 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
           <p className="text-[11px] text-zinc-400">A lista está logo abaixo; o caminho completo de cada despesa fica na Trilha.</p>
         </Pergunta>
       </div>
+
+      {/* Vazamentos do mês (2026-10-05): o que escapou em reais, só com regra do sistema; Trilha só lida. */}
+      <VazamentosCard onIrAba={onIrAba} versao={versao} />
 
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-4 items-start">
         <div className="bg-white rounded-2xl border border-zinc-200">

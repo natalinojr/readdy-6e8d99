@@ -3,8 +3,8 @@ import ExplicaLucro from './ExplicaLucro';
 import { useSearchParams } from 'react-router-dom';
 import { fetchCardapioIfood, type MenuLinha } from '@/lib/ifoodDashboard';
 import { itensDoCardapio, itensDosPedidos, resumoItens, type ItemArea } from '@/lib/ifoodArea';
-import { btn, brl, brlInteiro, CartaoAcao, Chips, Faixa, Nota, Vazio, type OpcaoChip } from '@/pages/estoque/components/ui/EstoqueUi';
-import Folha from '@/pages/estoque/components/inicio/Folha';
+import { btn, brl, brlInteiro, CartaoAcao, Chips, Faixa, Nota, Vazio, type OpcaoChip } from '@/components/kit';
+import { Folha } from '@/components/kit';
 import type { AbaProps } from '../lib/tipos';
 import {
   bloqueadoPorComplemento, classeMargem, descricaoLigacao, fatorDoPeriodo, fraseItens, listaDoChip, semFichaDe, type ChipItens,

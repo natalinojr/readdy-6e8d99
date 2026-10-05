@@ -109,7 +109,7 @@ function CartaoOlho({ cartao, hoje, mostrarLoja, abrir, marcar, onMudou, podeDar
             <i className="ri-check-line" /> {lista.length > 1 ? `Estou ciente dos ${lista.length}` : 'Estou ciente'}
           </button>
         ) : (
-          <p className="text-[12px] font-semibold text-zinc-500"><i className="ri-eye-line" /> Quem dá ciência é o dono.</p>
+          <p className="text-[12px] font-semibold text-zinc-500"><i className="ri-eye-line" /> Quem dá ciência é o Administrador.</p>
         )}
       </div>
     </div>

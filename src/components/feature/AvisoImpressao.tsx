@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { avisar } from '@/components/base/Dialogos';
 import { useImpressoras } from '@/contexts/ImpressorasContext';
 
 interface Ticket {
@@ -125,7 +126,7 @@ export default function AvisoImpressao() {
     const impId = t.impressora_id || (t.payload?.impressora_id as string | undefined);
     if (!error && data && impId) await supabase.from('print_queue').update({ impressora_id: impId }).eq('id', data as string);
     setReenviando(null);
-    if (error) { window.alert(`Não consegui reenviar: ${error.message}`); return; }
+    if (error) { void avisar(`Não consegui reenviar a impressão: ${error.message}`, { erro: true }); return; }
     dispensar(t.id);
     conferirDepois(100_000);
   };

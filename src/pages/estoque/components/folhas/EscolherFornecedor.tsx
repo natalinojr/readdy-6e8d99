@@ -50,7 +50,7 @@ export default function EscolherFornecedor({ aberta, titulo = 'Quem vende?', sub
         if (error) {
           setLista(null);
           setErro(error.code === '42501'
-            ? 'Só quem configura o estoque (dono, Supervisor ou quem faz o inventário) escolhe o fornecedor.'
+            ? 'Só quem configura o estoque (Administrador, Supervisor ou quem faz o inventário) escolhe o fornecedor.'
             : error.message);
           return;
         }

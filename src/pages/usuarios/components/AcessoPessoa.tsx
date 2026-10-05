@@ -3,6 +3,7 @@
 // dela naquela loja (user_permissions). Protótipo aprovado: docs/prototipos/acesso-por-pessoa-proposta.html.
 // Lê e grava pela Edge acesso-pessoa, que confere de novo quem pode dar o quê (_shared/acesso-pessoa.ts).
 import { useEffect, useMemo, useState } from 'react';
+import { confirmar } from '@/components/base/Dialogos';
 import { invokeWithAuth } from '@/lib/supabase';
 import { perfilConfig, type PerfilUsuario } from '@/constants/usuarios';
 import { PERMISSOES_CATALOGO } from '@/constants/permissoesCatalogo';
@@ -27,7 +28,7 @@ interface Rascunho { papel: string; keys: Set<string> }
 
 const nomeCargo = (p: string) => perfilConfig[p as PerfilUsuario]?.label ?? p;
 const descCargo: Record<string, string> = {
-  gerente: 'abaixo do dono', supervisao: 'fica na loja', caixa: 'vende no balcão', garcom: 'atende mesas', cozinha: 'prepara os pedidos',
+  gerente: 'abaixo do Administrador', supervisao: 'fica na loja', caixa: 'vende no balcão', garcom: 'atende mesas', cozinha: 'prepara os pedidos',
   gestor_entregas: 'só as entregas', financeiro: 'só o financeiro', contabilidade: 'contador(a)', tarefas: 'só Tarefas',
 };
 
@@ -108,9 +109,13 @@ export default function AcessoPessoa({ userId, nome, onClose, onSalvo }: { userI
 
   const ajustes = loja && r ? ajustesDaPessoa(padrao, r.keys) : [];
   /** Fechar com mudança não salva pergunta antes (a bolinha da loja promete guardar). */
-  const fechar = () => {
+  const fechar = async () => {
     const pendentes = (dados?.lojas ?? []).filter((l) => mudou(l.tenant_id)).map((l) => l.loja);
-    if (pendentes.length && !window.confirm(`Sair sem salvar? Mudou e não salvou: ${pendentes.join(', ')}.`)) return;
+    if (pendentes.length && !(await confirmar({
+      titulo: 'Sair sem salvar?',
+      mensagem: `Você mudou e não salvou o acesso em: ${pendentes.join(', ')}. Se sair, as mudanças se perdem.`,
+      confirmarLabel: 'Sair sem salvar', cancelarLabel: 'Continuar editando', perigo: true,
+    }))) return;
     onClose();
   };
   const mais = ajustes.filter((a) => a.allowed).length;
@@ -208,7 +213,7 @@ export default function AcessoPessoa({ userId, nome, onClose, onSalvo }: { userI
                               {fixo
                                 ? <span className="flex-shrink-0 mt-1.5 text-[11px] font-bold text-zinc-400 inline-flex items-center gap-1" title="O servidor confere o cargo: não muda por pessoa"><i className="ri-shield-user-line" />vem do cargo</span>
                                 : bloqueado
-                                ? <span className="flex-shrink-0 mt-1.5 text-[11px] font-bold text-zinc-400 inline-flex items-center gap-1"><i className="ri-lock-2-line" />só o dono</span>
+                                ? <span className="flex-shrink-0 mt-1.5 text-[11px] font-bold text-zinc-400 inline-flex items-center gap-1"><i className="ri-lock-2-line" />só o Administrador</span>
                                 : <span className={`relative flex-shrink-0 mt-1.5 w-11 h-6 rounded-full transition-colors ${est === 'on' ? 'bg-emerald-600' : est === 'parcial' ? 'bg-emerald-300' : 'bg-zinc-300'}`}>
                                     <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${est === 'off' ? 'left-0.5' : 'left-[22px]'}`} />
                                   </span>}

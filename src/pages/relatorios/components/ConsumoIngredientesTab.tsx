@@ -12,7 +12,7 @@ import {
 import {
   btn, Faixa, Chips, CartaoAcao, Vazio, Nota, Etiqueta, MenuMais, semAcento, brl, brlInteiro,
   type ItemFaixa, type OpcaoChip,
-} from '@/pages/estoque/components/ui/EstoqueUi';
+} from '@/components/kit';
 import Ajuda from '@/pages/estoque/components/inicio/Ajuda';
 import FichasVendasPassadasModal from '@/pages/estoque/components/FichasVendasPassadasModal';
 import ConsumoDetalheDia from './ConsumoDetalheDia';

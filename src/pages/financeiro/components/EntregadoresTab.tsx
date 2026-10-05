@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
+import { confirmar } from '@/components/base/Dialogos';
 import { KpiCard, Segmented } from './dreUi';
 
 interface ResumoMotoboy {
@@ -104,7 +105,11 @@ export default function EntregadoresTab() {
 
   const desfazer = async (a: Acerto) => {
     if (!tenantId) return;
-    if (!window.confirm(`Desfazer o acerto de ${um(a.driver)?.name ?? 'entregador'} (${formatCurrency(Number(a.total))})? A conta a pagar é apagada e os lançamentos voltam a ficar em aberto.`)) return;
+    if (!(await confirmar({
+      titulo: `Desfazer o acerto de ${um(a.driver)?.name ?? 'entregador'} (${formatCurrency(Number(a.total))})?`,
+      mensagem: 'A conta a pagar é apagada e os lançamentos voltam a ficar em aberto.',
+      confirmarLabel: 'Desfazer acerto', perigo: true,
+    }))) return;
     const { error } = await supabase.rpc('fn_acerto_motoboy_desfazer', { p_tenant: tenantId, p_settlement: a.id });
     if (error) { setErro(erroMsg(error)); return; }
     setAviso('Acerto desfeito.'); carregar();
@@ -321,7 +326,11 @@ function DetalheLancamentos({ tenantId, driverId, ate, onMudou }: { tenantId: st
   }, [tenantId, driverId, ate]);
   useEffect(() => { carregar(); }, [carregar]);
   const apagar = async (l: Lancamento) => {
-    if (!window.confirm(`Apagar o adiantamento de ${formatCurrency(Math.abs(Number(l.amount)))}?`)) return;
+    if (!(await confirmar({
+      titulo: `Apagar o adiantamento de ${formatCurrency(Math.abs(Number(l.amount)))}?`,
+      mensagem: 'Ele deixa de abater o que o entregador tem a receber.',
+      confirmarLabel: 'Apagar', perigo: true,
+    }))) return;
     const { error } = await supabase.rpc('fn_acerto_motoboy_apagar_adiantamento', { p_tenant: tenantId, p_id: l.id });
     if (error) { setErro(erroMsg(error)); return; }
     carregar(); onMudou();

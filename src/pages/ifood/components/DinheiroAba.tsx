@@ -4,7 +4,7 @@ import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { fetchAllRows } from '@/lib/fetchAllRows';
 import { getPeriodDates, somarDias, todayBrasilia } from '@/lib/dateUtils';
 import { culpaCancelamento, motivoCurto, resumir } from '@/lib/ifoodDashboard';
-import { btn, brl, CartaoAcao, CartaoBarra, Etiqueta, Nota, SecaoTitulo, Vazio } from '@/pages/estoque/components/ui/EstoqueUi';
+import { btn, brl, CartaoAcao, CartaoBarra, Etiqueta, Nota, SecaoTitulo, Vazio } from '@/components/kit';
 import IfoodConfigModal from '@/pages/financeiro/components/conciliacao/IfoodConfigModal';
 import IfoodTab from '@/pages/financeiro/components/IfoodTab';
 import type { AbaProps } from '../lib/tipos';

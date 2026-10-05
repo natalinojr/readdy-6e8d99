@@ -148,9 +148,56 @@ self.addEventListener('fetch', (event) => {
   // Demais requisições da própria origem seguem o caminho normal do navegador.
 });
 
-// Permite que a página peça a troca imediata de versão.
+/* ── Quem está logado neste aparelho (2026-10-05) ─────────────────────────
+   A página avisa (postMessage {tipo:'ERPOS_USUARIO', uid}) ao entrar e manda null ao sair. Fica no
+   Cache Storage porque o service worker é encerrado e reiniciado a qualquer hora (variável se perde).
+   Serve para os botões Aprovar/Recusar: só aparecem se o aviso é PARA quem está logado (tablet
+   compartilhado — ver src/lib/push.ts). O activate não apaga este cache (não é shell nem assets). */
+const SESSAO_CACHE = 'erpos-sessao';
+const CHAVE_USUARIO = '/__erpos/usuario-logado';
+
+async function usuarioLogado() {
+  try {
+    const cache = await caches.open(SESSAO_CACHE);
+    const r = await cache.match(CHAVE_USUARIO);
+    const uid = r ? (await r.text()).trim() : '';
+    return uid || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+async function guardarUsuarioLogado(uid) {
+  try {
+    const cache = await caches.open(SESSAO_CACHE);
+    if (uid) await cache.put(CHAVE_USUARIO, new Response(uid));
+    else await cache.delete(CHAVE_USUARIO);
+  } catch (_) { /* sem Cache Storage: sem usuário = sem botões */ }
+  // Saiu ou trocou de pessoa: fecha os avisos com botões que eram de outra pessoa.
+  try {
+    const abertas = await self.registration.getNotifications();
+    abertas.filter((n) => n.data && n.data.tokens && n.data.para !== uid).forEach((n) => n.close());
+  } catch (_) { /* sem suporte */ }
+}
+
+// Botões só falam com a Edge de ações do Supabase (o endereço vem no payload cifrado, mas confere mesmo assim).
+function acaoUrlValida(url) {
+  try {
+    const alvo = new URL(String(url || ''));
+    return alvo.protocol === 'https:' && alvo.hostname.endsWith('.supabase.co') && alvo.pathname === '/functions/v1/acao-push'
+      && !alvo.username && !alvo.password && !alvo.port;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Permite que a página peça a troca imediata de versão e diga quem está logado.
 self.addEventListener('message', (event) => {
-  if (event.data === 'SKIP_WAITING') self.skipWaiting();
+  if (event.data === 'SKIP_WAITING') { self.skipWaiting(); return; }
+  if (event.data && event.data.tipo === 'ERPOS_USUARIO') {
+    const uid = typeof event.data.uid === 'string' && event.data.uid ? event.data.uid : null;
+    event.waitUntil(guardarUsuarioLogado(uid));
+  }
 });
 
 /* ── Web Push ─────────────────────────────────────────────────────────────
@@ -184,6 +231,21 @@ self.addEventListener('push', (event) => {
   if (dados.silencioso) opcoes.silent = true; // pessoa desligou som/vibração dos avisos
 
   event.waitUntil((async () => {
+    // Botões Aprovar/Recusar (2026-10-05, pedido de aprovação do PDV): cada botão leva um token assinado,
+    // pessoal e de 15 min. Só aparecem se o aviso é PARA quem está logado neste aparelho (`para`); senão
+    // vai o aviso comum, e o toque abre o app — onde manda a sessão de quem está logado. Quem não suporta
+    // botões (iPhone) ignora `actions` e o toque comum abre o app em `url`.
+    if (Array.isArray(dados.acoes) && dados.acoes.length && acaoUrlValida(dados.acao_url)
+      && typeof dados.para === 'string' && dados.para && dados.para === (await usuarioLogado())) {
+      const acoes = dados.acoes.filter((a) => a && typeof a.id === 'string' && typeof a.titulo === 'string' && typeof a.token === 'string').slice(0, 2);
+      if (acoes.length) {
+        opcoes.actions = acoes.map((a) => ({ action: a.id, title: a.titulo }));
+        opcoes.data.acaoUrl = dados.acao_url;
+        opcoes.data.tokens = Object.fromEntries(acoes.map((a) => [a.id, a.token]));
+        opcoes.data.para = dados.para;
+        opcoes.data.titulo = titulo;
+      }
+    }
     await self.registration.showNotification(titulo, opcoes);
     // Marca o ícone do app. Sem número: o service worker não sabe o total
     // do usuário — a contagem exata é acertada quando o app abre.
@@ -191,12 +253,54 @@ self.addEventListener('push', (event) => {
   })());
 });
 
+// Decide pelo botão do aviso: chama a Edge acao-push com o token do botão (só a Edge de ações do Supabase,
+// ver acaoUrlValida).
+async function decidirPeloAviso(notificacao, acao) {
+  const dados = notificacao.data || {};
+  const token = dados.tokens && dados.tokens[acao];
+  let resultado = { ok: false, mensagem: 'Não consegui decidir por aqui. Toque para abrir o app.', abrirApp: true };
+  try {
+    if (!token || !acaoUrlValida(dados.acaoUrl)) throw new Error('destino inválido');
+    const r = await fetch(new URL(String(dados.acaoUrl)).toString(), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const out = await r.json().catch(() => ({}));
+    if (out && typeof out.mensagem === 'string') {
+      // Decidida (por mim ou por outra pessoa) = nada a fazer no app; erro/expirado = abre o app.
+      resultado = { ok: !!out.ok, mensagem: out.mensagem, abrirApp: !out.ok && out.codigo !== 'ja_decidido' };
+    }
+  } catch (_) { /* sem rede etc.: fica a mensagem padrão, o toque abre o app */ }
+
+  const tag = notificacao.tag || 'erpos';
+  await self.registration.showNotification(resultado.ok ? 'Pronto' : (dados.titulo || 'ERPOS'), {
+    body: resultado.mensagem, icon: '/icon-192.png', badge: '/icon-192.png', tag, renotify: !resultado.ok,
+    silent: resultado.ok, data: { url: dados.url || '/hoje' },
+  });
+  if (resultado.ok || !resultado.abrirApp) {
+    // Confirmação some sozinha em alguns segundos.
+    await new Promise((fim) => setTimeout(fim, 6000));
+    const abertas = await self.registration.getNotifications({ tag });
+    abertas.forEach((n) => n.close());
+  }
+}
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const destino = (event.notification.data && event.notification.data.url) || '/tarefas';
 
+  const dados = event.notification.data || {};
+
   event.waitUntil(
     (async () => {
+      // Botão do aviso (Aprovar/Recusar): decide sem abrir o app — e só se quem está logado AGORA é o
+      // destinatário (o aviso pode ter chegado antes de a pessoa sair). Toque no corpo abre o app.
+      if (event.action && dados.tokens) {
+        if (dados.para && dados.para === (await usuarioLogado())) {
+          await decidirPeloAviso(event.notification, event.action);
+          return;
+        }
+      }
       const abas = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
       // Reaproveita uma aba já aberta do app em vez de abrir outra
       for (const aba of abas) {

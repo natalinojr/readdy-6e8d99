@@ -366,7 +366,7 @@ export default function FornecedoresRelatorioTab() {
           className="w-full h-12 rounded-xl border border-zinc-200 px-3 text-base focus:outline-none focus:border-amber-400"
         />
         {foneErro && <p role="alert" className="mt-2 text-xs font-semibold text-red-600">{foneErro}</p>}
-        <p className="mt-2 mb-3 text-[11.5px] text-zinc-400">Só o dono e o Supervisor mudam o número.</p>
+        <p className="mt-2 mb-3 text-[11.5px] text-zinc-400">Só o Administrador e o Supervisor mudam o número.</p>
       </Folha>
     </Pagina>
   );

@@ -66,10 +66,12 @@ export default function Login() {
   const senhaRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const inviteToken = searchParams.get('invite') || searchParams.get('t');
-    if (inviteToken) {
-      navigate(`/invite?t=${inviteToken}`, { replace: true });
-    }
+    // ?invite=<código> é o convite atual (código de loja) → /onboarding; ?t=<token> é o convite antigo → /invite
+    // (que só avisa que não vale mais).
+    const convite = searchParams.get('invite');
+    const antigo = searchParams.get('t');
+    if (convite) navigate(`/onboarding?invite=${encodeURIComponent(convite)}`, { replace: true });
+    else if (antigo) navigate(`/invite?t=${encodeURIComponent(antigo)}`, { replace: true });
   }, [searchParams, navigate]);
 
   useEffect(() => {

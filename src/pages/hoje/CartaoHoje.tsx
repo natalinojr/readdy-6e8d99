@@ -3,7 +3,7 @@
 // para dinheiro do dono (pagar com PIN, pedir boleto), pede ao chat — o mesmo caminho de sempre.
 import { useState, type ReactElement } from 'react';
 import { supabase } from '@/lib/supabase';
-import { confirmar } from '@/components/base/Dialogos';
+import { confirmarDecisao } from '@/lib/confirmarDecisao';
 import { kindConfig } from '@/contexts/PendenciasContext';
 import { pedirAoChat } from '@/lib/assistenteFoco';
 import { chamarAssistente } from '@/lib/assistenteApp';
@@ -133,14 +133,7 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
   } else if (p.kind === 'aprovacao' && p.ref) {
     // Uma janela a mais antes de decidir (pedido do dono, 2026-10-03): evita aprovar/recusar sem querer.
     const decidir = (aprovar: boolean) => rodar(async () => {
-      const ok = await confirmar({
-        titulo: aprovar ? 'Aprovar este pedido?' : 'Recusar este pedido?',
-        mensagem: p.titulo,
-        confirmarLabel: aprovar ? 'Sim, aprovar' : 'Sim, recusar',
-        cancelarLabel: 'Voltar',
-        perigo: !aprovar,
-      });
-      if (!ok) return;
+      if (!(await confirmarDecisao(aprovar, p.titulo))) return;
       const { error } = await supabase.rpc('fn_pdv_approval_decide', { p_id: p.ref, p_aprovar: aprovar, p_nome: meuNome });
       if (error) throw new Error(error.message);
     });

@@ -22,7 +22,7 @@ import {
   resumoPedidos, pendenciasPedidos, passaNoChip, filtrarComGrupos, buscaPedido, canalPedido, numeroCurto, canalFiscal,
   type FiltroChip, type Canal, type ContextoFiltro,
 } from '@/lib/pedidosRegras';
-import { SecaoTitulo, Nota, type ItemMenu } from '@/pages/estoque/components/ui/EstoqueUi';
+import { SecaoTitulo, Nota, type ItemMenu } from '@/components/kit';
 import PedidosCabecalho from './components/novo/Cabecalho';
 import PeriodoFolha, { rotuloEscolha, rotuloSessao, type EscolhaPeriodo } from './components/novo/PeriodoFolha';
 import HorasFolha from './components/novo/HorasFolha';

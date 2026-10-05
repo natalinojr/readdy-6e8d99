@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { confirmar } from '@/components/base/Dialogos';
 
 // Número PRÓPRIO da loja no atendimento pelo WhatsApp (2026-09-27): a loja liga o número sem ninguém entrar
 // na Meta. Dois jeitos (edge atendimento-loja, ações numero_* e conectar_meta; ver supabase/functions/
@@ -152,7 +153,9 @@ export default function NumeroProprio({ tenantId, lojaNome, chamar, conectar, on
           </p>
           {avisoBox}
           <button type="button" disabled={ocupado}
-            onClick={() => { if (confirm('Desligar este número do atendimento? As mensagens que chegarem nele deixam de ser respondidas.')) acao({ action: 'numero_desligar' }, 'Número desligado.'); }}
+            onClick={async () => {
+              if (await confirmar({ titulo: 'Desligar este número do atendimento?', mensagem: 'As mensagens que chegarem nele deixam de ser respondidas.', confirmarLabel: 'Desligar', perigo: true })) acao({ action: 'numero_desligar' }, 'Número desligado.');
+            }}
             className="text-xs font-bold text-red-600 hover:text-red-700 disabled:opacity-50">Desligar número</button>
         </div>
       ) : sit ? (

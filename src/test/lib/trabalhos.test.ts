@@ -67,7 +67,7 @@ describe('quem pode dar o quê (conferirAcesso)', () => {
     expect(conferirAcesso(base({ keys: [...sup, 'estoque_receber'] }))).toBeNull();
   });
   it('gerente não dá aprovar pagamento nem cadastro de pessoas', () => {
-    expect(conferirAcesso(base({ keys: [...sup, 'pag_aprovar'] }))).toMatch(/só o dono/);
+    expect(conferirAcesso(base({ keys: [...sup, 'pag_aprovar'] }))).toMatch(/só o Administrador/);
     expect(conferirAcesso(base({ keys: [...sup, 'usuarios_gerenciar'] }))).toMatch(/só para Supervisor/);
   });
   it('gerente não dá o que ele mesmo não tem', () => {
@@ -87,7 +87,7 @@ describe('quem pode dar o quê (conferirAcesso)', () => {
   });
   it('o dono dá o que é só dele (aprovar pagamento) a quem quiser', () => {
     expect(conferirAcesso(base({ editor: 'admin', keys: [...sup, 'pag_aprovar'] }))).toBeNull();
-    expect(conferirAcesso(base({ editor: 'supervisao' }))).toMatch(/Só o dono ou o supervisor/);
+    expect(conferirAcesso(base({ editor: 'supervisao' }))).toMatch(/Só o Administrador ou o supervisor/);
   });
 });
 

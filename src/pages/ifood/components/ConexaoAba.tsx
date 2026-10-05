@@ -6,7 +6,7 @@ import { ifoodShipping, type IfoodShippingConfig } from '@/lib/ifoodShipping';
 import { chaveComplementoIfood, chaveItemIfood, custoDoComplemento, custoDoItem } from '@/lib/ifoodArea';
 import { custosIfood, fetchOrders } from '../lib/useIfoodDados';
 import { CaixaCopiar, Cartao, Colunas, Folha, Interruptor, Manchete, btn, Etiqueta, Nota, SecaoTitulo } from '@/pages/config-delivery/ui';
-import { brl } from '@/pages/estoque/components/ui/EstoqueUi';
+import { brl } from '@/components/kit';
 import IfoodConfigModal from '@/pages/financeiro/components/conciliacao/IfoodConfigModal';
 import IfoodEntregaConfigModal from '@/pages/gestor-entregas/components/IfoodEntregaConfigModal';
 import { nomeLoja, type AbaProps } from '../lib/tipos';

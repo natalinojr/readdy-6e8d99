@@ -1,6 +1,6 @@
 // Usuários (tela nova) › uma pessoa: tudo o que dá para fazer com ela num lugar só (O que faz, reenviar o
 // acesso, editar, redefinir senha/PIN, mudar o cargo, desativar, excluir). Protótipo: folha "pessoa".
-import Folha from '@/pages/estoque/components/inicio/Folha';
+import { Folha } from '@/components/kit';
 import type { UsuarioReal } from '@/hooks/useUsuarios';
 import type { PerfilUsuario } from '@/constants/usuarios';
 import { CARGOS_OUTROS, CARGOS_PRINCIPAIS, cargosPermitidos, diasSemEntrar, entraPor, loginCompartilhado, rotuloCargo, ultimoAcessoTxt } from '@/lib/usuariosEquipe';

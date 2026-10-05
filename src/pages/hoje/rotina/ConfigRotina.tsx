@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { confirmar } from '@/components/base/Dialogos';
-import Folha from '@/pages/estoque/components/inicio/Folha';
+import { Folha } from '@/components/kit';
 import { usePendenciasHoje } from '../hojeStore';
 import type { DadosRotina, ItemRotina, PapelRotina, TipoRotina } from '../../../../supabase/functions/_shared/rotina';
 import { PAPEIS_ROTINA } from '../../../../supabase/functions/_shared/rotina';
@@ -136,7 +136,7 @@ export default function ConfigRotina() {
   if (papeis && !lojasAdmin.length) {
     return (
       <div className="max-w-xl mx-auto py-10 text-center">
-        <p className="text-sm text-zinc-500">Só o dono ou o admin da loja muda a rotina.</p>
+        <p className="text-sm text-zinc-500">Só o Administrador da loja muda a rotina.</p>
         <button onClick={() => navigate('/hoje')} className="mt-3 text-sm font-bold text-amber-600 underline cursor-pointer">Voltar para o Hoje</button>
       </div>
     );

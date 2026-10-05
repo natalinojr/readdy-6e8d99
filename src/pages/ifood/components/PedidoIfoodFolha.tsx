@@ -3,7 +3,7 @@ import { supabase } from '@/lib/supabase';
 import { fetchPedidosIfood, type PedidoIfood } from '@/lib/ifoodDashboard';
 import { ifoodTipoPedido } from '@/lib/ifoodShipping';
 import { montarPedidoOrder, montarPedidosArea, type ItemRow, type MapaCustos, type OrderRow, type PedidoArea } from '@/lib/ifoodArea';
-import Folha from '@/pages/estoque/components/inicio/Folha';
+import { Folha } from '@/components/kit';
 import type { AcessoIfood } from '../lib/tipos';
 import { nomeLoja } from '../lib/tipos';
 import type { LojaIfood } from '../lib/useIfoodDados';

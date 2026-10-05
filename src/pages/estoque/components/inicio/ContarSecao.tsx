@@ -117,7 +117,7 @@ export default function ContarSecao({ situacao, contagem, podeContar, onContar, 
                 <button onClick={onConfigurar} className="flex-1 min-h-[42px] rounded-xl bg-amber-500 text-zinc-900 text-sm font-bold cursor-pointer">Programar contagens</button>
               </div>
             ) : (
-              <p className="text-[11.5px] text-zinc-400 mt-2">Quem programa é o supervisor ou o dono.</p>
+              <p className="text-[11.5px] text-zinc-400 mt-2">Quem programa é o Supervisor ou o Administrador.</p>
             )}
           </div>
         )}

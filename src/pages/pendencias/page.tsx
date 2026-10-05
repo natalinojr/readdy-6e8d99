@@ -6,6 +6,7 @@ import PullToRefresh from '@/components/feature/PullToRefresh';
 import { perguntar } from '@/components/base/Dialogos';
 import { useAprovacoes } from '@/contexts/AprovacoesContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { confirmarDecisao } from '@/lib/confirmarDecisao';
 
 /**
  * Caixa de pendências — a lista que não rola para cima.
@@ -188,6 +189,7 @@ export default function PendenciasPage() {
 
   const handleDecidir = async (p: Pendencia, sim: boolean) => {
     const nome = user?.nome ?? 'Supervisor';
+    if (!(await confirmarDecisao(sim, p.titulo))) return;
     try {
       await (sim ? aprovar(p.ref, nome) : rejeitar(p.ref, nome));
       toast.success(sim ? 'Aprovado' : 'Recusado', 'O caixa recebe a resposta na hora.');

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAprovacoes, type SolicitacaoAprovacao, type StatusAprovacao } from '../../contexts/AprovacoesContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../contexts/ToastContext';
+import { confirmarDecisao } from '@/lib/confirmarDecisao';
 
 const fmt = (ts: number) => {
   const diff = Math.floor((Date.now() - ts) / 60000);
@@ -32,7 +33,7 @@ const RESOLUCAO_LABEL: Record<string, string> = {
 const STATUS_CONFIG: Record<StatusAprovacao, { label: string; bg: string; text: string }> = {
   pendente: { label: 'Pendente', bg: 'bg-amber-100', text: 'text-amber-700' },
   aprovado: { label: 'Aprovado', bg: 'bg-green-100', text: 'text-green-700' },
-  rejeitado: { label: 'Rejeitado', bg: 'bg-red-100', text: 'text-red-600' },
+  rejeitado: { label: 'Recusado', bg: 'bg-red-100', text: 'text-red-600' },
 };
 
 function DescontoCard({ s, onAprovar, onRejeitar }: {
@@ -146,14 +147,14 @@ function DescontoCard({ s, onAprovar, onRejeitar }: {
               className="flex-1 py-2.5 border-2 border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold rounded-xl cursor-pointer transition-colors whitespace-nowrap"
             >
               <i className="ri-close-line mr-1" />
-              Negar
+              Recusar
             </button>
             <button
               onClick={() => onAprovar(s.id)}
               className="flex-1 py-2.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-xl cursor-pointer transition-colors whitespace-nowrap"
             >
               <i className="ri-shield-check-line mr-1" />
-              Autorizar
+              Aprovar
             </button>
           </div>
         )}
@@ -161,7 +162,7 @@ function DescontoCard({ s, onAprovar, onRejeitar }: {
         {s.status !== 'pendente' && (
           <p className="text-xs text-zinc-400 text-center">
             <i className={`${s.status === 'aprovado' ? 'ri-shield-check-line text-amber-500' : 'ri-close-circle-line text-red-400'} mr-1`} />
-            {s.status === 'aprovado' ? 'Autorizado' : 'Negado'} às {s.resolvido} por {s.resolvidoPor}
+            {s.status === 'aprovado' ? 'Aprovado' : 'Recusado'} às {s.resolvido} por {s.resolvidoPor}
           </p>
         )}
       </div>
@@ -239,7 +240,7 @@ function SolicitacaoCard({ s, onAprovar, onRejeitar }: {
                 className="flex-1 py-2.5 border-2 border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold rounded-xl cursor-pointer transition-colors whitespace-nowrap"
               >
                 <i className="ri-close-line mr-1" />
-                Rejeitar
+                Recusar
               </button>
               <button
                 onClick={() => onAprovar(s.id)}
@@ -254,7 +255,7 @@ function SolicitacaoCard({ s, onAprovar, onRejeitar }: {
           {s.status !== 'pendente' && (
             <p className="text-xs text-zinc-400 text-center">
               <i className={`${s.status === 'aprovado' ? 'ri-check-double-line text-green-500' : 'ri-close-line text-red-400'} mr-1`} />
-              {s.status === 'aprovado' ? 'Aprovado' : 'Rejeitado'} às {s.resolvido} por {s.resolvidoPor}
+              {s.status === 'aprovado' ? 'Aprovado' : 'Recusado'} às {s.resolvido} por {s.resolvidoPor}
             </p>
           )}
         </div>
@@ -274,10 +275,17 @@ export default function AprovacoesPage() {
   const { error: toastErro } = useToast();
 
   // A decisão vai para o banco; erro comum é "já resolvida" em outro aparelho ou papel sem permissão.
-  const handleAprovar = (id: string) => {
+  // Mesma janela de confirmação da tela Hoje antes de decidir.
+  const descrever = (id: string) => {
+    const s = solicitacoes.find((x) => x.id === id);
+    return s ? `${s.itemNome}${s.mesaNome ? ` · ${s.mesaNome}` : ''}` : 'Pedido de aprovação';
+  };
+  const handleAprovar = async (id: string) => {
+    if (!(await confirmarDecisao(true, descrever(id)))) return;
     aprovar(id, operador).catch((e: Error) => toastErro('Não foi possível aprovar', e.message));
   };
-  const handleRejeitar = (id: string) => {
+  const handleRejeitar = async (id: string) => {
+    if (!(await confirmarDecisao(false, descrever(id)))) return;
     rejeitar(id, operador).catch((e: Error) => toastErro('Não foi possível recusar', e.message));
   };
 
@@ -319,7 +327,7 @@ export default function AprovacoesPage() {
           {([
             { key: 'pendente', label: 'Pendentes', color: 'text-amber-600' },
             { key: 'aprovado', label: 'Aprovados', color: 'text-green-600' },
-            { key: 'rejeitado', label: 'Rejeitados', color: 'text-red-500' },
+            { key: 'rejeitado', label: 'Recusados', color: 'text-red-500' },
             { key: 'todos', label: 'Todos', color: 'text-zinc-600' },
           ] as { key: FilterStatus; label: string; color: string }[]).map((f) => (
             <button

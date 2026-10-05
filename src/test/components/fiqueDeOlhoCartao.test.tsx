@@ -59,12 +59,12 @@ describe('Hoje › Fique de olho', () => {
     expect(screen.getByText(/Fora as 3 que você já viu/)).toBeTruthy();
   });
 
-  it('Supervisor vê o cartão mas sem "Estou ciente": quem dá ciência é o dono', () => {
+  it('Supervisor vê o cartão mas sem "Estou ciente": quem dá ciência é o Administrador', () => {
     const marcar = vi.fn();
     render(<FiqueDeOlho itens={cartoes(pend([item({ id: 'a' })]))} hoje="2026-10-05" mostrarLoja={false} abrir={vi.fn()} marcar={marcar} onMudou={vi.fn()} podeDarCiencia={() => false} />);
     expect(screen.getByText('Desconto de R$ 50,00')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Estou ciente/ })).toBeNull();
-    expect(screen.getByText('Quem dá ciência é o dono.')).toBeTruthy();
+    expect(screen.getByText('Quem dá ciência é o Administrador.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Ver' })).toBeTruthy(); // continua podendo conferir
     expect(marcar).not.toHaveBeenCalled();
   });
@@ -74,7 +74,7 @@ describe('Hoje › Fique de olho', () => {
     const lista = organizarHoje([pend([item({ id: 'a' })]), outra], '2026-10-05');
     render(<FiqueDeOlho itens={lista} hoje="2026-10-05" mostrarLoja abrir={vi.fn()} marcar={vi.fn()} onMudou={vi.fn()} podeDarCiencia={(t) => t === 'par'} />);
     expect(screen.getAllByRole('button', { name: /Estou ciente/ })).toHaveLength(1);
-    expect(screen.getAllByText('Quem dá ciência é o dono.')).toHaveLength(1);
+    expect(screen.getAllByText('Quem dá ciência é o Administrador.')).toHaveLength(1);
   });
 
   it('sem cartões não desenha nada', () => {

@@ -8,7 +8,7 @@ import { dateKeyBrasilia, somarDias, todayBrasilia } from '@/lib/dateUtils';
 import { ifoodShipping, ifoodTipoPedido, type IfoodShippingConfig } from '@/lib/ifoodShipping';
 import { culpaCancelamento, motivoCurto } from '@/lib/ifoodDashboard';
 import { chaveComplementoIfood, chaveItemIfood, rotuloCliente, type PedidoArea } from '@/lib/ifoodArea';
-import { brl } from '@/pages/estoque/components/ui/EstoqueUi';
+import { brl } from '@/components/kit';
 import type { AcessoIfood } from '../lib/tipos';
 import type { LojaIfood } from '../lib/useIfoodDados';
 import { nomeLoja } from '../lib/tipos';

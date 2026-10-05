@@ -5,6 +5,7 @@ import { ensureFreshSession } from '@/lib/supabase';
 import { reportError } from '@/lib/errorReporter';
 import { getLojaAtiva, setLojaAtiva, limparLojaAtiva, fixarLojaNestaAba } from '@/lib/lojaAtiva';
 import type { TipoEmpresa } from '@/lib/tipoEmpresa';
+import { liberarAparelhoAoSair, sincronizarPushAoEntrar, informarUsuarioAoServiceWorker } from '@/lib/push';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -190,6 +191,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [tenantCount, setTenantCount] = useState(0);
   const [hasNoTenants, setHasNoTenants] = useState(false);
   const authUserIdRef = useRef<string | null>(null);
+  const saidaRef = useRef<Promise<void> | null>(null);
+
+  // Quem entrou fica com a inscrição de push deste aparelho (ou ela cai, se for login da loja) e o
+  // service worker passa a saber quem está logado. Só quando há pessoa: trocar de loja não limpa.
+  const pushUid = user?.id ?? null;
+  const pushEmail = user?.email ?? null;
+  const pushTenant = user?.tenantId ?? null;
+  useEffect(() => {
+    if (!pushUid) return;
+    void sincronizarPushAoEntrar({ uid: pushUid, email: pushEmail, tenantId: pushTenant }).catch(() => {});
+  }, [pushUid, pushEmail, pushTenant]);
 
   // ── Resolve which tenant to use ──────────────────────────────────────────
   const resolveSession = useCallback(async (userId: string) => {
@@ -394,6 +406,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           authUserIdRef.current = null;
           limparLojaAtiva();
           setLoading(false);
+          // Sem sessão: os avisos com botões (Aprovar/Recusar) deixam de valer neste aparelho.
+          void informarUsuarioAoServiceWorker(null);
         };
 
         // Logout explícito (botão Sair, ou safeSignOut chamado por um caller que já
@@ -562,6 +576,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // ─── Login ─────────────────────────────────────────────────────────────────
 
   const login = async (identifier: string, senha: string, onError?: (msg: string) => void): Promise<boolean> => {
+    // Saída ainda limpando os avisos do aparelho: espera, senão o signOut atrasado derrubaria quem está entrando.
+    if (saidaRef.current) await saidaRef.current;
     const trimmedId = identifier.trim();
     const trimmedSenha = senha.trim();
     const isBadge = /^\d+$/.test(trimmedId) && trimmedId.length <= 8;
@@ -629,7 +645,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // ─── Logout ────────────────────────────────────────────────────────────────
 
   const logout = () => {
-    void safeSignOut();
+    // Aparelho compartilhado (2026-10-05): apaga a inscrição de push de quem sai ANTES do signOut (precisa
+    // do token dele), para o próximo a entrar não receber os avisos — nem os botões Aprovar/Recusar — dele.
+    const saida = (async () => {
+      await liberarAparelhoAoSair().catch(() => {});
+      await safeSignOut();
+    })().finally(() => { if (saidaRef.current === saida) saidaRef.current = null; });
+    saidaRef.current = saida;
     setUser(null);
     setAvailableTenants([]);
     setNeedsTenantSelection(false);

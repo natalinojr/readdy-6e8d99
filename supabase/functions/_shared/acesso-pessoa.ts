@@ -73,14 +73,14 @@ export interface PedidoDeAcesso {
 
 /** Confere se pode gravar. Devolve a mensagem para a pessoa, ou null quando pode. */
 export function conferirAcesso(p: PedidoDeAcesso): string | null {
-  if (p.propria) return 'Ninguém muda o próprio acesso — peça a outra pessoa (o dono).';
-  if (p.editor !== 'admin' && p.editor !== 'gerente') return 'Só o dono ou o supervisor da loja mudam o acesso das pessoas.';
+  if (p.propria) return 'Ninguém muda o próprio acesso — peça a outra pessoa (o Administrador).';
+  if (p.editor !== 'admin' && p.editor !== 'gerente') return 'Só o Administrador ou o supervisor da loja mudam o acesso das pessoas.';
   if (p.papelAtual === 'admin') return 'Administrador tem tudo — não tem ajuste. O cargo dele muda em "Editar".';
   const desconhecida = p.keys.find((k) => !TODAS_AS_KEYS.has(k));
   if (desconhecida) return `Permissão desconhecida: ${desconhecida}`;
   if (p.editor === 'gerente') {
     if (!PAPEIS_DO_GERENTE.includes(p.papelAtual)) return 'O supervisor só muda o acesso de quem está abaixo dele na loja.';
-    if (!PAPEIS_DO_GERENTE.includes(p.papelNovo)) return 'O supervisor não dá esse cargo — só o dono.';
+    if (!PAPEIS_DO_GERENTE.includes(p.papelNovo)) return 'O supervisor não dá esse cargo — só o Administrador.';
   }
   // O que vai além do padrão do cargo tem que funcionar de verdade para esse cargo (revisão 2026-10-03).
   const padraoCargo = new Set(p.padraoDoCargoNovo);
@@ -94,12 +94,12 @@ export function conferirAcesso(p: PedidoDeAcesso): string | null {
   }
   // Gerente
   if (!PAPEIS_DO_GERENTE.includes(p.papelAtual)) return 'O supervisor só muda o acesso de quem está abaixo dele na loja.';
-  if (!PAPEIS_DO_GERENTE.includes(p.papelNovo)) return 'O supervisor não dá esse cargo — só o dono.';
+  if (!PAPEIS_DO_GERENTE.includes(p.papelNovo)) return 'O supervisor não dá esse cargo — só o Administrador.';
   const padrao = new Set(p.padraoDoCargoNovo);
   for (const k of p.keys) {
     // vem do cargo ou a pessoa já tinha (o dono deu): não é o gerente que está dando
     if (padrao.has(k) || p.keysAtuais.has(k)) continue;
-    if (KEYS_SO_DONO.includes(k)) return 'Dinheiro e cadastro de pessoas, só o dono libera.';
+    if (KEYS_SO_DONO.includes(k)) return 'Dinheiro e cadastro de pessoas, só o Administrador libera.';
     if (!p.keysDoEditor.has(k)) return 'O supervisor só libera o que ele mesmo tem.';
   }
   return null;

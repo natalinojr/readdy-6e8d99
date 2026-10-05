@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { rotuloCliente } from '@/lib/ifoodArea';
 import { ehCancelado, numeroCurto, ondeQuem, situacaoPedido, entregaDoPedido } from '@/lib/pedidosRegras';
-import { Etiqueta, brl, btn } from '@/pages/estoque/components/ui/EstoqueUi';
+import { Etiqueta, brl, btn } from '@/components/kit';
 import { Bloco, Casca, Linha, SeloSituacao, diaDoPedido, hhmm, rotuloDia, type PropsDetalhe } from './PagosJuntos';
 
 // Detalhe de um pedido do iFood que só existe em ifood_orders (loja no modo "Só acompanhar"). Não tem

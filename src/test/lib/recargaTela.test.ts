@@ -11,6 +11,22 @@ describe('recarga automática quando o arquivo da tela não baixa', () => {
     expect(ehErroCarregarTela(new Error('Cannot read properties of undefined'))).toBe(false);
   });
 
+  it("reconhece 'reading default' de arquivo publicado (versão misturada depois do deploy)", () => {
+    const erro = new TypeError("Cannot read properties of undefined (reading 'default')");
+    erro.stack = "TypeError: Cannot read properties of undefined (reading 'default')\n    at F (https://erpos.vercel.app/assets/react-Bi8cP4Js.js:1:3674)";
+    expect(ehErroCarregarTela(erro)).toBe(true);
+    const recarregar = vi.fn();
+    expect(tentarRecarregarTela(erro, recarregar)).toBe(true);
+    expect(tentarRecarregarTela(erro, recarregar)).toBe(false); // trava de 1 min: sem laço
+    expect(recarregar).toHaveBeenCalledTimes(1);
+  });
+
+  it("'reading default' fora de /assets/ (dev) é bug de verdade: não recarrega", () => {
+    const erro = new TypeError("Cannot read properties of undefined (reading 'default')");
+    erro.stack = "TypeError: x\n    at F (http://localhost:5173/src/foo.tsx:1:1)";
+    expect(ehErroCarregarTela(erro)).toBe(false);
+  });
+
   it('recarrega 1x e não entra em laço dentro de 1 minuto', () => {
     const recarregar = vi.fn();
     const erro = new TypeError('Failed to fetch dynamically imported module: x.js');

@@ -8,7 +8,7 @@ import { itensDosPedidos, resumoItens as resumirItens, type PedidoArea } from '@
 import { somarDias, todayBrasilia } from '@/lib/dateUtils';
 import type { InsumoSituacao } from '@/lib/estoqueRegras';
 import { useEstoqueSituacao } from '@/hooks/useEstoqueSituacao';
-import { btn, brl, brlInteiro, CartaoAcao, Faixa, Nota, SecaoTitulo, Vazio } from '@/pages/estoque/components/ui/EstoqueUi';
+import { btn, brl, brlInteiro, CartaoAcao, Faixa, Nota, SecaoTitulo, Vazio } from '@/components/kit';
 import { useIfoodDados } from '../lib/useIfoodDados';
 import { nomeLoja, type AbaProps } from '../lib/tipos';
 import LinhaPedido, { LinhaPedidoTabela, situacaoDaArea } from './LinhaPedido';
