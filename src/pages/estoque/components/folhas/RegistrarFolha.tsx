@@ -2,7 +2,6 @@ import { useNavigate } from 'react-router-dom';
 import { usePermissoes, RECEBER_MODULO_KEYS } from '@/hooks/usePermissoes';
 import { sairDasCamadas } from '@/lib/voltarAndroid';
 import Folha from '../inicio/Folha';
-import { Nota } from '../ui/EstoqueUi';
 import { useEstoqueTela } from '../../EstoqueTela';
 
 // "+ Registrar" (layout novo): "o que aconteceu no estoque?". Oito respostas, cada uma leva ao lugar
@@ -40,7 +39,7 @@ export default function RegistrarFolha({ aberta, onFechar }: { aberta: boolean; 
 
   return (
     <Folha aberta={aberta} titulo="O que aconteceu no estoque?" subtitulo="Escolha e o app leva para o lugar certo" onFechar={onFechar}>
-      <div className="grid grid-cols-2 gap-2 pt-1">
+      <div className="grid grid-cols-2 gap-2 pt-1 pb-3">
         {respostas.map((r) => (
           <button key={r.titulo} type="button" onClick={r.ir} disabled={r.bloqueada}
             className="min-h-[92px] flex flex-col gap-0.5 text-left bg-white border border-zinc-200 rounded-2xl p-3 cursor-pointer hover:border-amber-300 active:bg-amber-50/40 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-zinc-200">
@@ -50,9 +49,6 @@ export default function RegistrarFolha({ aberta, onFechar }: { aberta: boolean; 
           </button>
         ))}
       </div>
-      <Nota className="mt-3 mb-2">
-        Os caminhos de antes continuam onde estavam (Movimentações, Lista, Produção e Inventário). Este botão só junta tudo num lugar.
-      </Nota>
     </Folha>
   );
 }
