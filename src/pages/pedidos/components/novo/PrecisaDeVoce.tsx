@@ -280,7 +280,7 @@ export default function PrecisaDeVoce({ pend, esquecidos, resumo, acoes, onAbrir
   return (
     <section>
       <SecaoTitulo titulo="Precisa de você" n={n} />
-      <div className="grid gap-3 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
         {pend.naoPagos.length > 0 && (
           <CartaoNaoPagos lista={pend.naoPagos} acoes={acoes} onAbrir={onAbrir} onChip={onChip} hoje={hoje} />
         )}

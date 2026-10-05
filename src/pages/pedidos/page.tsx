@@ -501,7 +501,8 @@ export default function PedidosPage() {
         onBusca={setBusca}
         rotuloPeriodo={rotuloPeriodo}
         onAbrirPeriodo={() => setPeriodoAberto(true)}
-        menu={menu}
+        // Na aba Notas o ⋯ é o da própria aba (emitir, XMLs, reprocessar)
+        menu={abaAtiva === 'notas' ? [] : menu}
       />
 
       {abaAtiva === 'notas' && (
