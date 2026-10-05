@@ -15,7 +15,9 @@ const n = (v: unknown) => Number(v ?? 0);
 export default function ProdutosIfood({ onFechar, irPara }: AcaoProps) {
   const { user } = useAuth();
   const tenantId = user?.tenantId ?? '';
-  const verTela = rotaLiberada('/financeiro?tab=ifood', useAcessoAcoes());
+  const acesso = useAcessoAcoes();
+  const verTela = rotaLiberada('/financeiro?tab=ifood', acesso);
+  const verIfood = rotaLiberada('/ifood', acesso);
   const { baloes, bot, painel } = useRoteiro();
   const [carregando, setCarregando] = useState(true);
   const iniciou = useRef(false);
@@ -80,7 +82,7 @@ export default function ProdutosIfood({ onFechar, irPara }: AcaoProps) {
   return (
     <Roteiro titulo="Mais vendidos no iFood" icone="ri-trophy-line" cor="bg-red-50 text-red-600" baloes={baloes}
       carregando={carregando} textoCarregando="Lendo o relatório de cardápio…" onFechar={onFechar}>
-      {!carregando && <Fim onFechar={onFechar} acoes={tenantId ? [...(verTela ? [{ label: 'Abrir iFood no Financeiro', onClick: () => irPara('/financeiro?tab=ifood') }] : [])] : []} />}
+      {!carregando && <Fim onFechar={onFechar} acoes={tenantId ? [...(verIfood ? [{ label: 'Abrir itens do iFood', onClick: () => irPara('/ifood?aba=itens') }] : verTela ? [{ label: 'Abrir iFood no Financeiro', onClick: () => irPara('/financeiro?tab=ifood') }] : [])] : []} />}
     </Roteiro>
   );
 }

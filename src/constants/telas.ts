@@ -9,7 +9,7 @@ import {
   Sun, Bell, History, Zap, LayoutDashboard, ChefHat, ClipboardList, Bike, BarChart3, LayoutGrid,
   Monitor, ShoppingCart, Coffee, Phone, Tablet, Package, Truck, UtensilsCrossed, DollarSign, LineChart,
   Heart, MapPin, Megaphone, Palette, Users, Settings, Shield, Bot, ShieldCheck, HelpCircle, Store,
-  ListTodo, UserSearch, FileText, Archive,
+  ListTodo, UserSearch, FileText, Archive, ShoppingBag,
 } from 'lucide-react';
 import { RECEBER_MODULO_KEYS, type PermissaoKey } from '@/hooks/usePermissoes';
 import type { ModuloLivre } from '@/hooks/useModuleAccess';
@@ -63,6 +63,8 @@ export interface Tela {
   perfis?: readonly string[];
   /** Some em empresa sem PDV (tenants.kind = 'financeiro'), como em /modulos. */
   precisaPdv?: boolean;
+  /** Só em loja com iFood ligado na API (alguma loja do iFood com api_sync): sem isso a área iFood ficaria vazia. */
+  precisaIfood?: boolean;
   /** Comparar lojas: só quem vê o Dashboard em 2+ lojas (a faixa "Suas lojas agora" de /modulos). */
   compararLojas?: boolean;
 }
@@ -92,6 +94,9 @@ export const TELAS: Tela[] = [
   { id: 'gestor-entregas', rota: '/gestor-entregas', rotulo: 'Gestor de Entregas', icone: Bike, grupo: 'loja',
     perfis: ['admin', 'gerente', 'supervisao', 'caixa'], precisaPdv: true,
     descricao: 'as entregas em andamento, fase por fase', apelidos: ['entrega', 'motoboy', 'entregador'] },
+  { id: 'ifood', rota: '/ifood', rotulo: 'iFood', icone: ShoppingBag, grupo: 'loja',
+    permissao: ['rel_ifood', 'fin_ifood', 'gestao_pedidos', 'gestao_delivery'], precisaPdv: true, precisaIfood: true,
+    descricao: 'pedidos, itens, dinheiro e a loja no iFood', apelidos: ['ifood', 'repasse', 'cmv ifood', 'avaliacao'] },
   { id: 'lojas', rota: '/lojas', rotulo: 'Comparar lojas', icone: BarChart3, grupo: 'loja', compararLojas: true,
     descricao: 'uma loja ao lado da outra, no mesmo dia', apelidos: ['lojas', 'comparar'] },
   { id: 'mesas', rota: '/mesas', rotulo: 'Mesas', icone: LayoutGrid, grupo: 'loja',
@@ -185,6 +190,8 @@ export interface ContextoTelas {
   temPdv?: boolean;
   /** Vê o Dashboard em 2+ lojas (fn_lojas_comparar)? */
   veCompararLojas?: boolean;
+  /** A loja ativa tem iFood ligado na API (useLojaTemIfood)? Ausente = não tem. */
+  temIfood?: boolean;
 }
 
 /** A tela aparece para esta pessoa? Mesma lógica do filtro do Sidebar.tsx + a regra das telas novas no menu. */
@@ -196,6 +203,7 @@ export function telaVisivel(t: Tela, c: ContextoTelas): boolean {
   if (t.permissao && !(typeof t.permissao === 'string' ? [t.permissao] : t.permissao).some((k) => c.pode(k as PermissaoKey))) return false;
   if (t.perfis && (!c.perfil || !t.perfis.includes(c.perfil))) return false;
   if (t.precisaPdv && c.temPdv === false) return false;
+  if (t.precisaIfood && !c.temIfood) return false;
   if (t.compararLojas && !c.veCompararLojas) return false;
   if (t.pdvTerminal) {
     const terminalAtivo = c.pdvConfig?.[t.pdvTerminal] ?? true;

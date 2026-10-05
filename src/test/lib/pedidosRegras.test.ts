@@ -183,3 +183,44 @@ describe('revisão 2026-10-05', () => {
     expect(ehSemNota(delivery, true, () => undefined, () => true)).toBe(true);
   });
 });
+
+describe('pedido do iFood só acompanhado (ifoodExterno)', () => {
+  const ifood = (over: Partial<PedidoRecente> = {}) => ped({
+    id: 'ifood:abc', numero: 4821, numeroCodigo: 'iFood #4821', origem: 'delivery', destino: 'delivery', deliveryPlatform: 'ifood',
+    nomeCliente: 'Maria', status: 'preparing', pago: true, total: 80, _criadoTs: ts('19:30'),
+    ifoodExterno: { id: 'abc', numero: '4821', promoLoja: 5, promoIfood: 3, pedidosAntes: 0, situacao: 'preparing' },
+    ...over,
+  });
+  const ctx = { agoraMs: AGORA, hoje: HOJE, fiscalAtivo: true, statusNota: () => undefined };
+  const ext = (situacao: string, pedidosAntes: number | null = null) => ({ id: 'a', numero: '1', promoLoja: 0, promoIfood: 0, pedidosAntes, situacao });
+
+  it('número curto é o do iFood e a busca acha por "ifood" e pelo número', () => {
+    expect(numeroCurto(ifood())).toBe('4821');
+    expect(buscaPedido(ifood(), 'ifood')).toBe(true);
+    expect(buscaPedido(ifood(), '4821')).toBe(true);
+    expect(buscaPedido(ifood(), 'maria')).toBe(true);
+  });
+  it('nunca é não pago, sem nota, atrasado nem esquecido', () => {
+    const p = ifood({ pago: false, status: 'delivered', _entregueTs: ts('18:00') });
+    expect(ehSemNota(ifood({ status: 'delivered' }), true, () => undefined)).toBe(false);
+    const velho = ifood({ id: 'ifood:velho', _criadoTs: ts('02:00') }); // andando há mais de 12 h
+    const pend = pendenciasPedidos([p, ifood(), velho], ctx);
+    expect(pend.naoPagos).toEqual([]);
+    expect(pend.semNota).toEqual([]);
+    expect(pend.atrasados).toEqual([]);
+    expect(pend.parados).toEqual([]);
+    expect(passaNoChip(p, 'naopago', ctx)).toBe(false);
+    expect(passaNoChip(p, 'semnota', ctx)).toBe(false);
+  });
+  it('situação vem do iFood, sem meta de 15 min e sem "parado"', () => {
+    expect(situacaoPedido(ifood({ ifoodExterno: ext('placed') }), AGORA, HOJE)).toMatchObject({ tipo: 'cozinha', rotulo: 'Esperando aceite', atrasado: false });
+    expect(situacaoPedido(ifood(), AGORA, HOJE)).toMatchObject({ tipo: 'cozinha', atrasado: false });
+    expect(situacaoPedido(ifood({ _criadoTs: ts('02:00') }), AGORA, HOJE)).toMatchObject({ tipo: 'entregue', rotulo: 'Encerrado' });
+    expect(situacaoPedido(ifood({ status: 'delivered', ifoodExterno: ext('dispatched', 2) }), AGORA, HOJE).rotulo).toBe('Saiu para entrega');
+    expect(situacaoPedido(ifood({ status: 'cancelled' }), AGORA, HOJE).tipo).toBe('cancelado');
+  });
+  it('entra no total e o resumo diz quanto veio do iFood', () => {
+    const r = resumoPedidos([ped({ id: 'a', total: 100 }), ifood(), ifood({ id: 'ifood:x', status: 'cancelled', total: 30 })]);
+    expect(r).toMatchObject({ pedidos: 2, vendido: 180, recebido: 180, naoPagos: 0, cancelados: 1, doIfood: { pedidos: 1, valor: 80 } });
+  });
+});

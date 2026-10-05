@@ -14,7 +14,9 @@ const DIA_SEMANA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
 export default function VendasIfood({ onFechar, irPara }: AcaoProps) {
   const { user } = useAuth();
   const tenantId = user?.tenantId ?? '';
-  const verTela = rotaLiberada('/financeiro?tab=ifood', useAcessoAcoes());
+  const acesso = useAcessoAcoes();
+  const verTela = rotaLiberada('/financeiro?tab=ifood', acesso);
+  const verIfood = rotaLiberada('/ifood', acesso);
   const { baloes, bot, eu, painel } = useRoteiro();
   const [passo, setPasso] = useState<'dia' | 'carregando' | 'fim'>('dia');
   const [vazio, setVazio] = useState<string | null>(null);
@@ -98,7 +100,7 @@ export default function VendasIfood({ onFechar, irPara }: AcaoProps) {
         <Fim onFechar={onFechar} acoes={tenantId ? [
           ...(vazio ? [{ label: `Ver ${dataBR(vazio)}`, onClick: () => carregar(vazio) }] : []),
           { label: 'Outro dia', onClick: () => { bot('Qual dia?'); setPasso('dia'); } },
-          ...(verTela ? [{ label: 'Abrir iFood no Financeiro', onClick: () => irPara('/financeiro?tab=ifood') }] : []),
+          ...(verIfood ? [{ label: 'Abrir o iFood', onClick: () => irPara('/ifood?aba=hoje') }] : verTela ? [{ label: 'Abrir iFood no Financeiro', onClick: () => irPara('/financeiro?tab=ifood') }] : []),
         ] : []} />
       )}
     </Roteiro>

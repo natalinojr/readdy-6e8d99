@@ -7,12 +7,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAcessoAcoes, rotaLiberada } from '../acesso';
 import { Roteiro, useRoteiro, Fim, brl, dataBR, hojeISO, somaDias, type AcaoProps } from '../kit';
 import { Painel, Kpis, Linhas, type Status } from '../painel';
 
 const n = (v: unknown) => Number(v ?? 0);
 
 export default function RepasseCaiu({ onFechar, irPara }: AcaoProps) {
+  const verIfood = rotaLiberada('/ifood', useAcessoAcoes());
   const { user } = useAuth();
   const tenantId = user?.tenantId ?? '';
   const { baloes, bot, painel } = useRoteiro();
@@ -98,7 +100,9 @@ export default function RepasseCaiu({ onFechar, irPara }: AcaoProps) {
       carregando={carregando} textoCarregando="Conferindo com o extrato…" onFechar={onFechar}>
       {!carregando && <Fim onFechar={onFechar} acoes={tenantId ? [
         { label: 'Abrir Conciliação', onClick: () => irPara('/financeiro?tab=conciliacao') },
-        { label: 'Abrir iFood no Financeiro', onClick: () => irPara('/financeiro?tab=ifood') },
+        verIfood
+          ? { label: 'Abrir o dinheiro do iFood', onClick: () => irPara('/ifood?aba=dinheiro') }
+          : { label: 'Abrir iFood no Financeiro', onClick: () => irPara('/financeiro?tab=ifood') },
       ] : []} />}
     </Roteiro>
   );

@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAcessoAcoes, rotaLiberada } from '../acesso';
 import { Roteiro, useRoteiro, Fim, brl, dataBR, hojeISO, somaDias, type AcaoProps } from '../kit';
 import { Painel, Kpis, Linhas } from '../painel';
 import { lojasIfood } from './comum';
@@ -16,6 +17,7 @@ const n = (v: unknown) => Number(v ?? 0);
 const tipo = (t: unknown) => String(t ?? '').toUpperCase();
 
 export default function RepassesIfood({ onFechar, irPara }: AcaoProps) {
+  const verIfood = rotaLiberada('/ifood', useAcessoAcoes());
   const { user } = useAuth();
   const tenantId = user?.tenantId ?? '';
   const { baloes, bot, painel } = useRoteiro();
@@ -107,7 +109,9 @@ export default function RepassesIfood({ onFechar, irPara }: AcaoProps) {
   return (
     <Roteiro titulo="Repasses do iFood" icone="ri-bank-card-line" cor="bg-red-50 text-red-600" baloes={baloes}
       carregando={carregando} textoCarregando="Lendo os repasses…" onFechar={onFechar}>
-      {!carregando && <Fim onFechar={onFechar} acoes={tenantId ? [{ label: 'Abrir iFood no Financeiro', onClick: () => irPara('/financeiro?tab=ifood') }] : []} />}
+      {!carregando && <Fim onFechar={onFechar} acoes={tenantId ? [verIfood
+        ? { label: 'Abrir o dinheiro do iFood', onClick: () => irPara('/ifood?aba=dinheiro') }
+        : { label: 'Abrir iFood no Financeiro', onClick: () => irPara('/financeiro?tab=ifood') }] : []} />}
     </Roteiro>
   );
 }

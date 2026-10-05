@@ -11,6 +11,8 @@ import { useSessao } from '@/contexts/SessaoContext';
 import { useDashboardMetrics } from '@/hooks/useDashboardMetrics';
 import { useDashboardPainel } from '@/hooks/useDashboardPainel';
 import { useIfoodDiaLoja } from '@/hooks/useIfoodDiaLoja';
+import { useLojaTemIfood } from '@/hooks/useLojaTemIfood';
+import { useIfoodDados } from '@/pages/ifood/lib/useIfoodDados';
 import { useBankAccounts } from '@/hooks/useFinanceiro';
 import { todayBrasilia, somarDias } from '@/lib/dateUtils';
 import FaturamentoHero from '@/pages/dashboard/components/FaturamentoHero';
@@ -54,6 +56,42 @@ export function VendasHoje() {
       podeEditarMetas={false}
       onEditarMetas={() => navigate('/dashboard')}
     />
+  );
+}
+
+/**
+ * Uma linha discreta: "iFood ontem: 14 pedidos, R$ 820,00 vendidos, sobraram R$ 310,00" (toque leva a /ifood).
+ * A sobra só entra com o valor de TODOS os pedidos de ontem conhecido (comida de cada item pela ficha) e para
+ * quem vê dinheiro do iFood (fin_ifood ou rel_ifood); senão fica de fora. Só em loja com iFood; quem chama
+ * confere o acesso à tela /ifood. Mesmos números da área iFood (useIfoodDados, período "Ontem").
+ */
+export function IfoodOntem({ verDinheiro }: { verDinheiro: boolean }) {
+  const { user } = useAuth();
+  const temIfood = useLojaTemIfood(user?.tenantId);
+  if (temIfood !== true || !user?.tenantId) return null;
+  return <IfoodOntemLinha tenantId={user.tenantId} verDinheiro={verDinheiro} />;
+}
+
+function IfoodOntemLinha({ tenantId, verDinheiro }: { tenantId: string; verDinheiro: boolean }) {
+  const navigate = useNavigate();
+  const { pedidos, carregando, erro } = useIfoodDados(tenantId, 'Ontem');
+  if (carregando) return null;
+  const validos = pedidos.filter((p) => !p.cancelado && !p.order?.teste);
+  // Erro de leitura sem nenhum pedido: melhor sem a linha do que dizer "nenhum pedido" errado
+  if (erro && validos.length === 0) return null;
+  const vendido = validos.reduce((s, p) => s + p.venda, 0);
+  const sobras = validos.map((p) => p.sobra);
+  const sobra = verDinheiro && validos.length > 0 && sobras.every((x): x is number => x != null) ? sobras.reduce((s, x) => s + x, 0) : null;
+  const texto = validos.length === 0
+    ? 'iFood ontem: nenhum pedido'
+    : `iFood ontem: ${validos.length} ${validos.length === 1 ? 'pedido' : 'pedidos'}, ${brl(vendido)} vendidos${sobra != null ? `, ${sobra >= 0 ? 'sobraram' : 'faltaram'} ${brl(Math.abs(sobra))}` : ''}`;
+  return (
+    <button onClick={() => navigate('/ifood')} title="Abrir a área do iFood"
+      className="w-full flex items-center gap-2.5 rounded-2xl border border-zinc-200 bg-white px-3.5 py-2.5 text-left hover:border-zinc-300 cursor-pointer">
+      <i className="ri-store-2-line text-base text-[#EA1D2C] flex-shrink-0" />
+      <span className="flex-1 min-w-0 text-[13px] text-zinc-600 leading-snug">{texto}</span>
+      <i className="ri-arrow-right-s-line text-zinc-400 flex-shrink-0" />
+    </button>
   );
 }
 

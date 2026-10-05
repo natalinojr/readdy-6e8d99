@@ -392,7 +392,7 @@ function faixaHora(l: Linha): string {
 // Peças pequenas
 // ═════════════════════════════════════════════════════════════════════════════
 
-type TomSelo = 'ambar' | 'vermelho' | 'verde' | 'azul' | 'laranja' | 'neutro' | 'solido' | 'tracejado' | 'contorno';
+type TomSelo = 'ambar' | 'vermelho' | 'verde' | 'azul' | 'laranja' | 'neutro' | 'solido' | 'tracejado' | 'contorno' | 'ifood';
 const CLASSE_SELO: Record<TomSelo, string> = {
   ambar: 'bg-amber-50 text-amber-700',
   vermelho: 'bg-red-50 text-red-600',
@@ -403,6 +403,8 @@ const CLASSE_SELO: Record<TomSelo, string> = {
   solido: 'bg-red-600 text-white',
   tracejado: 'bg-white border border-dashed border-zinc-300 text-zinc-400',
   contorno: 'bg-white border border-emerald-200 text-emerald-700',
+  // Vermelho da marca iFood (só no selo e no ícone do pedido)
+  ifood: 'bg-red-50 text-[#EA1D2C]',
 };
 
 function Selo({ tom = 'neutro', icone, pulso, title, children }: {
@@ -426,10 +428,13 @@ const COR_CANAL: Record<Canal, string> = {
   totem: 'bg-zinc-100 text-zinc-600',
 };
 
-function IconeCanal({ canal, pequeno, contagem }: { canal: Canal; pequeno?: boolean; contagem?: number }) {
+/** Pedido que veio do iFood: entregue pela cozinha do ERPOS (orders) ou só acompanhado (ifoodExterno). */
+const ehIfood = (p: PedidoRecente) => !!p.ifoodExterno || p.deliveryPlatform === 'ifood';
+
+function IconeCanal({ canal, pequeno, contagem, ifood }: { canal: Canal; pequeno?: boolean; contagem?: number; ifood?: boolean }) {
   return (
-    <span className={`relative flex-shrink-0 flex items-center justify-center ${pequeno ? 'w-7 h-7 rounded-[9px] text-sm' : 'w-[38px] h-[38px] rounded-xl text-lg'} ${COR_CANAL[canal]}`}
-      title={ROTULO_CANAL[canal]}>
+    <span className={`relative flex-shrink-0 flex items-center justify-center ${pequeno ? 'w-7 h-7 rounded-[9px] text-sm' : 'w-[38px] h-[38px] rounded-xl text-lg'} ${ifood ? 'bg-red-50 text-[#EA1D2C]' : COR_CANAL[canal]}`}
+      title={ifood ? 'iFood' : ROTULO_CANAL[canal]}>
       <i className={ICONE_CANAL[canal]} />
       {contagem != null && (
         <span className="absolute -right-1.5 -top-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-zinc-900 text-white text-[10px] font-extrabold flex items-center justify-center border-2 border-white">
@@ -456,12 +461,17 @@ function seloAndando(sit: Situacao, chave: string): ReactNode {
 function selosPedido(l: Linha, ctx: Ctx, computador: boolean): ReactNode[] {
   const { p, sit } = l;
   const s: ReactNode[] = [];
+  if (ehIfood(p)) s.push(<Selo key="ifood" tom="ifood" icone="ri-store-2-line">iFood</Selo>);
+  if (p.ifoodExterno && p.ifoodExterno.pedidosAntes === 0) s.push(<Selo key="novo" tom="verde" icone="ri-user-add-line">cliente novo</Selo>);
   if (sit.tipo === 'cancelado') {
     s.push(<Selo key="cn" tom="vermelho" icone="ri-close-circle-line">Cancelado</Selo>);
     return s;
   }
   if (sit.tipo === 'entregue') {
-    if (computador) {
+    if (p.ifoodExterno && sit.rotulo !== 'Entregue') {
+      // iFood só acompanhado: "Saiu para entrega" / "Encerrado" aparecem também no celular
+      s.push(<Selo key="ent">{sit.rotulo}</Selo>);
+    } else if (computador) {
       s.push(<Selo key="ent">{sit.minutos != null ? `Entregue · ${sit.minutos} min` : 'Entregue'}</Selo>);
       if (sit.atrasado) s.push(<Selo key="atr" tom="vermelho" title="Passou da meta de 15 min">atrasou</Selo>);
     }
@@ -598,7 +608,7 @@ function CartaoCelular({ l, chip, ctx, abertos, onAlternarGrupo, onAbrir, emLote
             className="w-5 h-5 accent-amber-500 cursor-pointer" />
         </div>
       )}
-      <IconeCanal canal={l.canal} contagem={grupo ? l.subs.length : undefined} />
+      <IconeCanal canal={l.canal} contagem={grupo ? l.subs.length : undefined} ifood={!grupo && ehIfood(p)} />
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-1.5 min-w-0">
           {grupo ? (
@@ -707,7 +717,11 @@ function LinhasTabela({ l, ctx, selecionadoId, compacta, abertos, onAlternarGrup
     ? selosGrupo(l, ctx)
     : selosPedido(l, ctx, true);
   const subOnde = l.canal === 'delivery'
-    ? (() => { const ent = entregaDoPedido(base); return ent.retirada ? 'Delivery · Retirada' : ent.endereco ? `Delivery · ${ent.endereco}` : 'Delivery'; })()
+    ? (() => {
+      const ent = entregaDoPedido(base);
+      const nome = !grupo && ehIfood(base) ? 'iFood' : 'Delivery';
+      return ent.retirada ? `${nome} · Retirada` : ent.endereco ? `${nome} · ${ent.endereco}` : nome;
+    })()
     : [ROTULO_CANAL[l.canal], base.garcomNome].filter(Boolean).join(' · ');
 
   // Célula "Itens"
@@ -755,7 +769,7 @@ function LinhasTabela({ l, ctx, selecionadoId, compacta, abertos, onAlternarGrup
         </td>
         <td className="px-3 py-2.5 align-middle overflow-hidden">
           <div className="flex items-center gap-2 min-w-0">
-            <IconeCanal canal={l.canal} pequeno />
+            <IconeCanal canal={l.canal} pequeno ifood={!grupo && ehIfood(p)} />
             <div className="min-w-0">
               <p className="font-bold text-zinc-800 truncate" title={grupo ? `${l.onde} · ${l.subs.length} pedidos` : l.onde}>{grupo ? `${l.onde} · ${l.subs.length} pedidos` : l.onde}</p>
               <div className="text-[11px] text-zinc-400 truncate" title={compacta ? (grupo ? `${l.subs.map((s) => `#${numeroCurto(s)}`).join(' · ')} — ${qtdItens(p)} itens` : textoItens(p)) : subOnde}>{compacta ? itens : subOnde}</div>

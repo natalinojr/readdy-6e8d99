@@ -55,6 +55,15 @@ describe('catálogo de telas', () => {
     expect(ids(ctx('admin', { temPdv: false }))).not.toContain('gestor-entregas');
   });
 
+  it('iFood: só em loja com iFood na API, com PDV e com uma das chaves da área', () => {
+    expect(ids(ctx('admin'))).not.toContain('ifood');
+    expect(ids(ctx('admin', { temIfood: true }))).toContain('ifood');
+    expect(ids(ctx('admin', { temIfood: true, temPdv: false }))).not.toContain('ifood');
+    const sem = ctx('admin', { temIfood: true }, [], ['rel_ifood', 'fin_ifood', 'gestao_pedidos', 'gestao_delivery']);
+    expect(ids(sem)).not.toContain('ifood');
+    expect(ids(ctx('garcom', { temIfood: true }))).not.toContain('ifood');
+  });
+
   it('Comparar lojas só para quem vê o Dashboard em 2+ lojas', () => {
     expect(ids(ctx('admin'))).not.toContain('lojas');
     expect(ids(ctx('admin', { veCompararLojas: true }))).toContain('lojas');

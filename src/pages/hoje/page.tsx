@@ -10,7 +10,8 @@ import { useMemo, useState } from 'react';
 import { useIsMobile } from '@/pages/tarefas/lib/mobile';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { usePermissoes, RECEBER_MODULO_KEYS } from '@/hooks/usePermissoes';
+import { usePermissoes, RECEBER_MODULO_KEYS, type PermissaoKey } from '@/hooks/usePermissoes';
+import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import { FIN_KEYS } from '@/constants/permissoesAbas';
 import { useModuleAccess } from '@/hooks/useModuleAccess';
 import { kindConfig } from '@/contexts/PendenciasContext';
@@ -20,7 +21,7 @@ import CartaoHoje from './CartaoHoje';
 import FiqueDeOlho from './FiqueDeOlho';
 import AprendiComVoce from './AprendiComVoce';
 import VemAi from './VemAi';
-import { DinheiroHoje, LojaHoje, VendasHoje } from './ResumoHoje';
+import { DinheiroHoje, IfoodOntem, LojaHoje, VendasHoje } from './ResumoHoje';
 import RotinaHoje from './rotina/RotinaHoje';
 import { useRotinaHoje } from './rotina/useRotina';
 
@@ -62,6 +63,10 @@ export default function HojePage() {
   const verVendas = admin || hasPermissao('gestao_dashboard');
   const verFinanceiro = admin || perfil === 'financeiro' || FIN_KEYS.some((k) => hasPermissao(k));
   const verDinheiro = verFinanceiro && (gestor || perfil === 'financeiro');
+  // Linha do iFood de ontem: mesmas chaves da tela /ifood (RotaProtegida); a loja com iFood é conferida dentro do componente.
+  const verIfood = empresaTemPdv(user?.tenantKind)
+    && (admin || ['rel_ifood', 'fin_ifood', 'gestao_pedidos', 'gestao_delivery'].some((k) => hasPermissao(k as PermissaoKey)));
+  const verDinheiroIfood = admin || hasPermissao('fin_ifood') || hasPermissao('rel_ifood');
 
   const abrir = async (tenantId: string, rota: string) => {
     if (tenantId && tenantId !== user?.tenantId) await selectTenant(tenantId);
@@ -161,6 +166,7 @@ export default function HojePage() {
     <>
       {verVendas && <VendasHoje />}
       {verDinheiro && <DinheiroHoje />}
+      {verIfood && <IfoodOntem verDinheiro={verDinheiroIfood} />}
       {gestor && !naLoja && <LojaHoje comBotao={false} />}
     </>
   );

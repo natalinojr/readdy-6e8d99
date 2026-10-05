@@ -12,6 +12,7 @@ import { useOrdersHistory } from '@/hooks/useOrdersHistory';
 import { useOrdersPing } from '@/hooks/useOrdersPing';
 import { useSessions } from '@/hooks/useSessions';
 import { useFiscalDocs } from '@/hooks/useFiscalDocs';
+import { useLojaTemIfood } from '@/hooks/useLojaTemIfood';
 import { PLATAFORMAS_DELIVERY } from '@/constants/delivery';
 import { useSessao } from '@/contexts/SessaoContext';
 import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
@@ -33,6 +34,8 @@ import PedidoDetalhe from './components/novo/PedidoDetalhe';
 import { usePedidoAcoes } from './lib/usePedidoAcoes';
 import { usePedidosEsquecidos } from './lib/usePedidosEsquecidos';
 import { baixarPedidosCsv } from './lib/exportar';
+import { useIfoodNoPedidos } from './lib/useIfoodNoPedidos';
+import { janelaIfoodPedidos } from './lib/ifoodExterno';
 
 // Pedidos (layout novo aprovado em 2026-10-04 — docs/prototipos/pedidos-proposta.html):
 // frase do dia + "Precisa de você" com o botão que resolve, faixa de números, filtros com
@@ -194,11 +197,14 @@ export default function PedidosPage() {
   const semSessaoAberta = modo === 'sessao' && !sessaoSelecionadaId && !sessaoAtiva?.id && !loadingSession;
 
   const pingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Pedido do iFood que entra na cozinha vira `orders`: relê os do iFood junto, senão ele aparece duas vezes até o próximo minuto.
+  const recarregarIfoodRef = useRef<() => void>(() => undefined);
   useOrdersPing(user?.tenantId, () => {
     if (!aoVivo) return;
     if (pingDebounceRef.current) clearTimeout(pingDebounceRef.current);
     pingDebounceRef.current = setTimeout(() => {
       reloadOrders(hookDateFrom, hookDateTo, hookSessionId ?? null);
+      recarregarIfoodRef.current();
     }, 800);
   });
   useEffect(() => () => { if (pingDebounceRef.current) clearTimeout(pingDebounceRef.current); }, []);
@@ -237,8 +243,24 @@ export default function PedidosPage() {
     [sessions, sessaoSelecionadaId],
   );
 
+  // ── Pedidos do iFood que só existem em ifood_orders (modo "Só acompanhar") ──
+  // Mesmo período da lista; os que viraram `orders` (entrar na cozinha) já vêm de dbOrders.
+  const lojaTemIfood = useLojaTemIfood(user?.tenantId) === true;
+  const janelaIfood = useMemo(() => {
+    if (semSessaoAberta) return null;
+    const sessao = sessaoSelecionada
+      ? { opened_at: sessaoSelecionada.opened_at, closed_at: sessaoSelecionada.closed_at }
+      : (sessaoAtiva?.dataRef ? { opened_at: sessaoAtiva.dataRef.toISOString(), closed_at: null } : null);
+    return janelaIfoodPedidos({ dateFrom: hookDateFrom, dateTo: hookDateTo, hoje, sessao, modoSessao: modo === 'sessao' });
+  }, [semSessaoAberta, sessaoSelecionada, sessaoAtiva?.dataRef, hookDateFrom, hookDateTo, hoje, modo]);
+  const { pedidos: pedidosIfood, recarregar: recarregarIfood } = useIfoodNoPedidos(user?.tenantId, janelaIfood, {
+    ativo: lojaTemIfood,
+    comHoje: aoVivo,
+  });
+  recarregarIfoodRef.current = recarregarIfood;
+
   // ── Merge: DB (fonte da verdade) + KDS (status em tempo real) ────────────
-  const pedidos = useMemo(() => {
+  const pedidosErpos = useMemo(() => {
     if (semSessaoAberta) return [];
     const kdsMap = new Map(kdsPedidos.map((p) => [p.id, p]));
     const dataBR = (p: KDSPedido) => new Date(p.criadoEm).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
@@ -310,6 +332,13 @@ export default function PedidosPage() {
     // DB vazio após carregamento: usa os pedidos de agora do KDS (só ao vivo)
     return soDoKds().map(kdsParaRecente);
   }, [kdsPedidos, dbOrders, loadingSessaoOrders, modo, aoVivo, semSessaoAberta, hoje]);
+
+  // Pedidos do iFood só acompanhados entram na mesma lista, na ordem do relógio.
+  const pedidos = useMemo(() => {
+    if (pedidosIfood.length === 0) return pedidosErpos;
+    const ts = (p: PedidoRecente) => (p._criadoTs ? new Date(p._criadoTs).getTime() : 0);
+    return [...pedidosErpos, ...pedidosIfood].sort((a, b) => ts(b) - ts(a));
+  }, [pedidosErpos, pedidosIfood]);
 
   // ── Filtro de data no frontend (apenas para filtragem visual) ─────────────
   const filtrarPorData = (p: PedidoRecente): boolean => {
@@ -389,7 +418,8 @@ export default function PedidosPage() {
   // Lista: agrupa antes de filtrar o canal — o grupo pago junto aparece inteiro
   const grupos = useMemo(() => filtrarComGrupos(agruparPedidosUnificados(doPeriodo), passaCanal), [doPeriodo, passaCanal]);
 
-  const idsDoPeriodo = useMemo(() => doPeriodo.map((p) => p.id), [doPeriodo]);
+  // Pedido do iFood só acompanhado não tem nota nem existe em `orders`: o id dele não vai para a consulta fiscal.
+  const idsDoPeriodo = useMemo(() => doPeriodo.filter((p) => !p.ifoodExterno).map((p) => p.id), [doPeriodo]);
   const fiscal = useFiscalDocs(idsDoPeriodo);
   // "Sem nota" só com a loja emitindo, a leitura das notas ok (senão o lote emitiria em dobro) e o canal
   // com emissão ligada (fiscal_settings.emit_on_*).
@@ -449,6 +479,7 @@ export default function PedidosPage() {
 
   const recarregarTudo = () => {
     reloadOrders(hookDateFrom, hookDateTo, hookSessionId ?? null);
+    recarregarIfood();
     fiscal.recarregar();
     recarregarEsquecidos();
   };

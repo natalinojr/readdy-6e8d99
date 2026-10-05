@@ -19,6 +19,7 @@ const PDVCaixaPage = lazy(() => import('../pages/pdv/caixa/page'));
 const KDSPage = lazy(() => import('../pages/kds/page'));
 const GestorPedidosPage = lazy(() => import('../pages/gestor-pedidos/page'));
 const GestorEntregasPage = lazy(() => import('../pages/gestor-entregas/page'));
+const IfoodPage = lazy(() => import('../pages/ifood/page'));
 const GarcomPage = lazy(() => import('../pages/pdv/garcom/page'));
 const MesasPage = lazy(() => import('../pages/mesas/page'));
 const RelatoriosPage = lazy(() => import('../pages/relatorios/page'));
@@ -119,6 +120,7 @@ const routes: RouteObject[] = [
       { path: 'kds', element: <KDSPage /> },
       { path: 'gestor-pedidos', element: <GestorPedidosPage /> },
       { path: 'gestor-entregas', element: <GestorEntregasPage /> },
+      { path: 'ifood', element: <IfoodPage /> },
       { path: 'mesas', element: <MesasPage /> },
       { path: 'relatorios', element: <RelatoriosPage /> },
       { path: 'pedidos', element: <PedidosPage /> },

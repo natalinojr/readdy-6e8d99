@@ -34,6 +34,8 @@ const ROTA_PERMISSAO: Record<string, PermissaoKey | readonly PermissaoKey[]> = {
   '/pedidos': 'gestao_pedidos',
   '/mesas': 'gestao_mesas',
   '/config-delivery': 'gestao_delivery',
+  // Área iFood: pedidos, dinheiro e resultados — cada aba confere a própria chave dentro da tela.
+  '/ifood': ['rel_ifood', 'fin_ifood', 'gestao_pedidos', 'gestao_delivery'],
   '/dashboard': 'gestao_dashboard',
   '/kds': 'kds_acessar',
   '/gestor-pedidos': 'gestor_pedidos_acessar',

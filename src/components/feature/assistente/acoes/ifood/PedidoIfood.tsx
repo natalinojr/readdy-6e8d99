@@ -31,7 +31,11 @@ const MARCOS: Array<[string, string]> = [
 export default function PedidoIfood({ onFechar, irPara }: AcaoProps) {
   const { user } = useAuth();
   const tenantId = user?.tenantId ?? '';
-  const verTela = rotaLiberada('/financeiro?tab=ifood', useAcessoAcoes());
+  const acesso = useAcessoAcoes();
+  const verTela = rotaLiberada('/financeiro?tab=ifood', acesso);
+  const verIfood = rotaLiberada('/ifood', acesso);
+  // Pedido mostrado: o id do iFood (sale_id) leva direto à folha dele na área iFood
+  const [idIfood, setIdIfood] = useState<string | null>(null);
   const { baloes, bot, eu, painel } = useRoteiro();
   const [passo, setPasso] = useState<'numero' | 'carregando' | 'escolher' | 'fim'>('numero');
   const [opcoes, setOpcoes] = useState<Pedido[]>([]);
@@ -46,6 +50,7 @@ export default function PedidoIfood({ onFechar, irPara }: AcaoProps) {
   }, []);
 
   const mostrar = (p: Pedido) => {
+    setIdIfood(p.sale_id);
     const cancelado = canceladoIfood(p);
     const pago = (p.payment_methods ?? []).reduce((a, m) => a + n(m.value), 0);
     const promos: Array<{ label: string; valor: string; status: 'ok' | 'alerta' }> = [];
@@ -128,7 +133,8 @@ export default function PedidoIfood({ onFechar, irPara }: AcaoProps) {
       {(passo === 'fim' || !tenantId) && (
         <Fim onFechar={onFechar} acoes={tenantId ? [
           { label: 'Outro pedido', onClick: () => { bot('Qual o número?'); setPasso('numero'); } },
-          ...(verTela ? [{ label: 'Abrir iFood no Financeiro', onClick: () => irPara('/financeiro?tab=ifood') }] : []),
+          ...(verIfood ? [{ label: 'Abrir no iFood', onClick: () => irPara(idIfood ? `/ifood?aba=pedidos&pedido=${encodeURIComponent(idIfood)}` : '/ifood?aba=pedidos') }]
+            : verTela ? [{ label: 'Abrir iFood no Financeiro', onClick: () => irPara('/financeiro?tab=ifood') }] : []),
         ] : []} />
       )}
     </Roteiro>

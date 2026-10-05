@@ -5,6 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { useModuleAccess } from '@/hooks/useModuleAccess';
+import { useLojaTemIfood } from '@/hooks/useLojaTemIfood';
 import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import { filtrarProdutos, filtrarTelas, type ContextoTelas } from '@/constants/telas';
 import { countPendingOrders } from '@/lib/offlineDB';
@@ -41,6 +42,7 @@ export function useTelasVisiveis() {
   const { hasPermissao } = usePermissoes();
   const { hasModule } = useModuleAccess();
   const veCompararLojas = useVeCompararLojas();
+  const temIfood = useLojaTemIfood(user?.tenantId) === true;
 
   const ctx: ContextoTelas = {
     email: user?.email,
@@ -51,10 +53,11 @@ export function useTelasVisiveis() {
     kitchenView: settings.kitchen_view,
     temPdv: empresaTemPdv(user?.tenantKind),
     veCompararLojas,
+    temIfood,
   };
   const telas = useMemo(() => filtrarTelas(ctx),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [user?.email, user?.perfil, user?.tenantKind, hasPermissao, hasModule, settings.pdv_config, settings.kitchen_view, veCompararLojas]);
+    [user?.email, user?.perfil, user?.tenantKind, hasPermissao, hasModule, settings.pdv_config, settings.kitchen_view, veCompararLojas, temIfood]);
   const produtos = useMemo(() => filtrarProdutos(ctx, !!user?.tenantId),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [user?.perfil, user?.tenantId, hasModule]);
