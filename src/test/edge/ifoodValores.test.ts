@@ -110,3 +110,58 @@ describe('dadosNotaIfood (contadora 05/10: não presencial + iFood intermediador
     expect(n.dadosNotaIfood({ order_type: 'DELIVERY', merchant_id: merchant, address: { ...end, streetName: '' } }, 4118204, '52998224725').motivoPresencial).toMatch(/rua/);
   });
 });
+
+describe('ratearPartesIfood (dono 05/10: dividir o preço entre comida e bebida)', () => {
+  const total = (its: any[], orig: any[]) => Math.round(its.reduce((s, r) => s + (r.item_price + r.opcionais) * (orig.find((o) => o.id === r.id).quantity), 0) * 100) / 100;
+  const L = (id: string, extra: any) => ({ id, order_id: 'o1', item_id: null, item_name: '', item_price: 0, quantity: 1, notes: null, opcoes: [], ...extra });
+
+  it('#1631: Coca como complemento com ficha → Coca leva os R$ 6,00 do complemento, Taco fica com 25,49', () => {
+    const itens = [
+      L('taco', { item_id: 'mi-taco', item_name: 'Taco de Frango Cremoso', item_price: 25.49, opcoes: [{ nome: 'Coca Cola Zero 350 Ml', preco: 6 }] }),
+      L('coca', { item_id: 'mi-coca', item_name: 'Coca Cola Zero', notes: 'parte de Coca Cola Zero 350 Ml' }),
+    ];
+    const r = f.ratearPartesIfood(itens, new Map([['mi-taco', 28], ['mi-coca', 7]]));
+    const by = Object.fromEntries(r.itens.map((x: any) => [x.id, x]));
+    expect(by.coca).toMatchObject({ item_price: 6, opcionais: 0 });
+    expect(by.taco).toMatchObject({ item_price: 25.49, opcionais: 0, opcoesMovidas: ['coca cola zero 350 ml'] });
+    expect(total(r.itens, itens)).toBe(31.49);
+    expect(r.foraDaNota).toEqual([]);
+  });
+
+  it('combo pela ficha do produto: divide pelo preço de cardápio (Taco 25 + Coca 6) e mantém o total', () => {
+    const itens = [
+      L('combo', { item_id: 'mi-taco', item_name: 'Combo Taco + Coca', item_price: 31.49 }),
+      L('coca', { item_id: 'mi-coca', item_name: 'Coca', notes: 'parte de Combo Taco + Coca' }),
+    ];
+    const r = f.ratearPartesIfood(itens, new Map([['mi-taco', 25], ['mi-coca', 6]]));
+    const by = Object.fromEntries(r.itens.map((x: any) => [x.id, x]));
+    expect(by.coca.item_price).toBe(6.09);
+    expect(by.combo.item_price).toBe(25.4);
+    expect(total(r.itens, itens)).toBe(31.49);
+  });
+
+  it('2 combos: quantidades multiplicam e o total fecha', () => {
+    const itens = [
+      L('combo', { item_id: 'mi-taco', item_name: 'Combo', item_price: 30, quantity: 2 }),
+      L('coca', { item_id: 'mi-coca', item_name: 'Coca', notes: 'parte de Combo', quantity: 2 }),
+    ];
+    const r = f.ratearPartesIfood(itens, new Map([['mi-taco', 24], ['mi-coca', 6]]));
+    expect(total(r.itens, itens)).toBe(60);
+    expect(r.itens.find((x: any) => x.id === 'coca').item_price).toBe(6);
+  });
+
+  it('parte sem preço de cardápio: fica fora da nota e o valor continua no produto', () => {
+    const itens = [
+      L('combo', { item_id: 'mi-taco', item_name: 'Combo', item_price: 30 }),
+      L('molho', { item_id: 'mi-molho', item_name: 'Molho', notes: 'parte de Combo' }),
+    ];
+    const r = f.ratearPartesIfood(itens, new Map([['mi-taco', 24]]));
+    expect(r.foraDaNota).toEqual(['molho']);
+    expect(r.itens).toEqual([{ id: 'combo', item_price: 30, opcionais: 0, opcoesMovidas: [] }]);
+  });
+
+  it('pedido sem partes: nada muda', () => {
+    const itens = [L('a', { item_id: 'x', item_name: 'Bowl', item_price: 36.99, quantity: 2 })];
+    expect(f.ratearPartesIfood(itens, new Map()).itens).toEqual([{ id: 'a', item_price: 36.99, opcionais: 0, opcoesMovidas: [] }]);
+  });
+});

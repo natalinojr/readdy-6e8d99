@@ -133,3 +133,108 @@ export function completarPagamentoIfood(pagamentos: PagamentoNota[], valorVenda:
   }
   return out;
 }
+
+// ── Partes da "ficha do iFood" na nota (dono, 05/10: dividir o preço entre comida e bebida) ──────────────────
+// O funil grava as partes da ficha montada como linhas a R$ 0 com notes "parte de <origem>" (ifood-shipping/funnel.ts):
+// <origem> é o nome do produto do iFood (parte da ficha do produto) ou o nome do complemento (parte da ficha do
+// complemento, cujo preço está nos opcionais do produto). Na nota cada parte leva a sua fatia do preço — bebida com ST
+// sai na própria linha (NCM/CEST/CSOSN da bebida), senão o ICMS dela seria pago de novo no Simples.
+// - Parte de complemento: leva o preço do complemento (exato), tirado dos opcionais da linha do produto.
+// - Parte do produto: o preço-base do produto é dividido pelo preço de cardápio do ERPOS (produto × partes).
+// - Parte sem preço de referência (ou grupo sem nenhum): fica fora da nota (o valor continua no produto).
+// O total nunca muda; centavos de arredondamento ficam no produto.
+
+export interface ItemParte {
+  id: string; order_id: string; item_id: string | null; item_name: string; item_price: number; quantity: number;
+  notes: string | null;
+  /** Opcionais da linha: nome e preço por unidade do item. */
+  opcoes: { nome: string; preco: number }[];
+}
+export interface ItemRateado { id: string; item_price: number; opcionais: number; opcoesMovidas: string[] }
+
+const PARTE = /^parte de (.+)$/i;
+
+export function ratearPartesIfood(itens: ItemParte[], precoCardapio: Map<string, number>): { itens: ItemRateado[]; foraDaNota: string[] } {
+  const r = new Map<string, ItemRateado>();
+  for (const i of itens) r.set(i.id, { id: i.id, item_price: Number(i.item_price ?? 0), opcionais: round2(i.opcoes.reduce((s, o) => s + Number(o.preco ?? 0), 0)), opcoesMovidas: [] });
+  const ref = (i: ItemParte) => (i.item_id ? Number(precoCardapio.get(i.item_id) ?? 0) : 0) * Number(i.quantity ?? 1);
+  const partes = itens.filter((i) => PARTE.test(String(i.notes ?? '').trim()) && Math.abs(Number(i.item_price ?? 0)) < 0.005);
+  const principais = itens.filter((i) => !partes.includes(i));
+  const comValor = new Set<string>();
+
+  // Dá `total` às partes pelo peso (preço de cardápio × qtd); devolve o que foi dado (preço unitário em centavos).
+  const dar = (ps: ItemParte[], total: number, pesoTotal: number): number => {
+    let dado = 0;
+    for (const p of ps) {
+      const w = ref(p);
+      if (!(w > 0) || !(pesoTotal > 0)) continue;
+      const q = Math.max(1, Number(p.quantity ?? 1));
+      const unit = round2((total * w / pesoTotal) / q);
+      if (!(unit > 0)) continue;
+      r.get(p.id)!.item_price = unit;
+      dado = round2(dado + unit * q);
+      comValor.add(p.id);
+    }
+    return dado;
+  };
+
+  const grupos = new Map<string, ItemParte[]>(); // `${order_id}|${origem}`
+  for (const p of partes) {
+    const k = `${p.order_id}|${String(p.notes).trim().match(PARTE)![1].trim().toLowerCase()}`;
+    grupos.set(k, [...(grupos.get(k) ?? []), p]);
+  }
+  for (const [k, ps] of grupos) {
+    const [orderId, origem] = [k.slice(0, k.indexOf('|')), k.slice(k.indexOf('|') + 1)];
+    const doPedido = principais.filter((i) => i.order_id === orderId);
+    // 1) Complemento: linhas do produto que têm a opção <origem>.
+    const comOpcao = doPedido.filter((i) => i.opcoes.some((o) => o.nome.trim().toLowerCase() === origem));
+    if (comOpcao.length) {
+      let total = 0;
+      for (const l of comOpcao) {
+        const preco = round2(l.opcoes.filter((o) => o.nome.trim().toLowerCase() === origem).reduce((s, o) => s + Number(o.preco ?? 0), 0));
+        total = round2(total + preco * Number(l.quantity ?? 1));
+      }
+      const peso = ps.reduce((s, p) => s + ref(p), 0);
+      const pesoUsado = peso > 0 ? peso : ps.length; // sem preço de cardápio: divide igual entre as partes
+      const dado = peso > 0 ? dar(ps, total, peso) : (() => {
+        let d = 0;
+        for (const p of ps) { const q = Math.max(1, Number(p.quantity ?? 1)); const unit = round2(total / pesoUsado / q); if (unit > 0) { r.get(p.id)!.item_price = unit; d = round2(d + unit * q); comValor.add(p.id); } }
+        return d;
+      })();
+      if (dado > 0) {
+        // Tira dos opcionais das linhas do produto, na proporção do que cada uma tinha da opção.
+        let falta = dado;
+        comOpcao.forEach((l, idx) => {
+          const q = Math.max(1, Number(l.quantity ?? 1));
+          const preco = round2(l.opcoes.filter((o) => o.nome.trim().toLowerCase() === origem).reduce((s, o) => s + Number(o.preco ?? 0), 0));
+          const tirar = idx === comOpcao.length - 1 ? falta : Math.min(falta, round2(preco * q * dado / total));
+          const rl = r.get(l.id)!;
+          rl.opcionais = round2(rl.opcionais - tirar / q);
+          if (rl.opcionais < 0) { rl.item_price = round2(rl.item_price + rl.opcionais); rl.opcionais = 0; }
+          rl.opcoesMovidas.push(origem);
+          falta = round2(falta - tirar);
+        });
+      }
+      continue;
+    }
+    // 2) Produto: linhas principais com o nome <origem> (item_name) — o preço-base é dividido pelo cardápio.
+    const prods = doPedido.filter((i) => String(i.item_name ?? '').trim().toLowerCase() === origem);
+    if (!prods.length) continue;
+    const base = round2(prods.reduce((s, l) => s + Number(l.item_price ?? 0) * Number(l.quantity ?? 1), 0));
+    const pesoProd = prods.reduce((s, l) => s + ref(l), 0);
+    const pesoPartes = ps.reduce((s, p) => s + ref(p), 0);
+    if (!(base > 0) || !(pesoPartes > 0)) continue;
+    // Produto sem preço de cardápio próprio (ficha só de partes): tudo vai para as partes.
+    const dado = dar(ps, base, pesoProd + pesoPartes);
+    let falta = dado;
+    prods.forEach((l, idx) => {
+      const q = Math.max(1, Number(l.quantity ?? 1));
+      const lb = Number(l.item_price ?? 0) * q;
+      const tirar = idx === prods.length - 1 ? falta : round2(dado * lb / base);
+      r.get(l.id)!.item_price = round2((lb - tirar) / q);
+      falta = round2(falta - tirar);
+    });
+  }
+  const fora = partes.filter((p) => !comValor.has(p.id)).map((p) => p.id);
+  return { itens: itens.filter((i) => !fora.includes(i.id)).map((i) => r.get(i.id)!), foraDaNota: fora };
+}

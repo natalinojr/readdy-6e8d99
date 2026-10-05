@@ -19,7 +19,7 @@
 // (balcão, delivery, QR universal, mesa numerada). Sessão de mesa só por emissão manual.
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
-import { calcularValores, completarPagamentoIfood } from './valores.ts';
+import { calcularValores, completarPagamentoIfood, ratearPartesIfood } from './valores.ts';
 import { valorVendaIfood, type ValorIfood } from '../_shared/ifood-valores.ts';
 import { dadosNotaIfood } from '../_shared/ifood-nota.ts';
 
@@ -269,10 +269,10 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
 
   // 2. Itens + classificação fiscal (item -> categoria -> padrão da loja)
   const { data: itemsRaw, error: itErr } = await admin.from('order_items')
-    .select('id, order_id, item_id, item_name, item_price, quantity, status')
+    .select('id, order_id, item_id, item_name, item_price, quantity, status, notes')
     .in('order_id', orderIds).neq('status', 'cancelled');
   if (itErr) throw new Error(`order_items: ${itErr.message}`);
-  let items = (itemsRaw ?? []) as Array<{ id: string; order_id: string; item_id: string | null; item_name: string; item_price: number; quantity: number }>;
+  let items = (itemsRaw ?? []) as Array<{ id: string; order_id: string; item_id: string | null; item_name: string; item_price: number; quantity: number; notes: string | null }>;
   if (items.length === 0) return { note: null, skipReason: 'Venda sem itens' };
 
   const menuIds = [...new Set(items.map((i) => i.item_id).filter(Boolean))] as string[];
@@ -304,10 +304,31 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
     optsByItem.set(o.order_item_id, arr);
     optsPriceByItem.set(o.order_item_id, round2((optsPriceByItem.get(o.order_item_id) ?? 0) + Number(o.additional_price ?? 0)));
   }
-  // Pedido do iFood: linhas de R$ 0 (itens extras da "ficha do iFood", notes "parte de <produto>") são só estoque — o
-  // valor está no produto principal. Ficam fora da nota (item com vProd 0 não é venda).
+  // Pedido do iFood: as partes da "ficha do iFood" (linhas a R$ 0, notes "parte de <origem>") levam a sua fatia do
+  // preço (dono 05/10: dividir entre comida e bebida — bebida com ST na própria linha). valores.ts › ratearPartesIfood.
+  // O que sobrar a R$ 0 (parte sem preço de cardápio, produto que virou só partes) fica fora da nota.
   const pedidosIfood = new Set(orders.filter((o) => o.ifood_order_id).map((o) => o.id));
   if (pedidosIfood.size > 0) {
+    const doIfood = items.filter((i) => pedidosIfood.has(i.order_id));
+    const idsCardapio = [...new Set(doIfood.map((i) => i.item_id).filter(Boolean))] as string[];
+    const precoCardapio = new Map<string, number>();
+    if (idsCardapio.length) {
+      const { data: pr } = await admin.from('menu_items').select('id, price').in('id', idsCardapio);
+      for (const m of pr ?? []) precoCardapio.set(String(m.id), Number(m.price ?? 0));
+    }
+    const opcoesPorItem = new Map<string, { nome: string; preco: number }[]>();
+    for (const o of optsRaw ?? []) {
+      if (o.option_name && /^un\.?\s*\d+$/i.test(String(o.option_name).trim())) continue;
+      opcoesPorItem.set(o.order_item_id, [...(opcoesPorItem.get(o.order_item_id) ?? []), { nome: String(o.option_name ?? ''), preco: Number(o.additional_price ?? 0) }]);
+    }
+    const rat = ratearPartesIfood(doIfood.map((i) => ({ ...i, opcoes: opcoesPorItem.get(i.id) ?? [] })), precoCardapio);
+    for (const ri of rat.itens) {
+      const it = items.find((i) => i.id === ri.id)!;
+      it.item_price = ri.item_price;
+      optsPriceByItem.set(ri.id, ri.opcionais);
+      if (ri.opcoesMovidas.length) optsByItem.set(ri.id, (optsByItem.get(ri.id) ?? []).filter((n) => !ri.opcoesMovidas.includes(n.trim().toLowerCase())));
+    }
+    if (rat.foraDaNota.length) log('INFO', 'nfce-ifood', 'partes sem preço fora da nota', { sourceId, itens: rat.foraDaNota.length });
     items = items.filter((i) => !(pedidosIfood.has(i.order_id) && Math.abs(Number(i.item_price ?? 0)) < 0.005 && Math.abs(optsPriceByItem.get(i.id) ?? 0) < 0.005));
     if (items.length === 0) return { note: null, skipReason: 'Venda sem itens com valor' };
   }
