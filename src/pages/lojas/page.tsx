@@ -1,6 +1,8 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLojasComparar } from '@/hooks/useLojasComparar';
+import PorQueMudouFolha from '@/components/feature/PorQueMudouFolha';
+import { horaDoDia } from '@/lib/diaLoja';
 import { corDaLoja, ordenarPorFaturamento, rotuloComparacao, totalLojas, ROTULO_PERIODO, type LojaComparada, type PeriodoLojas } from '@/lib/lojasComparar';
 import { cliqueParaNovaAba } from '@/lib/novaJanela';
 import GraficoLojas, { CanaisLojas } from './components/GraficoLojas';
@@ -84,6 +86,7 @@ export default function LojasPage() {
   const [ordem, setOrdem] = useState<Ordem>('fat');
   const [escolher, setEscolher] = useState(false);
   const [verParadas, setVerParadas] = useState(false);
+  const [porQueLoja, setPorQueLoja] = useState<string | null>(null);
   const { lojas, carregando, erro, atualizadoEm, recarregar, setOculta } = useLojasComparar(periodo);
   const abrirLoja = useAbrirLoja();
 
@@ -222,7 +225,7 @@ export default function LojasPage() {
                     </span>
                     <span className="flex items-center gap-2 mt-1.5 ml-7 flex-wrap">
                       <span className="text-[19px] font-black text-zinc-900 tabular-nums">{brl(l.atual.faturamento)}</span>
-                      <Variacao pct={l.variacao} titulo={rotuloComparacao(periodo, l)} />
+                      <Variacao pct={l.variacao} titulo={rotuloComparacao(periodo, l)} onPorQue={() => setPorQueLoja(l.tenantId)} />
                     </span>
                     <span className="block h-1.5 bg-zinc-100 rounded-full overflow-hidden mt-2 ml-7">
                       <span className="block h-full rounded-full" style={{ width: `${(l.atual.faturamento / maxFat) * 100}%`, background: cores[l.tenantId] }} />
@@ -276,7 +279,7 @@ export default function LojasPage() {
                           </span>
                         </span>
                       </td>
-                      <td className="px-3 py-3 text-right"><Variacao pct={l.variacao} titulo={rotuloComparacao(periodo, l)} /></td>
+                      <td className="px-3 py-3 text-right"><Variacao pct={l.variacao} titulo={rotuloComparacao(periodo, l)} onPorQue={() => setPorQueLoja(l.tenantId)} /></td>
                       <td className="px-3 py-3 text-right tabular-nums">{l.atual.pedidos}</td>
                       <td className="px-3 py-3 text-right tabular-nums">{brl(l.atual.ticket)}</td>
                       <td className="px-3 py-3 text-right tabular-nums">{iFoodPct(l).toFixed(0)}%</td>
@@ -326,6 +329,29 @@ export default function LojasPage() {
           </>
         )}
       </div>
+
+      {(() => {
+        // Folha "Por que mudou?" da loja tocada (a comparação é a do período escolhido; dia da loja de cada uma).
+        const l = lojas.find((x) => x.tenantId === porQueLoja);
+        return (
+          <PorQueMudouFolha
+            aberta={!!l}
+            onFechar={() => setPorQueLoja(null)}
+            tenantId={l?.tenantId}
+            nomeLoja={l?.nome}
+            periodo={l ? { d1: l.periodo.d1, d2: l.periodo.d2, c1: l.periodo.c1, c2: l.periodo.c2, corte: l.periodo.corte } : null}
+            rotulo={l ? rotuloComparacao(periodo, l).replace(/^vs /, '') : ''}
+            umDia={l?.umDia ?? true}
+            atual={{ faturamento: l?.atual.faturamento ?? 0, pedidos: l?.atual.pedidos ?? 0 }}
+            anterior={{ faturamento: l?.anterior.faturamento ?? 0, pedidos: l?.anterior.pedidos ?? 0 }}
+            serieAtual={l?.atual.serie ?? null}
+            serieAnterior={l?.anterior.serie ?? null}
+            horaCorte={l && l.periodo.corte && l.umDia ? horaDoDia(new Date(), l.dia) : null}
+            ifood={l && l.temIfood ? { atual: l.atual.ifood, anterior: 'derivar' } : { atual: 0, anterior: 0 }}
+            aguardando={!!l?.ifoodCarregando}
+          />
+        );
+      })()}
 
       {escolher && <EscolherLojasModal lojas={lojas} cores={cores} onOcultar={setOculta} onFechar={() => setEscolher(false)} />}
     </div>

@@ -222,6 +222,16 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
     }
     else if (action === 'delete_category') {
       const { id } = payload as { id: string };
+      // 2026-10-05: os itens saem junto (mesmo deleted_at, dá para desfazer pelo carimbo).
+      // Antes só a categoria era excluída e os itens ficavam vivos, sem categoria: totem,
+      // delivery e mesa QR escondem item de categoria excluída, mas o caixa (Todas/busca) e o
+      // Cardápio (categoria "—") ainda mostravam — em Paranaguá 3 itens ativos ficaram assim
+      // desde 08/06 e o tablet registrava "categoria não veio no cardápio carregado".
+      // Só o deleted_at: ficha, opções e partes de produção ficam como estão (sem efeito
+      // com o item fora do cardápio).
+      const { error: itErr } = await admin.from('menu_items').update({ deleted_at: now })
+        .eq('category_id', id).eq('tenant_id', tenantId).is('deleted_at', null);
+      if (itErr) throw new Error(`delete_category items: ${itErr.message}`);
       const { error } = await admin.from('menu_categories').update({ deleted_at: now }).eq('id', id).eq('tenant_id', tenantId);
       if (error) throw new Error(`delete_category: ${error.message}`);
       result = { deleted: true };

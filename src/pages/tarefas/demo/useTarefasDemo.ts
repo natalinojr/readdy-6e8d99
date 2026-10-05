@@ -156,6 +156,11 @@ export function useTarefasDemo() {
           due_date: (p.due_date as string) ?? null, priority: Number(p.priority ?? 0),
           start_date: (p.start_date as string) ?? null, due_has_time: Boolean(p.due_has_time),
         });
+        if (Array.isArray(p.assignee_ids) && p.assignee_ids.length) {
+          const ids = p.assignee_ids as string[];
+          novo.assignee_id = ids[0];
+          novo.assignees = ids.map((uid) => ({ id: uid, name: nome(uid) }));
+        }
         if (p.status_id) {
           const st = lists.find((l) => l.id === novo.list_id)?.statuses.find((s) => s.id === p.status_id);
           if (st) { novo.status_id = st.id; novo.status_category = st.category; }

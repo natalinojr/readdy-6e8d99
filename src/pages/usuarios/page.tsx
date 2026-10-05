@@ -8,6 +8,9 @@ import AcessoMultiLojaModal from './components/AcessoMultiLojaModal';
 import AcessoPessoa from './components/AcessoPessoa';
 import { useAuth } from '@/contexts/AuthContext';
 import { TRABALHOS, estadoTrabalho } from '@/constants/trabalhos';
+import { useSystemSettings } from '@/hooks/useSystemSettings';
+import { useRecursoLoja } from '@/hooks/useRecursoLoja';
+import UsuariosNova from './nova/UsuariosNova';
 
 function fmtData(d: string | null) {
   if (!d) return 'Nunca';
@@ -167,7 +170,7 @@ type ModalState =
   | { tipo: 'excluir'; usuario: UsuarioReal }
   | null;
 
-export default function UsuariosPage() {
+function UsuariosAtual() {
   const { usuarios, loading, error, toggleAtivo, editarUsuario, criarUsuario, excluirUsuario, redefinirSenha, definirPIN, limparPIN, alterarMatricula } = useUsuarios();
   const [busca, setBusca] = useState('');
   const [perfilFiltro, setPerfilFiltro] = useState<'todos' | PerfilUsuario>('todos');
@@ -599,4 +602,21 @@ export default function UsuariosPage() {
       )}
     </div>
   );
+}
+
+/**
+ * Tela de Usuários. Com a chave `usuarios_novo` ligada na loja (Configurações › Operação › Recursos novos)
+ * abre a tela nova (./nova/UsuariosNova); desligada, a de sempre, sem nenhuma mudança.
+ */
+export default function UsuariosPage() {
+  const { loading } = useSystemSettings();
+  const novo = useRecursoLoja('usuarios_novo');
+  // Enquanto as configurações da loja carregam pela primeira vez, espera (evita piscar a tela de hoje).
+  // Depois fica com o último valor conhecido, para uma releitura das configurações não reiniciar a tela.
+  const ultimo = useRef<boolean | null>(null);
+  if (!loading) ultimo.current = novo;
+  if (ultimo.current === null) {
+    return <div className="flex items-center justify-center h-full py-20"><div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>;
+  }
+  return ultimo.current ? <UsuariosNova /> : <UsuariosAtual />;
 }

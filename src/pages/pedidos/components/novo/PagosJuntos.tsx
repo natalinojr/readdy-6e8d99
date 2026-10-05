@@ -8,8 +8,8 @@ import { somarDias } from '@/lib/dateUtils';
 import {
   ROTULO_CANAL, canalPedido, diaBR, ehCancelado, notaViva, numeroCurto, ondeQuem, situacaoPedido, type Situacao,
 } from '@/lib/pedidosRegras';
-import Folha from '@/pages/estoque/components/inicio/Folha';
-import { Etiqueta, brl, btn } from '@/pages/estoque/components/ui/EstoqueUi';
+import { Folha } from '@/components/kit';
+import { Etiqueta, brl, btn } from '@/components/kit';
 import type { AcoesPedido } from '../../lib/acoesTipos';
 import EmitirNfModal from '../EmitirNfModal';
 

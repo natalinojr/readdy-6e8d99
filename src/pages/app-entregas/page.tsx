@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { confirmar } from '@/components/base/Dialogos';
 import { entrarNaLoja, guardarLoja, lerLojas, lerPerfil, removerLoja, salvarPerfil, type LojaMotoboy } from '@/lib/motoboyApp';
 
 function edgeUrl(): string {
@@ -96,7 +97,9 @@ export default function AppEntregasPage() {
                       <p className="text-[11px] text-zinc-400">Toque para ver as entregas</p>
                     </button>
                     <button type="button" aria-label={`Tirar ${l.store_name} deste celular`} title="Tirar a loja deste celular"
-                      onClick={() => { if (window.confirm(`Tirar "${l.store_name}" deste celular? Para voltar, peça um código novo à loja.`)) setLojas(removerLoja(l.tenant_id)); }}
+                      onClick={async () => {
+                        if (await confirmar({ titulo: `Tirar "${l.store_name}" deste celular?`, mensagem: 'A loja some da lista deste celular. Para voltar, peça um código novo à loja.', confirmarLabel: 'Tirar', perigo: true })) setLojas(removerLoja(l.tenant_id));
+                      }}
                       className="w-9 h-9 shrink-0 rounded-xl text-zinc-400 hover:bg-zinc-100 flex items-center justify-center"><i className="ri-close-line" /></button>
                     <button type="button" onClick={() => abrir(l)} aria-label={`Abrir ${l.store_name}`}
                       className="w-9 h-9 shrink-0 rounded-xl bg-amber-500 text-white flex items-center justify-center"><i className="ri-arrow-right-line" /></button>

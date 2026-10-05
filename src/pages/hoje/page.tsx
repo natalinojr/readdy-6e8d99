@@ -10,15 +10,18 @@ import { useMemo, useState } from 'react';
 import { useIsMobile } from '@/pages/tarefas/lib/mobile';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { usePermissoes, RECEBER_MODULO_KEYS } from '@/hooks/usePermissoes';
+import { usePermissoes, RECEBER_MODULO_KEYS, type PermissaoKey } from '@/hooks/usePermissoes';
+import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import { FIN_KEYS } from '@/constants/permissoesAbas';
 import { useModuleAccess } from '@/hooks/useModuleAccess';
 import { kindConfig } from '@/contexts/PendenciasContext';
 import { useHoje, type TarefaHoje } from './useHoje';
 import { contarAgoraPorLoja, diasEntre, type ItemHoje } from './organizar';
 import CartaoHoje from './CartaoHoje';
+import FiqueDeOlho from './FiqueDeOlho';
 import AprendiComVoce from './AprendiComVoce';
-import { DinheiroHoje, LojaHoje, VendasHoje } from './ResumoHoje';
+import VemAi from './VemAi';
+import { DinheiroHoje, IfoodOntem, LojaHoje, VendasHoje } from './ResumoHoje';
 import RotinaHoje from './rotina/RotinaHoje';
 import { useRotinaHoje } from './rotina/useRotina';
 
@@ -60,6 +63,10 @@ export default function HojePage() {
   const verVendas = admin || hasPermissao('gestao_dashboard');
   const verFinanceiro = admin || perfil === 'financeiro' || FIN_KEYS.some((k) => hasPermissao(k));
   const verDinheiro = verFinanceiro && (gestor || perfil === 'financeiro');
+  // Linha do iFood de ontem: mesmas chaves da tela /ifood (RotaProtegida); a loja com iFood é conferida dentro do componente.
+  const verIfood = empresaTemPdv(user?.tenantKind)
+    && (admin || ['rel_ifood', 'fin_ifood', 'gestao_pedidos', 'gestao_delivery'].some((k) => hasPermissao(k as PermissaoKey)));
+  const verDinheiroIfood = admin || hasPermissao('fin_ifood') || hasPermissao('rel_ifood');
 
   const abrir = async (tenantId: string, rota: string) => {
     if (tenantId && tenantId !== user?.tenantId) await selectTenant(tenantId);
@@ -78,7 +85,9 @@ export default function HojePage() {
   const vis = filtro ? todos.filter((i) => i.tenantId === filtro) : todos;
   const agora = vis.filter((i) => i.bloco === 'agora');
   const emDia = vis.filter((i) => i.bloco === 'em_dia');
-  const espera = vis.filter((i) => i.bloco === 'espera');
+  // "Fique de olho" é ciência (cancelamento/desconto/sangria altos): seção própria, fora de "Pode esperar" e do número de "Agora".
+  const olhos = vis.filter((i) => i.kind === 'fique_de_olho' && i.bloco !== 'silenciado');
+  const espera = vis.filter((i) => i.bloco === 'espera' && i.kind !== 'fique_de_olho');
   const outros = vis.filter((i) => i.bloco === 'outros');
   const silenciados = vis.filter((i) => i.bloco === 'silenciado').length;
   const lista = tarefas ?? [];
@@ -157,6 +166,7 @@ export default function HojePage() {
     <>
       {verVendas && <VendasHoje />}
       {verDinheiro && <DinheiroHoje />}
+      {verIfood && <IfoodOntem verDinheiro={verDinheiroIfood} />}
       {gestor && !naLoja && <LojaHoje comBotao={false} />}
     </>
   );
@@ -232,6 +242,8 @@ export default function HojePage() {
             </section>
           )}
 
+          <FiqueDeOlho itens={olhos} hoje={hoje} mostrarLoja={varias && !filtro} abrir={abrir} marcar={marcar} onMudou={recarregar} podeDarCiencia={(t) => dono || papelDe(t) === 'admin'} />
+
           <RotinaHoje rotina={rotina} filtroLoja={filtro || undefined} />
 
           {celular && (verVendas || verDinheiro || gestor) && <div className="space-y-3">{resumoSemLoja}</div>}
@@ -303,6 +315,9 @@ export default function HojePage() {
               )}
             </section>
           )}
+
+          {/* Vem aí (2026-10-05): próximos 14 dias de todas as lojas, só o dono; recolhido. */}
+          <VemAi dono={dono} filtroLoja={filtro} abrir={abrir} />
 
           <p className="text-[12px] text-zinc-400 text-center">
             <button onClick={() => navigate('/pendencias')} className="font-semibold text-zinc-500 underline cursor-pointer">Ver todas as pendências e o histórico</button>

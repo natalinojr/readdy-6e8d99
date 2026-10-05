@@ -1,4 +1,4 @@
-import { Faixa, brl, brlInteiro, type ItemFaixa } from '@/pages/estoque/components/ui/EstoqueUi';
+import { Faixa, brl, brlInteiro, type ItemFaixa } from '@/components/kit';
 import { META_PEDIDO_MIN, type FiltroChip, type ResumoPedidos } from '@/lib/pedidosRegras';
 
 // Frase do dia + faixa de números da tela de Pedidos (protótipo docs/prototipos/pedidos-proposta.html).
@@ -21,11 +21,14 @@ export default function PedidosResumo({ titulo, resumo, nPendencias, onChip, car
     : resumo.pedidos === 0
     ? `${titulo}: nenhum pedido`
     : `${titulo}: ${resumo.pedidos} ${resumo.pedidos === 1 ? 'pedido' : 'pedidos'}, ${brl(resumo.vendido)}`;
+  const doIfood = resumo.doIfood;
+  // Pedido do iFood que só a área iFood guardava (modo "Só acompanhar") entra nos números: avisa quanto é.
+  const avisoIfood = doIfood.pedidos > 0 ? ` Inclui ${doIfood.pedidos} do iFood (${brl(doIfood.valor)}).` : '';
   const subtitulo = carregando
     ? 'Buscando os pedidos do período.'
-    : nPendencias > 0
+    : (nPendencias > 0
     ? `${nPendencias} ${nPendencias === 1 ? 'coisa precisa' : 'coisas precisam'} de você. O resto está certo.`
-    : 'Nada para resolver agora.';
+    : 'Nada para resolver agora.') + avisoIfood;
 
   const itens: ItemFaixa[] = [
     { valor: resumo.pedidos, rotulo: 'Pedidos' },

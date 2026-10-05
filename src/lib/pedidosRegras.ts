@@ -43,7 +43,9 @@ const ddmm = (dia: string) => `${dia.slice(8, 10)}/${dia.slice(5, 7)}`;
 
 // ── Número curto ──────────────────────────────────────────────────────────────
 /** "P0410260048" → "048" (a sequência do dia, sem o prefixo e a data). Fora do padrão, devolve o código. */
-export function numeroCurto(p: Pick<PedidoRecente, 'numeroCodigo' | 'numeroStr' | 'numero'>): string {
+export function numeroCurto(p: Pick<PedidoRecente, 'numeroCodigo' | 'numeroStr' | 'numero'> & { ifoodExterno?: PedidoRecente['ifoodExterno'] }): string {
+  // Pedido do iFood (só em ifood_orders): o número que o cliente e o iFood veem ("4821"), sem o "iFood #".
+  if (p.ifoodExterno?.numero) return p.ifoodExterno.numero;
   const cod = (p.numeroStr ?? p.numeroCodigo ?? '').trim();
   const m = cod.match(/^[A-Za-z]{0,2}\d{6}(\d+)$/);
   if (m) return String(Number(m[1])).padStart(3, '0');
@@ -66,6 +68,21 @@ export interface Situacao {
 export function situacaoPedido(p: PedidoRecente, agoraMs: number, hoje: string): Situacao {
   if (ehCancelado(p)) return { tipo: 'cancelado', rotulo: 'Cancelado', minutos: null, atrasado: false };
   const criado = ms(p._criadoTs);
+
+  // Pedido do iFood só acompanhado (não passa pela cozinha do ERPOS): o selo vem da situação do iFood,
+  // sem meta de 15 min e sem "parado" (o iFood é quem cobra o tempo; um pedido que ficou aberto vira "Encerrado").
+  if (p.ifoodExterno) {
+    const desde = criado != null ? Math.max(0, Math.floor((agoraMs - criado) / 60000)) : (p.minutosAtras ?? 0);
+    const sit = p.ifoodExterno.situacao;
+    if (ehAtivo(p)) {
+      if (desde >= PARADO_HORAS * 60) return { tipo: 'entregue', rotulo: 'Encerrado', minutos: null, atrasado: false };
+      if (sit === 'ready') return { tipo: 'pronto', rotulo: 'Pronto', minutos: desde, atrasado: false };
+      const rotulo = sit === 'placed' ? 'Esperando aceite' : sit === 'confirmed' ? 'Aceito' : sit === 'cancel_requested' ? 'Cancelamento pedido' : `Na cozinha · ${desde} min`;
+      return { tipo: 'cozinha', rotulo, minutos: desde, atrasado: false };
+    }
+    if (sit === 'dispatched' && desde < PARADO_HORAS * 60) return { tipo: 'entregue', rotulo: 'Saiu para entrega', minutos: null, atrasado: false };
+    return { tipo: 'entregue', rotulo: 'Entregue', minutos: null, atrasado: false };
+  }
 
   if (ehAtivo(p)) {
     const desdeCriado = criado != null ? Math.max(0, Math.floor((agoraMs - criado) / 60000)) : (p.minutosAtras ?? 0);
@@ -207,7 +224,8 @@ export function ondeQuem(p: PedidoRecente): string {
 // ── Pagamento / nota ─────────────────────────────────────────────────────────
 /** Pedido com valor a receber que ainda não foi pago (total 0 = cortesia, não conta). */
 export function ehNaoPago(p: PedidoRecente): boolean {
-  return !ehCancelado(p) && !p.pago && p.total > 0.005;
+  // Pedido do iFood já vem pago (no app, ou cobrado pelo entregador): nunca é dívida da loja.
+  return !p.ifoodExterno && !ehCancelado(p) && !p.pago && p.total > 0.005;
 }
 
 export type StatusNota = 'authorized' | 'processing' | 'pending' | 'rejected' | 'error' | 'cancelled' | string;
@@ -227,6 +245,8 @@ export function ehSemNota(
   p: PedidoRecente, fiscalAtivo: boolean, statusNota: (orderId: string) => StatusNota | undefined,
   emiteNota?: (p: PedidoRecente) => boolean,
 ): boolean {
+  // A nota do iFood não é emitida por aqui (modo "Só acompanhar"): nunca é "sem nota".
+  if (p.ifoodExterno) return false;
   if (!fiscalAtivo || ehCancelado(p) || !p.pago || p.total <= 0.005) return false;
   if (emiteNota && !emiteNota(p)) return false;
   const ids = p.pedidoIds?.length ? p.pedidoIds : [p.id];
@@ -321,6 +341,8 @@ export interface ResumoPedidos {
   tempoMedio: number | null;
   /** Entregues que passaram da meta. */
   atrasados: number;
+  /** Parte do vendido que veio do iFood e só aparece aqui (modo "Só acompanhar"): já está nos números acima. */
+  doIfood: { pedidos: number; valor: number };
 }
 
 /** Recebe os pedidos INDIVIDUAIS (sem agrupar): grupo pago junto conta cada pedido uma vez. */
@@ -332,6 +354,7 @@ export function resumoPedidos(pedidos: PedidoRecente[]): ResumoPedidos {
   const recebido = validos.filter((p) => p.pago).reduce((a, p) => a + p.total, 0);
   const naoPagos = validos.filter(ehNaoPago);
   const tempos = validos.filter((p) => ehEntregue(p) && p.tempoAberto != null).map((p) => p.tempoAberto as number);
+  const ifood = validos.filter((p) => p.ifoodExterno);
   return {
     pedidos: validos.length,
     vendido,
@@ -343,6 +366,7 @@ export function resumoPedidos(pedidos: PedidoRecente[]): ResumoPedidos {
     canceladoValor: cancel.reduce((a, p) => a + p.total, 0),
     tempoMedio: tempos.length ? Math.round(tempos.reduce((a, b) => a + b, 0) / tempos.length) : null,
     atrasados: tempos.filter((t) => t > META_PEDIDO_MIN).length,
+    doIfood: { pedidos: ifood.length, valor: ifood.reduce((a, p) => a + p.total, 0) },
   };
 }
 
@@ -370,7 +394,8 @@ export function pendenciasPedidos(pedidos: PedidoRecente[], ctx: ContextoFiltro)
     return entregue != null && ctx.agoraMs - entregue >= NAO_PAGO_TOLERANCIA_MIN * 60000;
   });
   const semNota = pedidos.filter((p) => ehSemNota(p, ctx.fiscalAtivo, ctx.statusNota, ctx.emiteNota));
-  const situacoes = pedidos.map((p) => [p, situacaoPedido(p, ctx.agoraMs, ctx.hoje)] as const);
+  // Pedido do iFood só acompanhado não é da cozinha do ERPOS: não entra em atrasado nem em esquecido.
+  const situacoes = pedidos.filter((p) => !p.ifoodExterno).map((p) => [p, situacaoPedido(p, ctx.agoraMs, ctx.hoje)] as const);
   const parados = situacoes.filter(([, s]) => s.tipo === 'parado').map(([p]) => p);
   const atrasados = situacoes
     .filter(([, s]) => (s.tipo === 'cozinha' || s.tipo === 'pronto') && s.atrasado)

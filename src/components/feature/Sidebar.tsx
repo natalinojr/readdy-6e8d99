@@ -3,9 +3,10 @@ import {
   LayoutDashboard, ShoppingCart, Coffee, Tablet, Monitor, UtensilsCrossed,
   LayoutGrid, Package, BarChart3, Users, Settings, LogOut, ChefHat,
   Shield, Heart, HelpCircle, ClipboardList, Bell, Truck, ArrowLeft, DollarSign,
-  ShieldCheck, Megaphone, UserSearch, Bot, FileText, Palette, Sun,
+  ShieldCheck, Megaphone, UserSearch, Bot, FileText, Palette, Sun, ShoppingBag,
 } from 'lucide-react';
 import { useModuleAccess, type ModuloLivre } from '@/hooks/useModuleAccess';
+import { useLojaTemIfood } from '@/hooks/useLojaTemIfood';
 import { useAuth } from '../../contexts/AuthContext';
 import { podeSair } from '../../lib/guardaSaida';
 import { useAprovacoes } from '../../contexts/AprovacoesContext';
@@ -28,6 +29,8 @@ interface NavItem {
   adminMasterOnly?: boolean;
   /** Módulo sem loja: aparece para quem foi liberado no Admin Master. */
   modulo?: ModuloLivre;
+  /** Só em loja com iFood ligado na API. */
+  precisaIfood?: boolean;
 }
 
 interface NavSection {
@@ -68,7 +71,9 @@ const navSections: NavSection[] = [
     title: 'Gestão',
     items: [
       { label: 'Pedidos',               icon: ClipboardList,   path: '/pedidos',       permissao: 'gestao_pedidos' },
-      { label: 'Delivery',              icon: Truck,           path: '/config-delivery', permissao: 'gestao_delivery' },
+      // Área iFood (2026-10-05): só em loja com iFood ligado na API.
+      { label: 'iFood',                 icon: ShoppingBag,     path: '/ifood',         permissao: ['rel_ifood', 'fin_ifood', 'gestao_pedidos', 'gestao_delivery'], precisaIfood: true },
+      { label: 'Delivery próprio',      icon: Truck,           path: '/config-delivery', permissao: 'gestao_delivery' },
       { label: 'Relatórios',            icon: BarChart3,       path: '/relatorios',    permissao: REL_KEYS },
       { label: 'Tráfego Pago',          icon: Megaphone,       path: '/trafego-pago',  permissao: 'relatorio_financeiro' },
       { label: 'Estúdio de Criação',    icon: Palette,         path: '/estudio',       permissao: 'marketing_estudio' },
@@ -123,6 +128,7 @@ export default function Sidebar({ gestaoMode = false, isOpen = false, onClose }:
   const { settings } = useSystemSettings();
   const { hasPermissao } = usePermissoes();
   const { hasModule } = useModuleAccess();
+  const temIfood = useLojaTemIfood(user?.tenantId) === true;
 
   const handleLogout = async () => {
     if (!(await podeSair())) return;
@@ -146,6 +152,7 @@ export default function Sidebar({ gestaoMode = false, isOpen = false, onClose }:
         // Papel preso a uma área (Financeiro, Contabilidade, Tarefas...): link de fora dela só devolveria para lá.
         if (rotaForcada(user?.perfil, item.path)) return false;
         if (item.modulo && !hasModule(item.modulo)) return false;
+        if (item.precisaIfood && !temIfood) return false;
         if (item.permissao && !(typeof item.permissao === 'string' ? [item.permissao] : item.permissao).some((k) => hasPermissao(k))) return false;
         if (item.pdvTerminal) {
           const terminalAtivo = pdvConfig[item.pdvTerminal as keyof typeof pdvConfig] ?? true;

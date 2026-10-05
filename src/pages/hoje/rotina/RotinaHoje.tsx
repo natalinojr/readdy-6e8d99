@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useProducao } from '@/contexts/ProducaoContext';
-import Folha from '@/pages/estoque/components/inicio/Folha';
+import { Folha } from '@/components/kit';
 import RegistroProducaoModal from '@/pages/estoque/components/RegistroProducaoModal';
 import { juntarNomes, type EstadoItem, type ItemRotina, type PapelRotina } from '../../../../supabase/functions/_shared/rotina';
 import { apagarItem, desmarcarItem, marcarItem, type Rotina, type RotinaDaLoja } from './useRotina';

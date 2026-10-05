@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Shield, Search, Download, ChevronRight, Calendar, Lock, Filter, RotateCcw, Users } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import {
@@ -52,8 +53,10 @@ export default function AuditoriaPage() {
   const { user } = useAuth();
   const { eventos: todosEventos, loading, carregarComFiltros } = useAuditoria();
 
-  const [busca, setBusca] = useState('');
-  const [filtroGrupo, setFiltroGrupo] = useState('todos');
+  // O [Ver] do cartão "Fique de olho" da Hoje abre aqui já filtrado: /auditoria?grupo=pedidos|caixa&busca=50,00
+  const [params] = useSearchParams();
+  const [busca, setBusca] = useState(params.get('busca') ?? '');
+  const [filtroGrupo, setFiltroGrupo] = useState(tiposParaFiltro.some((t) => t.id === params.get('grupo')) ? (params.get('grupo') as string) : 'todos');
   const [filtroSev, setFiltroSev] = useState<'todas' | SeveridadeAuditoria>('todas');
   const [filtroUsuario, setFiltroUsuario] = useState('Todos');
   const [buscaUsuario, setBuscaUsuario] = useState('');

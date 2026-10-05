@@ -92,7 +92,10 @@ export default function CategoriasTab() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!(await confirmar({ titulo: 'Excluir esta categoria?', mensagem: 'Os itens vinculados serão afetados.', confirmarLabel: 'Excluir', perigo: true }))) return;
+    // Os itens saem junto (menu-write.delete_category, 2026-10-05).
+    const n = itens.filter((i) => i.categoriaId === id).length;
+    const mensagem = n === 0 ? 'A categoria está vazia.' : n === 1 ? 'O item dela também sai do cardápio.' : `Os ${n} itens dela também saem do cardápio.`;
+    if (!(await confirmar({ titulo: 'Excluir esta categoria?', mensagem, confirmarLabel: 'Excluir', perigo: true }))) return;
     await excluirCategoria(id);
   };
 

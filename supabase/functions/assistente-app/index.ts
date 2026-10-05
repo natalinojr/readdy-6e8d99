@@ -36,6 +36,7 @@
 //   pedido_origem { id }                           → mensagem (asst_messages.id) que gerou o pedido do grupo
 //   Trilha versão D (2026-09-29) — ações do cartão da conta, sem IA:
 //   conta_guardar_boleto  { bill_id, linha? | copia_e_cola?, confirmar_valor? } → guarda o boleto/Pix na conta (DV/CRC conferidos)
+//   conta_ler_boleto      { bill_ids, arquivo:{base64,media_type} } → LÊ a foto/PDF do boleto (só lê) e diz, por conta, se valor e vencimento batem
 //   conta_desfazer_boleto { bill_id }             → tira o boleto guardado pela tela (desfazer)
 //   conta_pedir_boleto    { bill_id }             → registra o pedido na pendência e devolve o texto p/ o WhatsApp do dono
 //   conta_pix_destinos    { bill_id }             → Fornecedores com chave Pix + Pix permitidos da loja da conta
@@ -845,6 +846,48 @@ Deno.serve(async (req) => {
         descricao: String(b.supplier || b.description || 'Conta').slice(0, 140), requested_by: user.id, channel: 'app', chat_id: chatKey,
       });
       return json({ success: true, data: { payment: await payCard1(admin, out.payment) } });
+    }
+
+    // ── Foto do boleto no cartão "Falta o boleto" (2026-10-05) ────────────────────────────────────
+    // SÓ LÊ: devolve o que o boleto diz (linha/Pix conferidos pelo dígito verificador/CRC, valor, vencimento)
+    // e, para cada conta candidata, se o valor e o vencimento batem. Quem grava é o conta_guardar_boleto
+    // (o cliente chama em seguida: direto só quando valor E vencimento batem, as contas são de um fornecedor só e o
+    // beneficiário não contradiz — src/lib/boletoFoto.ts › contaParaGravarSozinho; nos demais casos pergunta). O arquivo
+    // vem em base64 pela Edge e não é guardado em lugar nenhum. A leitura é a do pedido de benefício
+    // (pedidos-pagamento/boleto-beneficio.ts: texto do PDF → IA Haiku → 2ª tentativa Sonnet).
+    if (action === 'conta_ler_boleto') {
+      const ids = [...new Set((Array.isArray(body.bill_ids) ? body.bill_ids : [body.bill_id]).map((x: unknown) => String(x ?? '')).filter(Boolean))].slice(0, 40);
+      if (!ids.length) return fail('Qual conta?');
+      const { data: contas } = await admin.from('fin_accounts_payable')
+        .select('id, tenant_id, supplier, description, amount, paid_amount, due_date, status, boleto_digitavel, boleto_barcode, boleto_pix_copia').in('id', ids);
+      if (!contas?.length) return fail('Conta não encontrada.', 404);
+      const lojas = new Set(contas.map((c) => String(c.tenant_id)));
+      if (lojas.size !== 1) return fail('As contas são de lojas diferentes.');
+      const tenant = [...lojas][0];
+      if (!(await ehGestor(admin, user.id, tenant))) return fail('Sem acesso a essa loja.', 403);
+      const abertas = contas.filter((c) => !['paid', 'cancelled'].includes(String(c.status)) && !c.boleto_digitavel && !c.boleto_barcode && !c.boleto_pix_copia);
+      if (!abertas.length) return fail('Essas contas já foram pagas ou já têm boleto guardado. Atualize a tela.');
+      const arq = body.arquivo ?? {};
+      if (!FILE_TYPES.includes(String(arq.media_type ?? '').toLowerCase())) return fail('Mande o boleto em PDF ou foto (JPG/PNG).');
+      if (String(arq.base64 ?? '').length > MAX_B64) return fail('Arquivo grande demais (máx. ~10 MB).');
+      const { lerBoletoBeneficio } = await import('../pedidos-pagamento/boleto-beneficio.ts');
+      const r = await lerBoletoBeneficio(admin, tenant, user.id, arq, 'leitura-boleto-conta');
+      if (r.erro || !r.lido) return fail(r.erro ?? 'Não consegui ler o boleto.', r.status ?? 400);
+      const l = r.lido;
+      const candidatas = abertas.map((c) => {
+        const saldo = round2(Number(c.amount) - Number(c.paid_amount ?? 0));
+        return {
+          bill_id: String(c.id), fornecedor: String(c.supplier || c.description || 'Conta'), saldo, vencimento: String(c.due_date ?? ''),
+          // null = o boleto não diz (convênio sem vencimento, valor ilegível): não dá para conferir
+          bate_valor: l.valor == null ? null : !precisaConfirmarValor(l.valor, saldo),
+          bate_vencimento: l.vencimento == null || !c.due_date ? null : l.vencimento === String(c.due_date),
+        };
+      });
+      log('INFO', 'boleto lido pela foto', { tenant, contas: abertas.length, achouLinha: !!l.linha_digitavel, achouPix: !!l.pix_copia_e_cola });
+      return json({ success: true, data: {
+        lido: { beneficiario: l.beneficiario, valor: l.valor, vencimento: l.vencimento, linha_digitavel: l.linha_digitavel, pix_copia_e_cola: l.pix_copia_e_cola },
+        candidatas,
+      } });
     }
 
     // ── Trilha versão D (2026-09-29): guardar / desfazer / pedir o boleto de uma conta ──────────

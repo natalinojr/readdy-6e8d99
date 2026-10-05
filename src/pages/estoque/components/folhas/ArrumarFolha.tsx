@@ -164,7 +164,7 @@ export default function ArrumarFolha({ aberta, filtro, insumoId, onFechar }: {
       <Folha aberta titulo="Arrumar a lista" onFechar={onFechar}
         rodape={<button type="button" onClick={onFechar} className={`${btn('dark')} flex-1 min-h-[46px]`}>Fechar</button>}>
         <p className="text-sm text-zinc-600 leading-relaxed py-4">
-          Só quem configura o estoque (dono, Supervisor ou quem faz o inventário) arruma o cadastro.
+          Só quem configura o estoque (Administrador, Supervisor ou quem faz o inventário) arruma o cadastro.
         </p>
       </Folha>
     );

@@ -11,9 +11,33 @@ import { reportError } from './lib/errorReporter';
 import { ehErroCarregarTela, tentarRecarregarTela } from './lib/recargaTela';
 
 // ─── Fallback de crash de render ────────────────────────────────────────────
-function ErroAplicacao({ error }: { error?: Error }) {
-  const naoCarregou = ehErroCarregarTela(error);
-  if (naoCarregou) {
+// recarregando: o ErrorBoundary acabou de mandar recarregar (tentarRecarregarTela). Só aí é "Atualizamos o
+// sistema"; se não recarregou (já tentou há menos de 1 min), é a tela de erro de sempre.
+function ErroAplicacao({ error, recarregando }: { error?: Error; recarregando: boolean }) {
+  if (recarregando) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-neutral-50">
+        <div className="text-center max-w-md px-6">
+          <div className="w-16 h-16 flex items-center justify-center mx-auto mb-6 bg-amber-50 rounded-full">
+            <i className="ri-refresh-line text-3xl text-amber-500" />
+          </div>
+          <h2 className="text-xl font-semibold text-neutral-800 mb-2">Atualizamos o sistema</h2>
+          <p className="text-sm text-neutral-500 mb-6">
+            Saiu uma versão nova e esta tela ainda é da anterior. Estamos recarregando; se não abrir sozinho, toque em atualizar
+            (e confira a internet).
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="px-5 py-2.5 bg-neutral-900 text-white text-sm rounded-md hover:bg-neutral-700 transition-colors cursor-pointer whitespace-nowrap"
+          >
+            Atualizar
+          </button>
+        </div>
+      </div>
+    );
+  }
+  if (ehErroCarregarTela(error)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-neutral-50">
         <div className="text-center max-w-md px-6">
@@ -69,12 +93,14 @@ function ErroAplicacao({ error }: { error?: Error }) {
 // ─── ErrorBoundary ───────────────────────────────────────────────────────────
 interface ErrorBoundaryProps {
   children: ReactNode;
-  fallback: (error: Error) => ReactNode;
+  fallback: (error: Error, recarregando: boolean) => ReactNode;
 }
 
 interface ErrorBoundaryState {
   hasError: boolean;
   error?: Error;
+  /** tentarRecarregarTela mandou recarregar agora. */
+  recarregando?: boolean;
 }
 
 class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
@@ -89,7 +115,8 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     // Arquivo da tela não baixou (rede ruim ou deploy novo): recarrega sozinho antes de mostrar erro.
-    if (tentarRecarregarTela(error)) return;
+    // Mostra "Atualizamos o sistema" enquanto recarrega (e não a tela de erro) e não vai para a fila de erros.
+    if (tentarRecarregarTela(error)) { this.setState({ error, recarregando: true }); return; }
     console.error('[ErrorBoundary] Crash de render capturado:', error.message, error.stack, info.componentStack);
     reportError(error, { fn: 'ErrorBoundary', context: { componentStack: (info.componentStack ?? '').slice(0, 1500) } });
     this.setState({ error });
@@ -97,7 +124,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 
   render() {
     if (this.state.hasError) {
-      return this.props.fallback(this.state.error ?? new Error('Erro desconhecido'));
+      return this.props.fallback(this.state.error ?? new Error('Erro desconhecido'), !!this.state.recarregando);
     }
     return this.props.children;
   }
@@ -111,7 +138,7 @@ function App() {
   useWakeLock();
 
   return (
-    <ErrorBoundary fallback={(err) => <ErroAplicacao error={err} />}>
+    <ErrorBoundary fallback={(err, recarregando) => <ErroAplicacao error={err} recarregando={recarregando} />}>
       <AppProviders>
         <BrowserRouter basename={__BASE_PATH__}>
           <Suspense fallback={

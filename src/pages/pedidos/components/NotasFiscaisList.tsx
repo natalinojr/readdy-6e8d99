@@ -9,8 +9,8 @@ import { MonthNav } from '@/pages/financeiro/components/dreUi';
 import {
   CartaoAcao, Chips, Faixa, MenuMais, SecaoTitulo, Vazio, Nota, brl, btn, semAcento,
   type ItemFaixa, type ItemMenu, type OpcaoChip,
-} from '@/pages/estoque/components/ui/EstoqueUi';
-import Folha from '@/pages/estoque/components/inicio/Folha';
+} from '@/components/kit';
+import { Folha } from '@/components/kit';
 
 // Notas fiscais (NFC-e) — layout novo (2026-10-05), mesmo desenho da aba Pedidos: frase do mês,
 // "Precisa de você" com o botão que resolve (recusadas → tentar de novo; paradas → reprocessar),

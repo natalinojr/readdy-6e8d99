@@ -11,12 +11,14 @@ interface Props {
   onSalvar: (payload: Record<string, unknown>) => Promise<void>;
   onDefinirPIN?: (pin: string) => Promise<{ success: boolean; error?: string }>;
   onLimparPIN?: () => Promise<{ success: boolean; error?: string }>;
+  /** Cargo que já vem marcado ao criar (a tela nova abre "Novo aparelho" com o Totem). */
+  perfilInicial?: PerfilUsuario;
 }
 
 const PERFIS_NORMAIS: PerfilUsuario[] = ['admin', 'gerente', 'supervisao', 'caixa', 'garcom', 'cozinha', 'gestor_entregas', 'tarefas', 'contabilidade'];
 const PERFIS_TODOS: PerfilUsuario[] = [...PERFIS_NORMAIS, 'totem'];
 
-export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefinirPIN, onLimparPIN }: Props) {
+export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefinirPIN, onLimparPIN, perfilInicial }: Props) {
   const { user } = useAuth();
   // Supervisor (gerente, com "Gerenciar usuários") só dá os cargos de baixo — o servidor recusa os
   // outros (user-write, fn_update_user). Financeiro, Contabilidade e Tarefas são só do dono (2026-10-03).
@@ -25,7 +27,7 @@ export default function UsuarioModal({ modo, usuario, onClose, onSalvar, onDefin
   const [nome, setNome] = useState(usuario?.nome ?? '');
   const [email, setEmail] = useState(usuario?.email?.includes('@totem.erpos.local') ? '' : (usuario?.email ?? ''));
   const [matricula, setMatricula] = useState(modo === 'editar' ? (usuario?.matricula ?? '') : '');
-  const [perfil, setPerfil] = useState<PerfilUsuario>(usuario?.perfil ?? 'garcom');
+  const [perfil, setPerfil] = useState<PerfilUsuario>(usuario?.perfil ?? perfilInicial ?? 'garcom');
   const [modoTreino, setModoTreino] = useState(usuario?.modoTreino ?? false);
   const [ativo, setAtivo] = useState(usuario?.ativo ?? true);
   const [senha, setSenha] = useState('');

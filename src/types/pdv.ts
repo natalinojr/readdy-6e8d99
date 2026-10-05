@@ -288,6 +288,22 @@ export interface PedidoRecente {
   pedidoIds?: string[];
   /** For grouped cards: original orders data */
   pedidosOriginais?: PedidoRecente[];
+  /**
+   * Pedido do iFood que só existe em ifood_orders (loja no modo "Só acompanhar": não entrou na cozinha
+   * do ERPOS, não vira `orders`). Entra na lista de Pedidos como pedido "externo": não é dívida da
+   * loja (já vem pago), não tem NFC-e por aqui e não conta como pendência de cozinha. Guarda o que o
+   * detalhe precisa: id do iFood (para abrir em /ifood), quem pagou o desconto e quantas vezes o
+   * cliente já pediu. `situacao` = status do iFood (placed, confirmed, preparing, ready, dispatched,
+   * concluded, cancelled) para o selo, já que `status` é só o do ERPOS.
+   */
+  ifoodExterno?: {
+    id: string;
+    numero: string | null;
+    promoLoja: number;
+    promoIfood: number;
+    pedidosAntes: number | null;
+    situacao?: string;
+  };
 }
 
 // ─── Table Session ────────────────────────────────────────────────────────────

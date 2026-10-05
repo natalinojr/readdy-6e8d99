@@ -52,7 +52,7 @@ const guias = (c: ContextoAcesso) => aba('guias')(c) || (c.perfil === 'contabili
 const sangria = (c: ContextoAcesso) => temPdv(c) && !!c.perfil && !rotaForcada(c.perfil, '/pdv/caixa') && c.pode('pdv_sangria');
 const despesa = (c: ContextoAcesso) => acaoLiberada('lancar-despesa', c);
 
-const AP = 'o dono aprova';
+const AP = 'o Administrador aprova';
 const r = (rota: string): Destino => ({ rota });
 
 export const OPCOES: Opcao[] = [
@@ -155,7 +155,7 @@ export const OPCOES: Opcao[] = [
     ],
   },
   {
-    id: 'pagar', icone: 'ri-calendar-todo-line', titulo: 'Tenho que pagar alguém', sub: 'Vira conta com data, ou pedido para o dono aprovar',
+    id: 'pagar', icone: 'ri-calendar-todo-line', titulo: 'Tenho que pagar alguém', sub: 'Vira conta com data, ou pedido para o Administrador aprovar',
     pergunta: 'Quem você tem que pagar?',
     filhos: [
       {
@@ -187,7 +187,7 @@ export const OPCOES: Opcao[] = [
         vars: [{ pode: guias, destino: r('/financeiro?tab=guias'), onde: 'Guias e impostos' }],
       },
       {
-        id: 'pagar-online', icone: 'ri-shopping-cart-2-line', titulo: 'Quero comprar algo pela internet', sub: 'Mando o link, o dono aprova e paga',
+        id: 'pagar-online', icone: 'ri-shopping-cart-2-line', titulo: 'Quero comprar algo pela internet', sub: 'Mando o link, o Administrador aprova e paga',
         vars: [{ pode: pedido('pag_compra_online'), destino: r('/receber?pedido=compra_online'), onde: AP, aprova: true }],
       },
     ],

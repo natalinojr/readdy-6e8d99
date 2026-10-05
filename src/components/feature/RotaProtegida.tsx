@@ -5,6 +5,7 @@ import { usePermissoes } from '@/hooks/usePermissoes';
 import { RECEBER_MODULO_KEYS, type PermissaoKey } from '@/hooks/usePermissoes';
 import { FIN_KEYS, REL_KEYS, CFG_MAQUININHA_KEY } from '@/constants/permissoesAbas';
 import { rotaForcada } from '@/lib/acessoRota';
+import TelaAviso from '@/components/base/TelaAviso';
 
 /**
  * Mapeamento de rota → permissão necessária.
@@ -34,6 +35,8 @@ const ROTA_PERMISSAO: Record<string, PermissaoKey | readonly PermissaoKey[]> = {
   '/pedidos': 'gestao_pedidos',
   '/mesas': 'gestao_mesas',
   '/config-delivery': 'gestao_delivery',
+  // Área iFood: pedidos, dinheiro e resultados — cada aba confere a própria chave dentro da tela.
+  '/ifood': ['rel_ifood', 'fin_ifood', 'gestao_pedidos', 'gestao_delivery'],
   '/dashboard': 'gestao_dashboard',
   '/kds': 'kds_acessar',
   '/gestor-pedidos': 'gestor_pedidos_acessar',
@@ -52,7 +55,7 @@ interface Props {
 
 /**
  * Wrapper que verifica se o usuário tem permissão para acessar a rota atual.
- * Se não tiver, redireciona para /modulos com uma mensagem de acesso negado.
+ * Se não tiver, mostra "Esta tela não é do seu perfil" com o botão "Ir para o meu começo".
  */
 export default function RotaProtegida({ children }: Props) {
   const { user } = useAuth();
@@ -82,12 +85,10 @@ export default function RotaProtegida({ children }: Props) {
   const lista = typeof permissaoNecessaria === 'string' ? [permissaoNecessaria] : permissaoNecessaria;
   if (lista.some((k) => hasPermissao(k))) return <>{children}</>;
 
-  // Sem permissão — redireciona para módulos com state de aviso
+  // Sem permissão: fica na tela e explica (antes redirecionava para /modulos com um aviso de 5 s).
   return (
-    <Navigate
-      to="/modulos"
-      replace
-      state={{ acessoNegado: true, rota: location.pathname }}
-    />
+    <TelaAviso icone="ri-shield-keyhole-line" titulo="Esta tela não é do seu perfil">
+      Seu acesso não inclui esta área. Se precisa dela, peça a quem cuida do acesso da loja.
+    </TelaAviso>
   );
 }

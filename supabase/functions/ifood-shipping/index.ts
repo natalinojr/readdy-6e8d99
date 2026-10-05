@@ -12,8 +12,10 @@
 //   save_config    { client_id, client_secret? }    admin/gerente — só app PRÓPRIO (teste); sem isso a loja usa
 //                                                   o app ERPOS PDV do sistema (secrets IFOOD_PDV_CLIENT_ID/SECRET)
 //   use_system_app                                  volta a loja para o app do sistema
-//   set_options    { homologation_mode?, shipping_enabled?, default_prep_min?, shipping_merchant_id? }
+//   set_options    { homologation_mode?, shipping_enabled?, default_prep_min?, shipping_merchant_id?, order_*?, order_emit_nfce?, order_nfce_momento? }
 //   request_user_code / confirm_authorization { authorization_code } / delete_config   admin/gerente
+//   refresh_merchants                                renova o acesso e relê as lojas de cada autorização   admin/gerente
+//   order_backfill { dias? }                        pedidos de antes de ligar (Vendas → GET /orders/{id}, ~15 dias)   admin/gerente
 //   prepare        { order_id }                     formulário pré-preenchido (endereço, telefone, itens, pagamento)
 //   quote          { order_id, lat, lng }           GET shipping/v1.0/merchants/{m}/deliveryAvailabilities
 //   create         { order_id, quote_id, customer, address, payment, prep_min }
@@ -32,9 +34,9 @@ import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-
 import { isContabilidadeRole, isManagerRole } from '../_shared/tenant-auth.ts';
 import { ACTIVE, buildItems as buildItemsPure, cut, eventName, norm, onlyDigits, parseEnderecoPedido, paymentFromNotes, planEvent, round2, splitPhone, type OrderSignal } from './core.ts';
 import { orderEventName, orderItemsFromDetails, orderRowFromDetails, planOrderEvent } from './order.ts';
-import { montarPedidoErpos, type IfoodLink, type MenuInfo } from './funnel.ts';
+import { montarPedidoErpos, type FichaLinha, type IfoodLink, type MenuInfo } from './funnel.ts';
 import { consultaKpis, corpoHomologacao, mensagemErroKpis, periodoKpis, resumirLinhas, validarCorpoKpis } from './analytics.ts';
-import { deductStockForOrderItem } from '../_shared/stock.ts';
+import { deductLooseStockForOrder, deductStockForOrderItem, restockLooseStockForOrder } from '../_shared/stock.ts';
 
 type Admin = SupabaseClient;
 
@@ -78,6 +80,24 @@ async function listarLojas(access: string, homolog: boolean) {
     if (lote.length < size) break;
   }
   return { ok: true, status: 200, data: null, raw: '', merchants };
+}
+
+/**
+ * Lojas que a autorização libera, sem o módulo Merchant: o polling de eventos (módulo Order) responde 403 com
+ * `unauthorizedMerchants` para loja não autorizada. 05/10: app erpos-pdv em produção só com Order/Events liberados
+ * (Merchant/Review/Shipping esperando o chamado) → /merchants vinha [] e /merchants/{id} 403. Candidatas = lojas do
+ * iFood desta loja do ERPOS no financeiro. Polling sem ack não consome evento (o iFood entrega de novo).
+ */
+async function lojasPorEventos(access: string, homolog: boolean, candidatas: { id: string; name: string }[]) {
+  let ids = [...new Set(candidatas.map((c) => c.id))];
+  for (let i = 0; i < 3 && ids.length; i++) {
+    const r = await ifoodFetch('/events/v1.0/events:polling', { headers: { Authorization: `Bearer ${access}`, Accept: 'application/json', 'x-polling-merchants': ids.join(',') } }, homolog);
+    if (r.ok) return candidatas.filter((c) => ids.includes(c.id));
+    const negadas: string[] = r.status === 403 ? (r.data?.error?.unauthorizedMerchants ?? r.data?.unauthorizedMerchants ?? []).map(String) : [];
+    if (!negadas.length) return [];
+    ids = ids.filter((id) => !negadas.includes(id));
+  }
+  return [];
 }
 
 async function ifoodFetch(path: string, init: RequestInit, homolog: boolean, maxAttempts = 4) {
@@ -417,12 +437,51 @@ async function aceitarPedidoFunil(admin: Admin, c: Ctx, row: any): Promise<strin
       await admin.from('ifood_order_outbox').upsert(['start', 'ready'].map((op) => ({ tenant_id: row.tenant_id, order_id: o.id, ifood_order_id: row.ifood_order_id, op })), { onConflict: 'ifood_order_id,op', ignoreDuplicates: true });
     }
   }
+  await baixarFichaIfood(admin, row, o.id);
   if (row.status === 'placed') {
     const r = await call(admin, c, 'POST', `/order/v1.0/orders/${row.ifood_order_id}/confirm`, undefined, { 'idempotency-key': `confirm-${row.ifood_order_id}` });
     if (!r.ok && r.status !== 409) { const m = apiError(r, 'Confirmar no iFood'); await funnelErro(admin, row.id, m); return m; }
   }
   await funnelErro(admin, row.id, null);
   return null;
+}
+
+// Ficha do iFood (ifood_ficha_linhas): itens viram linhas do pedido (baixam como qualquer item); insumos extras e item
+// com quantidade quebrada baixam aqui, ligados ao pedido, quando ele entra na cozinha (ou conclui) — nunca em rascunho,
+// treino ou cancelado. Cancelado no iFood → estorno (restockLooseStockForOrder). Idempotente (_shared/stock.ts).
+const MARCA_FICHA = 'ficha do iFood';
+
+async function carregarFichas(admin: Admin, tenantId: string): Promise<FichaLinha[]> {
+  const { data } = await admin.from('ifood_ficha_linhas').select('level, name_key, group_key, kind, menu_item_id, ingredient_id, quantity, unit, ordem').eq('tenant_id', tenantId);
+  return (data ?? []) as FichaLinha[];
+}
+
+async function operadorDoPedido(admin: Admin, sessionId: string | null): Promise<string | null> {
+  if (!sessionId) return null;
+  const { data } = await admin.from('sessions').select('opened_by').eq('id', sessionId).maybeSingle();
+  return (data?.opened_by as string | null) ?? null;
+}
+
+async function baixarFichaIfood(admin: Admin, row: any, orderId: string) {
+  try {
+    const { data: o } = await admin.from('orders').select('id, status, is_draft, is_training, session_id').eq('id', orderId).maybeSingle();
+    if (!o || o.is_draft || o.status === 'draft' || o.status === 'cancelled' || o.is_training) return;
+    const fichas = await carregarFichas(admin, row.tenant_id);
+    if (!fichas.some((f) => f.kind === 'insumo' || !Number.isInteger(Number(f.quantity)))) return;
+    const [{ data: itens }, { data: links }] = await Promise.all([
+      admin.from('ifood_order_items').select('*').eq('order_row_id', row.id),
+      admin.from('ifood_item_links').select('level, name_key, group_key, ifood_id, external_code, target_kind, menu_item_id, combo_id, option_id').eq('tenant_id', row.tenant_id),
+    ]);
+    const { insumos } = montarPedidoErpos(row, itens ?? [], (links ?? []) as IfoodLink[], new Map(), fichas);
+    if (!insumos.length) return;
+    const operador = await operadorDoPedido(admin, o.session_id);
+    if (!operador) { log('WARN', 'funnel', 'ficha do iFood sem operador (caixa sem opened_by)', { order: orderId }); return; }
+    const origens = [...new Set(insumos.map((i) => i.origem))].join(', ');
+    const n = await deductLooseStockForOrder(admin, row.tenant_id, orderId, operador, MARCA_FICHA, insumos, `Ficha do iFood: ${origens}`.slice(0, 500));
+    if (n) log('INFO', 'funnel', 'baixa dos insumos da ficha do iFood', { ifood: row.ifood_order_id, order: orderId, insumos: n });
+  } catch (e) {
+    log('WARN', 'funnel', 'baixa da ficha do iFood', { ifood: row.ifood_order_id, order: orderId, error: String((e as Error)?.message ?? e) });
+  }
 }
 
 /** Cria o pedido do ERPOS (rascunho) a partir do pedido do iFood; aceite automático se a loja escolheu. */
@@ -434,20 +493,21 @@ async function criarPedidoFunil(admin: Admin, c: Ctx, row: any): Promise<void> {
   const { data: sess } = await admin.from('sessions').select('id').eq('tenant_id', tenantId).eq('status', 'open').order('opened_at', { ascending: false }).limit(1).maybeSingle();
   if (!sess) { await funnelErro(admin, row.id, 'Sem caixa aberto no ERPOS: abra o caixa para o pedido entrar na cozinha.'); return; }
 
-  const [{ data: itens }, { data: links }] = await Promise.all([
+  const [{ data: itens }, { data: links }, fichas] = await Promise.all([
     admin.from('ifood_order_items').select('*').eq('order_row_id', row.id),
     admin.from('ifood_item_links').select('level, name_key, group_key, ifood_id, external_code, target_kind, menu_item_id, combo_id, option_id').eq('tenant_id', tenantId),
+    carregarFichas(admin, tenantId),
   ]);
-  const itemIds = [...new Set(((links ?? []) as IfoodLink[]).map((l) => l.menu_item_id).filter(Boolean))] as string[];
+  const itemIds = [...new Set([...((links ?? []) as IfoodLink[]).map((l) => l.menu_item_id), ...fichas.map((f) => f.menu_item_id)].filter(Boolean))] as string[];
   const menu = new Map<string, MenuInfo>();
   if (itemIds.length) {
-    const { data: mis } = await admin.from('menu_items').select('id, skip_kds, category_id').in('id', itemIds);
+    const { data: mis } = await admin.from('menu_items').select('id, name, skip_kds, category_id').in('id', itemIds);
     const catIds = [...new Set((mis ?? []).map((m: any) => m.category_id).filter(Boolean))];
     const { data: cats } = catIds.length ? await admin.from('menu_categories').select('id, station_id').in('id', catIds) : { data: [] };
     const est = new Map((cats ?? []).map((k: any) => [k.id, k.station_id ?? null]));
-    for (const m of (mis ?? []) as any[]) menu.set(m.id, { skip_kds: !!m.skip_kds, station_id: (est.get(m.category_id) as string | null) ?? null });
+    for (const m of (mis ?? []) as any[]) menu.set(m.id, { skip_kds: !!m.skip_kds, station_id: (est.get(m.category_id) as string | null) ?? null, name: m.name ?? undefined });
   }
-  const p = montarPedidoErpos(row, itens ?? [], (links ?? []) as IfoodLink[], menu);
+  const p = montarPedidoErpos(row, itens ?? [], (links ?? []) as IfoodLink[], menu, fichas);
 
   const { data: numRows } = await admin.rpc('fn_next_tenant_order_number', { p_tenant_id: tenantId });
   const numero = (Array.isArray(numRows) ? numRows[0]?.number : (numRows as any)?.number) ?? `I${Date.now()}`;
@@ -469,7 +529,7 @@ async function criarPedidoFunil(admin: Admin, c: Ctx, row: any): Promise<void> {
     if (iErr) throw new Error('Criar itens no ERPOS: ' + iErr.message);
   }
   await admin.from('ifood_orders').update({ order_id: orderId, funnel_error: null, funnel_at: now, updated_at: now }).eq('id', row.id);
-  log('INFO', 'funnel', 'pedido criado no ERPOS', { ifood: row.ifood_order_id, order: orderId, numero, semVinculo: p.semVinculo.length, tenantId });
+  log('INFO', 'funnel', 'pedido criado no ERPOS', { ifood: row.ifood_order_id, order: orderId, numero, semVinculo: p.semVinculo.length, insumosFicha: p.insumos.length, tenantId });
   if (cfg.order_auto_confirm !== false) await aceiteAutomatico(admin, c, { ...row, order_id: orderId });
 }
 
@@ -501,6 +561,67 @@ async function aceiteAutomatico(admin: Admin, c: Ctx, row: any) {
   }
 }
 
+// ── NFC-e dos pedidos do iFood (IFOOD-PEDIDOS-FUNIL.md, etapa 5) ──
+// Só com a chave da loja order_emit_nfce (+ fiscal da loja ligado; a fiscal-write confere e calcula o valor da venda).
+// QUANDO a nota sai é escolha da loja (order_nfce_momento, dono 05/10): 'saida' = pedido pronto ou saiu para entrega
+// (recomendado: a NFC-e deve estar autorizada antes da mercadoria circular) ou 'conclusao' = iFood concluiu o pedido.
+// Sempre com o pedido pago — o que acontecer por último: pago no app já nasce pago, então sai no evento; cobrado pela
+// loja sai no evento se o caixa já recebeu, ou quando o caixa receber (order-write → fiscal-write confere o momento).
+const estadosNotaIfood = (cfg: any) => cfg?.order_nfce_momento === 'conclusao' ? ['concluded'] : ['ready', 'dispatched', 'concluded'];
+// A chamada à fiscal-write não segura o polling (até 70 s do provedor; trava de 90 s da loja): roda em segundo plano.
+function emSegundoPlano(p: Promise<unknown>) {
+  // deno-lint-ignore no-explicit-any
+  const rt = (globalThis as any).EdgeRuntime;
+  if (rt && typeof rt.waitUntil === 'function') rt.waitUntil(p); else p.catch(() => {});
+}
+
+async function chamarFiscal(body: Record<string, unknown>) {
+  const anon = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+  const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/fiscal-write?forceFunctionRegion=sa-east-1`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${anon}`, apikey: anon, 'x-internal-key': Deno.env.get('FISCAL_INTERNAL_KEY') ?? '' },
+    body: JSON.stringify(body),
+  });
+  return { http: r.status, data: await r.json().catch(() => ({})) as any };
+}
+
+async function notaFiscalIfood(admin: Admin, cfg: any, row: any) {
+  if (cfg.order_emit_nfce !== true || !row.order_id || row.is_test === true || !estadosNotaIfood(cfg).includes(row.status)) return;
+  const { data: o } = await admin.from('orders').select('id, is_paid, is_draft, status, is_training').eq('id', row.order_id).maybeSingle();
+  if (!o || !o.is_paid || o.is_draft || o.status === 'cancelled' || o.is_training) return;
+  // Uma tentativa automática só: qualquer documento já criado (autorizado, em andamento, rejeitado, erro, cancelado à
+  // mão) fica com a tela Notas Fiscais. Erro de tempo esgotado pode ter sido autorizado na SEFAZ — reenviar sozinho
+  // geraria uma 2ª nota.
+  const { data: docs } = await admin.from('fiscal_documents').select('id').eq('tenant_id', row.tenant_id).contains('order_ids', [o.id]).limit(1);
+  if ((docs ?? []).length) return;
+  emSegundoPlano(chamarFiscal({ action: 'emit', tenant_id: row.tenant_id, source_type: 'order', source_id: o.id, trigger: 'ifood_funnel' })
+    .then((r) => log('INFO', 'fiscal', 'NFC-e do iFood', { ifood: row.ifood_order_id, order: o.id, http: r.http, status: r.data?.status, msg: String(r.data?.message ?? '').slice(0, 200) }))
+    .catch((e) => log('WARN', 'fiscal', 'NFC-e do iFood falhou', { ifood: row.ifood_order_id, error: String(e) })));
+}
+
+/** iFood cancelou depois da nota: cancela a NFC-e autorizada; se a SEFAZ recusar (prazo) ou a nota ainda estiver
+ *  em emissão, fica o aviso no pedido (ifood_orders.funnel_error). */
+async function cancelarNotaIfood(admin: Admin, row: any) {
+  const { data: docs } = await admin.from('fiscal_documents').select('id, numero, status').eq('tenant_id', row.tenant_id)
+    .contains('order_ids', [row.order_id]).in('status', ['authorized', 'processing', 'pending']);
+  for (const d of (docs ?? []) as any[]) {
+    const nota = `NFC-e${d.numero ? ` nº ${d.numero}` : ''}`;
+    if (d.status !== 'authorized') {
+      await funnelErro(admin, row.id, `Pedido cancelado no iFood com a ${nota} ainda em emissão. Confira em Configurações › Fiscal › Notas e cancele se ela for autorizada.`);
+      continue;
+    }
+    emSegundoPlano((async () => {
+      let erro: string | null = null;
+      try {
+        const r = await chamarFiscal({ action: 'cancel', tenant_id: row.tenant_id, document_id: d.id, justificativa: 'Pedido cancelado pelo iFood depois da emissao da nota' });
+        if (!r.data?.success) erro = String(r.data?.error ?? `HTTP ${r.http}`);
+      } catch (e) { erro = String((e as Error)?.message ?? e); }
+      log(erro ? 'WARN' : 'INFO', 'fiscal', 'cancelar NFC-e do iFood', { ifood: row.ifood_order_id, doc: d.id, erro });
+      if (erro) await funnelErro(admin, row.id, `Pedido cancelado no iFood, mas a ${nota} não foi cancelada (${erro.slice(0, 160)}). Veja em Configurações › Fiscal › Notas.`);
+    })());
+  }
+}
+
 /** Depois de cada evento do pedido: cria no ERPOS, repassa cancelamento ou conclusão. */
 async function funnelAfterEvent(admin: Admin, c: Ctx, rowId: string) {
   const { data: row } = await admin.from('ifood_orders').select('*').eq('id', rowId).maybeSingle();
@@ -509,6 +630,12 @@ async function funnelAfterEvent(admin: Admin, c: Ctx, rowId: string) {
     if (row.order_id) {
       const { error } = await admin.rpc('fn_ifood_cancel_erpos_order', { p_order_id: row.order_id, p_reason: `iFood: ${row.cancel_reason ?? 'cancelado'}` });
       if (error) throw new Error('Cancelar pedido no ERPOS: ' + error.message);
+      try {
+        const { data: oc } = await admin.from('orders').select('session_id').eq('id', row.order_id).maybeSingle();
+        const operador = await operadorDoPedido(admin, oc?.session_id ?? null);
+        if (operador) await restockLooseStockForOrder(admin, row.tenant_id, row.order_id, operador, MARCA_FICHA);
+      } catch (e) { log('WARN', 'funnel', 'estorno da ficha do iFood', { order: row.order_id, error: String(e) }); }
+      await cancelarNotaIfood(admin, row);
     }
     return;
   }
@@ -525,9 +652,12 @@ async function funnelAfterEvent(admin: Admin, c: Ctx, rowId: string) {
       await admin.from('order_items').update({ status: 'delivered', delivered_at: new Date().toISOString() }).eq('order_id', o.id).in('status', ['new', 'preparing', 'ready']);
       await admin.from('orders').update({ status: 'delivered', is_draft: false, updated_at: new Date().toISOString() }).eq('id', o.id);
     }
+    if (o && o.status !== 'cancelled') await baixarFichaIfood(admin, row, o.id);
+    await notaFiscalIfood(admin, c.cfg, row);
     return;
   }
   if (!row.order_id && funnelOn(c.cfg)) await criarPedidoFunil(admin, c, row);
+  else if (row.order_id) await notaFiscalIfood(admin, c.cfg, row);
 }
 
 /** A cada polling da loja no funil: pedidos que não entraram (ex.: caixa fechado), confirmações pendentes e avisos. */
@@ -731,6 +861,8 @@ function safeConfig(cfg: any, auths: any[]) {
     order_enabled: cfg.order_enabled === true,
     order_mode: cfg.order_mode === 'operate' || cfg.order_mode === 'funnel' ? cfg.order_mode : 'read_only',
     order_auto_confirm: cfg.order_auto_confirm !== false,
+    order_emit_nfce: cfg.order_emit_nfce === true,
+    order_nfce_momento: cfg.order_nfce_momento === 'conclusao' ? 'conclusao' : 'saida',
     order_merchant_ids: cfg.order_merchant_ids ?? [],
   };
 }
@@ -798,10 +930,49 @@ Deno.serve(async (req) => {
     const cfg = withSystemApp(cfgRow);
     const listAuths = async () => (await admin.from('ifood_pdv_auths').select('id, merchants, authorized_at').eq('tenant_id', tenantId).order('authorized_at', { ascending: false })).data ?? [];
 
+    // A autorização traz TODAS as lojas do login do Portal do Parceiro. Loja do iFood que já é de outra loja do ERPOS
+    // (no financeiro — fin_ifood_merchants — ou ligada lá em pedidos/entregas) não pode ser ligada aqui: os dois
+    // tenants disputariam os mesmos eventos (ack) e o pedido seria contado em dobro.
+    const lojasDeOutra = async (ids: string[]): Promise<Map<string, string>> => {
+      const out = new Map<string, string>();
+      const alvo = [...new Set(ids.filter(Boolean))];
+      if (!alvo.length) return out;
+      const [{ data: fin }, { data: pdv }] = await Promise.all([
+        admin.from('fin_ifood_merchants').select('tenant_id, merchant_id').in('merchant_id', alvo).neq('tenant_id', tenantId),
+        admin.from('ifood_pdv_config').select('tenant_id, shipping_merchant_id, order_enabled, order_merchant_ids').neq('tenant_id', tenantId),
+      ]);
+      const deTenant = new Map<string, string>();
+      for (const f of fin ?? []) deTenant.set(String(f.merchant_id), f.tenant_id);
+      for (const p of pdv ?? []) for (const id of alvo) {
+        if (p.shipping_merchant_id === id || (p.order_enabled && (p.order_merchant_ids ?? []).includes(id))) deTenant.set(id, p.tenant_id);
+      }
+      if (!deTenant.size) return out;
+      const { data: ts } = await admin.from('tenants').select('id, name').in('id', [...new Set(deTenant.values())]);
+      const nome = new Map((ts ?? []).map((t: any) => [t.id, t.name as string]));
+      for (const [id, t] of deTenant) out.set(id, nome.get(t) ?? 'outra loja');
+      return out;
+    };
+
+    // Lojas da autorização: /merchants (módulo Merchant) e, se vier vazio ou negado, as lojas do iFood desta loja do
+    // ERPOS no financeiro conferidas pelo polling de eventos (módulo Order).
+    const lojasDaAutorizacao = async (access: string, homolog: boolean) => {
+      const m = await listarLojas(access, homolog);
+      if (m.ok && m.merchants.length) return m;
+      const { data: fin } = await admin.from('fin_ifood_merchants').select('merchant_id, name').eq('tenant_id', tenantId);
+      const cand = (fin ?? []).map((f: any) => ({ id: String(f.merchant_id), name: String(f.name ?? f.merchant_id) }));
+      const merchants = cand.length ? await lojasPorEventos(access, homolog, cand) : [];
+      return merchants.length ? { ok: true, status: 200, data: null, raw: '', merchants } : m;
+    };
+
     if (action === 'get_config') {
       // Loja sem config ainda: com o app do sistema, a tela já mostra "Gerar código".
       const shown = cfg ?? withSystemApp({ tenant_id: tenantId });
-      return json({ success: true, config: safeConfig(shown, cfg ? await listAuths() : []), can_edit: isManager, system_app_available: hasSystemApp() });
+      const config = safeConfig(shown, cfg ? await listAuths() : []);
+      if (config?.merchants.length) {
+        const outra = await lojasDeOutra(config.merchants.map((m) => m.id));
+        config.merchants = config.merchants.map((m) => ({ ...m, outra_loja: outra.get(m.id) ?? null }));
+      }
+      return json({ success: true, config, can_edit: isManager, system_app_available: hasSystemApp() });
     }
 
     // ── Entregas (qualquer pessoa da loja: quem despacha é o caixa/expedição) ──
@@ -1052,6 +1223,58 @@ Deno.serve(async (req) => {
       const { data: o } = await admin.from('ifood_orders').select('*').eq('id', String(body.order_row_id ?? '')).eq('tenant_id', tenantId).maybeSingle();
       return o;
     };
+    // Pedidos de ANTES de ligar os pedidos: a API de Vendas (fin_ifood_sales) tem a lista; o GET /orders/{id} ainda
+    // devolve itens/cliente por ~15 dias (testado 05/10: 19/09 vinha, 18/09 já 404). Grava só ifood_orders/itens
+    // (situação = a da Venda), sem funil/estoque/cozinha. Pedido que já está em ifood_orders não é tocado.
+    if (action === 'order_backfill') {
+      if (!isManager) return errResp('Só admin ou supervisor importa pedidos antigos do iFood.', 403);
+      if (!cfg?.client_id) return errResp('App do iFood não configurado.');
+      const dias = Math.max(1, Math.min(30, Math.round(Number(body.dias) || 16)));
+      const desde = new Date(Date.now() - dias * 86400_000).toISOString();
+      const auths = await listAuths();
+      const lojas = [...new Set(auths.flatMap((a: any) => (a.merchants ?? []).map((m: any) => String(m.id))))];
+      if (!lojas.length) return errResp('Nenhuma loja do iFood autorizada no app ERPOS PDV.');
+      const { data: vendas, error: vErr } = await admin.from('fin_ifood_sales')
+        .select('merchant_id, sale_id, current_status, sales_channel, sale_created_at')
+        .eq('tenant_id', tenantId).in('merchant_id', lojas).gte('sale_created_at', desde).order('sale_created_at', { ascending: false }).limit(1000);
+      if (vErr) return errResp('Ler vendas: ' + vErr.message, 500);
+      const ids = (vendas ?? []).map((v: any) => String(v.sale_id));
+      const ja = new Set<string>();
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data } = await admin.from('ifood_orders').select('ifood_order_id').in('ifood_order_id', ids.slice(i, i + 200));
+        for (const r of data ?? []) ja.add(r.ifood_order_id);
+      }
+      const fila = (vendas ?? []).filter((v: any) => !ja.has(String(v.sale_id))).slice(0, 150);
+      const ctxs = new Map<string, Ctx | null>();
+      let importados = 0, semDetalhe = 0;
+      const erros: string[] = [];
+      const um = async (v: any) => {
+        if (!ctxs.has(v.merchant_id)) ctxs.set(v.merchant_id, await ctxFor(admin, cfg, v.merchant_id));
+        const c = ctxs.get(v.merchant_id);
+        if (!c) { semDetalhe++; return; }
+        const r = await call(admin, c, 'GET', `/order/v1.0/orders/${v.sale_id}`);
+        if (!r.ok || !r.data) { semDetalhe++; if (r.status !== 404 && erros.length < 3) erros.push(apiError(r, 'Detalhe')); return; }
+        const now = new Date().toISOString();
+        const status = String(v.current_status ?? '').toUpperCase() === 'CANCELLED' ? 'cancelled' : 'concluded';
+        const { data: row, error } = await admin.from('ifood_orders').upsert({
+          tenant_id: tenantId, merchant_id: v.merchant_id, ifood_order_id: String(v.sale_id), status,
+          ...orderRowFromDetails(r.data), sales_channel: r.data?.salesChannel ?? v.sales_channel ?? null,
+          details_at: now, updated_at: now,
+        }, { onConflict: 'ifood_order_id', ignoreDuplicates: true }).select('id').maybeSingle();
+        if (error) { if (erros.length < 3) erros.push('Gravar: ' + error.message); return; }
+        if (!row) return; // entrou pelo polling enquanto importava
+        const itens = orderItemsFromDetails(r.data).map((i: any) => ({ ...i, tenant_id: tenantId, order_row_id: row.id }));
+        if (itens.length) {
+          const { error: iErr } = await admin.from('ifood_order_items').insert(itens);
+          if (iErr && erros.length < 3) erros.push('Itens: ' + iErr.message);
+        }
+        importados++;
+      };
+      for (let i = 0; i < fila.length; i += 5) await Promise.all(fila.slice(i, i + 5).map(um));
+      log('INFO', 'order', 'backfill', { tenantId, dias, vendas: vendas?.length ?? 0, importados, semDetalhe });
+      return json({ success: true, importados, sem_detalhe: semDetalhe, ja_tinha: ja.size, restantes: Math.max(0, (vendas ?? []).length - ja.size - fila.length), erros });
+    }
+
     if (action === 'order_refresh') {
       const o = await getIfoodOrder();
       if (!o) return errResp('Pedido não encontrado.');
@@ -1342,6 +1565,8 @@ Deno.serve(async (req) => {
         const id = String(body.shipping_merchant_id ?? '').trim();
         const m = (await listAuths()).flatMap((a: any) => a.merchants ?? []).find((x: any) => x.id === id);
         if (id && !m) return errResp('Essa loja do iFood ainda não autorizou o app ERPOS PDV.');
+        const dona = id ? (await lojasDeOutra([id])).get(id) : undefined;
+        if (dona) return errResp(`A loja do iFood "${m?.name ?? id}" é da loja "${dona}" no ERPOS — escolha uma loja do iFood desta loja.`);
         if (id !== (cfg.shipping_merchant_id ?? '') && await temAtivas()) return errResp(MSG_ATIVAS);
         upd.shipping_merchant_id = id || null; upd.shipping_merchant_name = m?.name ?? null;
       }
@@ -1352,9 +1577,19 @@ Deno.serve(async (req) => {
         if (body.order_mode === 'funnel' && cfg.order_mode !== 'funnel') upd.funnel_since = new Date().toISOString();
       }
       if (typeof body.order_auto_confirm === 'boolean') upd.order_auto_confirm = body.order_auto_confirm;
-      if (Array.isArray(body.order_merchant_ids)) {
-        const ok = new Set((await listAuths()).flatMap((a: any) => (a.merchants ?? []).map((m: any) => m.id)));
-        const ids = body.order_merchant_ids.map(String).filter((id: string) => ok.has(id));
+      if (typeof body.order_emit_nfce === 'boolean') upd.order_emit_nfce = body.order_emit_nfce;
+      if (body.order_nfce_momento === 'saida' || body.order_nfce_momento === 'conclusao') upd.order_nfce_momento = body.order_nfce_momento;
+      let aviso: string | null = null;
+      const pedidosLigados = (upd.order_enabled ?? cfg.order_enabled) === true;
+      if (Array.isArray(body.order_merchant_ids) || (pedidosLigados && typeof body.order_enabled === 'boolean')) {
+        const ok = new Map<string, string>((await listAuths()).flatMap((a: any) => (a.merchants ?? []).map((m: any) => [m.id, m.name])));
+        const pedidos: string[] = Array.isArray(body.order_merchant_ids) ? body.order_merchant_ids.map(String) : (cfg.order_merchant_ids ?? []);
+        let ids = pedidos.filter((id) => ok.has(id));
+        const outra = await lojasDeOutra(ids);
+        if (outra.size) {
+          aviso = 'Não ligado aqui (é de outra loja do ERPOS): ' + [...outra].map(([id, dona]) => `${ok.get(id)} → ${dona}`).join('; ') + '.';
+          ids = ids.filter((id) => !outra.has(id));
+        }
         upd.order_merchant_ids = ids;
       }
       if (typeof body.shipping_enabled === 'boolean') {
@@ -1364,7 +1599,7 @@ Deno.serve(async (req) => {
       }
       const { error } = await admin.from('ifood_pdv_config').update(upd).eq('id', cfg.id);
       if (error) return errResp('Salvar: ' + error.message, 500);
-      return json({ success: true });
+      return json({ success: true, aviso });
     }
 
     // App centralizado: token por client_credentials e a lista das lojas que o app enxerga (sem código).
@@ -1435,7 +1670,7 @@ Deno.serve(async (req) => {
       }, cfg.homologation_mode === true);
       if (!r.ok || !r.data?.accessToken) return errResp(apiError(r, 'Autorizar'));
       const access = r.data.accessToken as string;
-      const { merchants } = await listarLojas(access, cfg.homologation_mode === true);
+      const { merchants } = await lojasDaAutorizacao(access, cfg.homologation_mode === true);
       const now = new Date().toISOString();
       const { error: aErr } = await admin.from('ifood_pdv_auths').insert({
         tenant_id: tenantId, access_token: access, refresh_token: r.data.refreshToken ?? null,
@@ -1445,9 +1680,29 @@ Deno.serve(async (req) => {
       if (aErr) return errResp('Gravar autorização: ' + aErr.message, 500);
       const upd: Record<string, unknown> = { user_code: null, auth_verifier_secret: null, updated_at: now };
       // Uma loja só na autorização e nenhuma escolhida ainda → já fica escolhida.
-      if (!cfg.shipping_merchant_id && merchants.length === 1) Object.assign(upd, { shipping_merchant_id: merchants[0].id, shipping_merchant_name: merchants[0].name });
+      if (!cfg.shipping_merchant_id && merchants.length === 1 && !(await lojasDeOutra([merchants[0].id])).size) Object.assign(upd, { shipping_merchant_id: merchants[0].id, shipping_merchant_name: merchants[0].name });
       await admin.from('ifood_pdv_config').update(upd).eq('id', cfg.id);
-      return json({ success: true, merchants });
+      const aviso = merchants.length ? null
+        : 'O iFood aceitou o código, mas a loja ainda não apareceu — pode levar alguns minutos. Espere um pouco e clique em "Atualizar lojas". Se continuar sem loja, confira no Portal do Parceiro (Integrações) se o ERPOS PDV ficou Ativo na loja certa.';
+      return json({ success: true, merchants, aviso });
+    }
+
+    // Renova o acesso de cada autorização e relê as lojas que ela enxerga (loja liberada depois, ou autorização que
+    // voltou sem nenhuma loja — 05/10 Paranaguá: Apps do portal mostrava o ERPOS PDV nas 3 lojas e /merchants vinha []).
+    if (action === 'refresh_merchants') {
+      if (!cfg?.client_id) return errResp('App do iFood não configurado.');
+      const auths = (await admin.from('ifood_pdv_auths').select('*').eq('tenant_id', tenantId)).data ?? [];
+      if (!auths.length) return errResp('A loja ainda não autorizou o app ERPOS PDV.');
+      let total = 0;
+      for (const a of auths) {
+        a.token_expires_at = null; // força renovar
+        const access = await getToken(admin, cfg, a);
+        const m = await lojasDaAutorizacao(access, cfg.homologation_mode === true);
+        if (!m.ok && m.status !== 403) return errResp(apiError(m, 'Listar lojas'));
+        await admin.from('ifood_pdv_auths').update({ merchants: m.merchants, updated_at: new Date().toISOString() }).eq('id', a.id);
+        total += m.merchants.length;
+      }
+      return json({ success: true, total, aviso: total ? null : 'O iFood ainda não libera nenhuma loja para o ERPOS PDV. Loja recém-autorizada pode levar alguns minutos — tente de novo daqui a pouco. Se continuar, confira no Portal do Parceiro (Integrações) se o ERPOS PDV está Ativo na loja.' });
     }
 
     if (action === 'delete_config') {

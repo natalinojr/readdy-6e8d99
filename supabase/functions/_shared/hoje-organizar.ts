@@ -65,8 +65,10 @@ export interface ItemHoje {
 /** Trabalho acumulado: não é "fazer agora", é "pôr em dia" (sem ficar eternamente no topo). */
 // nota_nao_lancada NÃO entra: o cron só cria quando o boleto da nota já venceu ou vence em 3 dias (é "agora").
 const ACUMULADO = new Set(['item_sem_classe', 'conta_sem_dre']);
-/** Avisos sem ação obrigatória: ficam em "pode esperar" (o OK silencia até piorar). */
-const AVISO = new Set(['estoque_critico']);
+/** Avisos sem ação obrigatória: ficam em "pode esperar" (o OK silencia até piorar).
+ *  fique_de_olho (2026-10-05) é ciência, não tarefa: nunca entra no número vermelho de "Agora" nem segura o
+ *  "Tudo em dia"; a tela o mostra numa seção própria (FiqueDeOlho.tsx), fora da lista que fica recolhida. */
+const AVISO = new Set(['estoque_critico', 'fique_de_olho']);
 /** Dias antes do vencimento em que a conta volta para "agora". */
 export const DIAS_ANTES = 3;
 /** Boleto pedido há este tanto de dias sem chegar → volta para "agora" (pedir de novo). Mesmo prazo

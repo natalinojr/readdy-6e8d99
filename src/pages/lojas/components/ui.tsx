@@ -14,8 +14,8 @@ export const horaCurta = (iso: string) => new Date(iso).toLocaleTimeString('pt-B
 
 const diaCurto = (dia: string) => `${dia.slice(8, 10)}/${dia.slice(5, 7)}`;
 
-/** ▲ 12% / ▼ 8% / — sem base. Seta + texto (nunca só a cor). */
-export function Variacao({ pct, escuro = false, titulo }: { pct: number | null; escuro?: boolean; titulo?: string }) {
+/** ▲ 12% / ▼ 8% / — sem base. Seta + texto (nunca só a cor). Com `onPorQue`, tocar abre "Por que mudou?" (2026-10-05). */
+export function Variacao({ pct, escuro = false, titulo, onPorQue }: { pct: number | null; escuro?: boolean; titulo?: string; onPorQue?: () => void }) {
   if (pct === null) {
     return (
       <span title={titulo ?? 'Sem base de comparação (a loja não vendia no período anterior)'}
@@ -28,9 +28,16 @@ export function Variacao({ pct, escuro = false, titulo }: { pct: number | null; 
   const cor = escuro
     ? (sobe ? 'bg-emerald-400/15 text-emerald-300' : 'bg-red-400/15 text-red-300')
     : (sobe ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700');
+  const cls = `inline-flex items-center gap-0.5 text-[11px] font-bold rounded-full px-2 py-0.5 whitespace-nowrap tabular-nums ${cor}`;
+  const texto = <>{sobe ? '▲' : '▼'} {Math.abs(pct).toFixed(0)}%</>;
+  if (!onPorQue) return <span title={titulo} className={cls}>{texto}</span>;
+  // Fica dentro de cartão/linha que também é clicável (abre a loja): span com papel de botão, sem propagar o clique.
+  const abrir = (e: { stopPropagation: () => void }) => { e.stopPropagation(); onPorQue(); };
   return (
-    <span title={titulo} className={`inline-flex items-center gap-0.5 text-[11px] font-bold rounded-full px-2 py-0.5 whitespace-nowrap tabular-nums ${cor}`}>
-      {sobe ? '▲' : '▼'} {Math.abs(pct).toFixed(0)}%
+    <span role="button" tabIndex={0} title={`${titulo ? `${titulo} · ` : ''}Por que mudou?`} aria-label={`${sobe ? 'Alta' : 'Queda'} de ${Math.abs(pct).toFixed(0)}%. Por que mudou?`}
+      onClick={abrir} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrir(e); } }}
+      className={`${cls} cursor-pointer hover:brightness-95 ring-1 ring-inset ring-black/5`}>
+      {texto}<i className="ri-question-line text-[12px] opacity-70" />
     </span>
   );
 }

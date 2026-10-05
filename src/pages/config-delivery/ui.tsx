@@ -5,8 +5,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 export {
   btn, Faixa, CartaoAcao, CartaoBarra, SecaoTitulo, Chips, Vazio, Nota, Etiqueta, MenuMais, semAcento, brl, brlInteiro,
   type ItemFaixa, type TomCartao, type OpcaoChip, type ItemMenu,
-} from '../estoque/components/ui/EstoqueUi';
-export { default as Folha } from '../estoque/components/inicio/Folha';
+} from '@/components/kit';
+export { Folha } from '@/components/kit';
 
 /** Interruptor liga/desliga (verde quando ligado). */
 export function Interruptor({ ligado, onChange, rotulo, pequeno = false, disabled = false }: {

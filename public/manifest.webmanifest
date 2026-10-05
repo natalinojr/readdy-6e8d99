@@ -1,9 +1,9 @@
 {
-  "name": "ERPOS — Tarefas",
+  "name": "ERPOS",
   "short_name": "ERPOS",
-  "description": "Gestão de tarefas da equipe: suas tarefas do dia, checklists e prazos.",
+  "description": "Gestão da loja: o que precisa de você hoje, vendas, estoque, financeiro e equipe.",
   "id": "/",
-  "start_url": "/tarefas",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait-primary",

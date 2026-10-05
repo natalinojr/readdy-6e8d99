@@ -19,13 +19,16 @@ const PDVCaixaPage = lazy(() => import('../pages/pdv/caixa/page'));
 const KDSPage = lazy(() => import('../pages/kds/page'));
 const GestorPedidosPage = lazy(() => import('../pages/gestor-pedidos/page'));
 const GestorEntregasPage = lazy(() => import('../pages/gestor-entregas/page'));
+const IfoodPage = lazy(() => import('../pages/ifood/page'));
 const GarcomPage = lazy(() => import('../pages/pdv/garcom/page'));
 const MesasPage = lazy(() => import('../pages/mesas/page'));
 const RelatoriosPage = lazy(() => import('../pages/relatorios/page'));
 const EstoquePage = lazy(() => import('../pages/estoque/page'));
-const MesaClientePage = lazy(() => import('../pages/mesa/page'));
+// Página antiga (pages/mesa/page.tsx) aposentada em 2026-10-05: /mesa/:mesaId só avisa que o QR é antigo.
+const MesaClientePage = lazy(() => import('../pages/mesa/QrAntigo'));
 const AutoatendimentoPage = lazy(() => import('../pages/autoatendimento/page'));
 const TotemPage = lazy(() => import('../pages/totem/page'));
+const SenhasTvPage = lazy(() => import('../pages/senhas/page'));
 const ConfiguracoesPage = lazy(() => import('../pages/configuracoes/page'));
 const ConfigDeliveryPage = lazy(() => import('../pages/config-delivery/page'));
 const UsuariosPage = lazy(() => import('../pages/usuarios/page'));
@@ -33,7 +36,8 @@ const AuditoriaPage = lazy(() => import('../pages/auditoria/page'));
 const ClientesPage = lazy(() => import('../pages/clientes/page'));
 const PaginaEmConstrucao = lazy(() => import('../pages/common/PaginaEmConstrucao'));
 const OnboardingPage = lazy(() => import('../pages/onboarding/page'));
-const InvitePage = lazy(() => import('../pages/invite/page'));
+// Página antiga (pages/invite/page.tsx) aposentada em 2026-10-05: o convite atual é /onboarding?invite=<código>.
+const InvitePage = lazy(() => import('../pages/invite/ConviteAntigo'));
 const PerfilPage = lazy(() => import('../pages/perfil/page'));
 const AjudaPage = lazy(() => import('../pages/ajuda/page'));
 const PedidosPage = lazy(() => import('../pages/pedidos/page'));
@@ -95,6 +99,8 @@ const routes: RouteObject[] = [
   { path: '/clube/:storeSlug', element: <ClubePage /> },
   { path: '/autoatendimento', element: <AutoatendimentoPage /> },
   { path: '/totem/:token', element: <TotemPage /> },
+  // Painel de senhas na TV (pública, por token próprio; só mostra números de senha)
+  { path: '/senhas/:token', element: <SenhasTvPage /> },
   {
     path: '/',
     element: <AppLayout />,
@@ -116,6 +122,7 @@ const routes: RouteObject[] = [
       { path: 'kds', element: <KDSPage /> },
       { path: 'gestor-pedidos', element: <GestorPedidosPage /> },
       { path: 'gestor-entregas', element: <GestorEntregasPage /> },
+      { path: 'ifood', element: <IfoodPage /> },
       { path: 'mesas', element: <MesasPage /> },
       { path: 'relatorios', element: <RelatoriosPage /> },
       { path: 'pedidos', element: <PedidosPage /> },
@@ -152,7 +159,8 @@ const routes: RouteObject[] = [
     ],
   },
   { path: '/selecionar-loja', element: <SelecionarLojaPage /> },
-  { path: '/supabase-debug', element: <SupabaseDebugPage /> },
+  // Diagnóstico do banco: só em desenvolvimento (em produção cai em "Não achei essa página").
+  ...(import.meta.env.DEV ? [{ path: '/supabase-debug', element: <SupabaseDebugPage /> }] : []),
   // Só em desenvolvimento: Tarefas com dados fictícios, sem login (testar layout/celular).
   ...(import.meta.env.DEV ? [{ path: '/dev/tarefas', element: <TarefasPage /> }] : []),
   ...(import.meta.env.DEV ? [{ path: '/dev/jogos', element: <JogosDemoPage /> }] : []),

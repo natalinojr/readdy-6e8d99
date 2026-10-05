@@ -18,10 +18,17 @@ interface Props {
 }
 
 const chamados: { id: TipoChamado; label: string; desc: string; icon: string; cor: string }[] = [
-  { id: 'atendimento', label: 'Chamar Garçom', desc: 'Solicitar atendimento na mesa', icon: 'ri-service-line', cor: 'bg-amber-500 hover:bg-amber-600' },
-  { id: 'conta', label: 'Pedir a Conta', desc: 'Encerrar e pagar com o atendente', icon: 'ri-bank-card-line', cor: 'bg-emerald-500 hover:bg-emerald-600' },
-  { id: 'ajuda', label: 'Precisando de Ajuda', desc: 'Alguma dúvida ou problema na mesa', icon: 'ri-question-line', cor: 'bg-zinc-600 hover:bg-zinc-700' },
+  { id: 'atendimento', label: 'Chamar Garçom', desc: 'Veja como chamar o atendimento', icon: 'ri-service-line', cor: 'bg-amber-500 hover:bg-amber-600' },
+  { id: 'conta', label: 'Pedir a Conta', desc: 'Veja como encerrar e pagar', icon: 'ri-bank-card-line', cor: 'bg-emerald-500 hover:bg-emerald-600' },
+  { id: 'ajuda', label: 'Precisando de Ajuda', desc: 'Veja como tirar uma dúvida', icon: 'ri-question-line', cor: 'bg-zinc-600 hover:bg-zinc-700' },
 ];
+
+// Estes botões ainda não avisam ninguém (não existe chamado gravado no sistema): só orientam a pessoa.
+const ORIENTACAO: Record<TipoChamado, string> = {
+  atendimento: 'Por favor, chame um garçom pessoalmente.',
+  conta: 'Por favor, peça a conta diretamente a um garçom ou no caixa.',
+  ajuda: 'Por favor, fale com um garçom pessoalmente.',
+};
 
 export default function ChamarGarcomPanel({
   mesaNumero,
@@ -75,15 +82,15 @@ export default function ChamarGarcomPanel({
     <div className="flex flex-col px-4 py-6 pb-28 gap-4">
       <div className="text-center mb-1">
         <h2 className="text-base font-bold text-zinc-900">Precisa de algo?</h2>
-        <p className="text-xs text-zinc-500 mt-1">Toque em um botão e o garçom vai até você</p>
+        <p className="text-xs text-zinc-500 mt-1">Estes botões ainda não avisam o garçom — chame alguém da equipe pessoalmente</p>
       </div>
 
       {enviado && (
-        <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-2xl">
-          <i className="ri-checkbox-circle-fill text-emerald-500 text-xl flex-shrink-0" />
+        <div className="flex items-center gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-2xl">
+          <i className="ri-information-fill text-amber-500 text-xl flex-shrink-0" />
           <div>
-            <p className="text-xs font-bold text-emerald-700">Chamado enviado!</p>
-            <p className="text-[10px] text-emerald-600">O garçom foi notificado e está a caminho</p>
+            <p className="text-xs font-bold text-amber-800">Ainda não conseguimos avisar o garçom por aqui</p>
+            <p className="text-[10px] text-amber-700">{ORIENTACAO[enviado]}</p>
           </div>
         </div>
       )}

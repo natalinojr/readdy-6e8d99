@@ -21,7 +21,9 @@ const n = (v: unknown) => Number(v ?? 0);
 export default function CancelamentosIfood({ onFechar, irPara }: AcaoProps) {
   const { user } = useAuth();
   const tenantId = user?.tenantId ?? '';
-  const verTela = rotaLiberada('/relatorios', useAcessoAcoes());
+  const acesso = useAcessoAcoes();
+  const verTela = rotaLiberada('/relatorios', acesso);
+  const verIfood = rotaLiberada('/ifood', acesso);
   const { baloes, bot, eu, painel } = useRoteiro();
   const [passo, setPasso] = useState<'periodo' | 'carregando' | 'fim'>('periodo');
   const iniciou = useRef(false);
@@ -109,7 +111,7 @@ export default function CancelamentosIfood({ onFechar, irPara }: AcaoProps) {
       {(passo === 'fim' || !tenantId) && (
         <Fim onFechar={onFechar} acoes={tenantId ? [
           { label: 'Outro período', onClick: () => { bot('Qual período?'); setPasso('periodo'); } },
-          ...(verTela ? [{ label: 'Abrir Relatórios', onClick: () => irPara('/relatorios') }] : []),
+          ...(verIfood ? [{ label: 'Abrir resultados do iFood', onClick: () => irPara('/ifood?aba=resultados') }] : verTela ? [{ label: 'Abrir Relatórios', onClick: () => irPara('/relatorios') }] : []),
         ] : []} />
       )}
     </Roteiro>

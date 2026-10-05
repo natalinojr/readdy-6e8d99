@@ -47,6 +47,9 @@ export interface PedidoIfood {
   cancelado: boolean;
   parcial: boolean;
   motivo: string | null;
+  /** Pedido da API de Vendas que o iFood ainda não fechou (sem comissão/taxa calculadas): o "líquido" dele
+   * ainda não desconta as taxas. Quem precisa do valor final deve estimar (área iFood). */
+  semTaxas?: boolean;
 }
 
 export interface Resumo {
@@ -212,7 +215,7 @@ const MOTIVO_API: Record<number, string> = {
 /** Pedidos da API de Vendas no formato do dashboard (mesmas contas da conciliação). */
 export function montarPedidosApi(sales: SaleFinRow[]): PedidoIfood[] {
   const rows: EntryRow[] = [];
-  const extra = new Map<string, { cancelado: boolean; bruto: number; motivo: string | null; pagamento: string | null; entrega: number }>();
+  const extra = new Map<string, { semTaxas: boolean; cancelado: boolean; bruto: number; motivo: string | null; pagamento: string | null; entrega: number }>();
   for (const s of sales) {
     const antes = rows.length;
     const base = { import_id: s.merchant_id, order_id: s.sale_id, order_created_at: s.sale_created_at, impacto_repasse: true, metodo_pagamento: null, motivo: null };
@@ -244,7 +247,9 @@ export function montarPedidosApi(sales: SaleFinRow[]): PedidoIfood[] {
     }
     const cod = (s.events ?? []).map((e) => Number(e?.metadata?.cancelCode)).find((c) => c > 0) ?? null;
     const metodo = String(s.payment_methods?.[0]?.method ?? '').toUpperCase();
+    const temTaxa = (s.billing_entries ?? []).some((b) => /COMMISSION|TRANSACTION_FEE/.test(String(b.name ?? '')) && Math.abs(Number(b.value) || 0) >= 0.005);
     extra.set(s.sale_id, {
+      semTaxas: !cancelado && !temTaxa,
       cancelado,
       bruto,
       motivo: cod ? `${cod} - ${MOTIVO_API[cod] ?? 'Cancelamento'}` : null,
@@ -261,6 +266,7 @@ export function montarPedidosApi(sales: SaleFinRow[]): PedidoIfood[] {
     if (!x) continue;
     if (x.pagamento) p.pagamento = x.pagamento;
     p.entregaCliente = x.entrega;
+    if (x.semTaxas) p.semTaxas = true;
     if (x.cancelado) {
       // A API zera os lançamentos do cancelado; a conciliação guarda o valor perdido nas Entradas.
       p.cancelado = true;

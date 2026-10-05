@@ -6,11 +6,12 @@ import {
   META_PEDIDO_MIN, ROTULO_CANAL, canalPedido, diaBR, ehAtivo, ehCancelado, ehNaoPago, ehSemNota, notaViva, numeroCurto,
   ondeQuem, situacaoPedido, tempoFases, entregaDoPedido, canalFiscal,
 } from '@/lib/pedidosRegras';
-import { Etiqueta, MenuMais, brl, btn } from '@/pages/estoque/components/ui/EstoqueUi';
+import { Etiqueta, MenuMais, brl, btn } from '@/components/kit';
 import type { TipoImpressao } from '../../lib/acoesTipos';
 import EmitirNfModal from '../EmitirNfModal';
 import { clienteNome } from '../utils';
 import PassosPedido from './PassosPedido';
+import DetalheIfood from './DetalheIfood';
 import PagosJuntos, {
   Bloco, Casca, ContaBloco, Linha, NotaDoc, PagamentoBloco, SeloSituacao, diaDoPedido, emitirNotas, formaPagamentoNome,
   hhmm, rotuloDia, useContas, type PropsDetalhe,
@@ -22,6 +23,8 @@ import PagosJuntos, {
 // Pedido "pagos juntos" (mais de um pedido no grupo) vira <PagosJuntos />.
 
 export default function PedidoDetalhe(props: PropsDetalhe) {
+  // iFood só acompanhado (não existe em orders): bloco próprio, sem as ações do PDV
+  if (props.pedido.ifoodExterno) return <DetalheIfood {...props} />;
   if ((props.pedido.pedidosOriginais?.length ?? 0) > 1) return <PagosJuntos {...props} />;
   return <DetalheUnico {...props} />;
 }
@@ -251,6 +254,9 @@ function DetalheUnico(props: PropsDetalhe) {
           <SeloSituacao sit={sit} />
           {sit.atrasado && sit.tipo !== 'parado' && sit.tipo !== 'cancelado' && <Etiqueta tom="red">passou da meta ({META_PEDIDO_MIN})</Etiqueta>}
           {pedido.cortesia && <Etiqueta tom="amber">Cortesia</Etiqueta>}
+          {pedido.deliveryPlatform === 'ifood' && (
+            <span className="inline-flex items-center gap-1 text-[10.5px] font-bold rounded-md px-1.5 py-0.5 bg-red-50 text-[#EA1D2C]"><i className="ri-store-2-line" />iFood</span>
+          )}
         </div>
 
         {/* O que falta */}

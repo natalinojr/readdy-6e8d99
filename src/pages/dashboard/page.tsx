@@ -31,6 +31,7 @@ import { useVendasHoraComparativo } from '@/hooks/useVendasHoraComparativo';
 import { todayBrasilia, somarDias } from '@/lib/dateUtils';
 import { diasComparacao, montarVendasHora } from '@/lib/vendasHoraComparativo';
 import { useComparacoesLigadas } from '@/components/feature/ComparacaoVendasHora';
+import PorQueMudouFolha from '@/components/feature/PorQueMudouFolha';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 
 const fmt = (v: number) =>
@@ -40,6 +41,9 @@ const pct = (current: number, prev: number) =>
   prev > 0 ? ((current - prev) / prev) * 100 : undefined;
 
 const plural = (n: number, s: string, p = `${s}s`) => (n === 1 ? s : p);
+
+// "Por que mudou?": só a comparação com a semana passada interessa (o hook busca só o que está ligado).
+const LIGA_SO_SEMANA = { ontem: false, semana: true, mes: false };
 
 // "sex passada" / "sáb passado" — comparação com o mesmo dia da semana anterior.
 const ROTULO_SEMANA = ['dom passado', 'seg passada', 'ter passada', 'qua passada', 'qui passada', 'sex passada', 'sáb passado'];
@@ -96,6 +100,7 @@ export default function Dashboard() {
   const [refreshLento, setRefreshLento] = useState(0);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [editandoMetas, setEditandoMetas] = useState(false);
+  const [porQueAberto, setPorQueAberto] = useState(false);
 
   const reloadAoVivo = useCallback(() => {
     reload();
@@ -210,18 +215,28 @@ export default function Dashboard() {
   const diasComp = useMemo(() => diasComparacao(diaLoja), [diaLoja]);
   // Só depois do painel: antes dele o dia da loja ainda não é conhecido (buscaria o dia errado à toa).
   const seriesComp = useVendasHoraComparativo(painel ? diasComp : null, comparacoes);
+  // Série da semana passada para a folha "Por que mudou?" (mesma busca do gráfico: o cache evita repetir; só com a folha aberta).
+  const serieSemanaPorQue = useVendasHoraComparativo(painel && porQueAberto && modo !== 'sessao' ? diasComp : null, LIGA_SO_SEMANA);
   const horaAgoraNum = horaDoDia(new Date(), diaLoja);
+  // Vendas de hoje por hora (PDV e iFood), 'HH' → R$: alimentam o gráfico e a folha "Por que mudou?".
+  const pdvHora: Record<string, number> = {};
+  for (const h of m?.vendas_por_hora ?? []) {
+    const hh = h.hora.split(':')[0];
+    pdvHora[hh] = (pdvHora[hh] ?? 0) + Number(h.valor);
+  }
+  const ifoodHoraHoje: Record<string, number> = {};
+  for (const [h, v] of Object.entries(ifDia?.porHora ?? {})) {
+    const hh = String(h).padStart(2, '0');
+    ifoodHoraHoje[hh] = (ifoodHoraHoje[hh] ?? 0) + v;
+  }
+  const serieHojePorQue = (() => {
+    const o: Record<string, number> = { ...pdvHora };
+    for (const [k, v] of Object.entries(ifoodHoraHoje)) o[k] = (o[k] ?? 0) + v;
+    return o;
+  })();
   const vendasPorHora = (() => {
-    const pdv: Record<string, number> = {};
-    for (const h of m?.vendas_por_hora ?? []) {
-      const hh = h.hora.split(':')[0];
-      pdv[hh] = (pdv[hh] ?? 0) + Number(h.valor);
-    }
-    const ifoodHora: Record<string, number> = {};
-    for (const [h, v] of Object.entries(ifDia?.porHora ?? {})) {
-      const hh = String(h).padStart(2, '0');
-      ifoodHora[hh] = (ifoodHora[hh] ?? 0) + v;
-    }
+    const pdv = pdvHora;
+    const ifoodHora = ifoodHoraHoje;
     const ligadas = Object.fromEntries(Object.entries(seriesComp).filter(([k]) => comparacoes[k as keyof typeof comparacoes]));
     return montarVendasHora(pdv, ifoodHora, ligadas, horaAgoraNum);
   })();
@@ -440,6 +455,7 @@ export default function Dashboard() {
           horaAgora={horaAgora}
           podeEditarMetas={podeEditarMetas}
           onEditarMetas={() => setEditandoMetas(true)}
+          onPorQue={sp ? () => setPorQueAberto(true) : undefined}
         />
 
         <div className="rounded-2xl border border-zinc-200 bg-white p-4 flex flex-col gap-1.5">
@@ -449,7 +465,7 @@ export default function Dashboard() {
           </span>
           <p className="text-xl sm:text-2xl font-bold tabular-nums tracking-tight text-zinc-900">{pedidosHoje}</p>
           <div className="flex flex-wrap gap-1">
-            <Variacao pct={sp && pedSemana > 0 ? pct(pedidosHoje, pedSemana) : undefined} rotulo={rotuloSemana} />
+            <Variacao pct={sp && pedSemana > 0 ? pct(pedidosHoje, pedSemana) : undefined} rotulo={rotuloSemana} onPorQue={sp ? () => setPorQueAberto(true) : undefined} />
           </div>
           <p className="text-[11px] text-zinc-500 mt-auto pt-1.5 border-t border-zinc-100">
             Ticket <b className="text-zinc-800 tabular-nums">{fmt(ticketMedio)}</b>
@@ -542,6 +558,24 @@ export default function Dashboard() {
 
       {/* 7. Últimos pedidos */}
       <UltimosPedidos pedidos={m?.ultimos_pedidos ?? []} />
+
+      {modo !== 'sessao' && painel?.semana_passada.dia && painel.semana_passada.ate && (
+        <PorQueMudouFolha
+          aberta={porQueAberto}
+          onFechar={() => setPorQueAberto(false)}
+          tenantId={user?.tenantId}
+          periodo={{ d1: painel.dia, d2: painel.dia, c1: painel.semana_passada.dia, c2: painel.semana_passada.dia, corte: painel.semana_passada.ate }}
+          rotulo={rotuloSemana}
+          umDia
+          atual={{ faturamento: faturamentoHoje, pedidos: pedidosHoje }}
+          anterior={{ faturamento: fatSemana, pedidos: pedSemana }}
+          serieAtual={serieHojePorQue}
+          serieAnterior={serieSemanaPorQue.semana ?? null}
+          horaCorte={horaAgoraNum}
+          ifood={{ atual: ifTot, anterior: ifSemana ? ifSemana.total : temIfoodRef.current?.tem === false ? 0 : null }}
+          aguardando={!serieSemanaPorQue.semana || !ifSemanaPronto}
+        />
+      )}
 
       {editandoMetas && user?.tenantId && (
         <MetasModal

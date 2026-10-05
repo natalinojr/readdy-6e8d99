@@ -115,3 +115,21 @@ export function calcularValores(pedidos: PedidoValores[], itens: ItemValores[]):
 
   return { unit, gross, grossTotal, discount, extras, discPerItem, expectedTotal };
 }
+
+export interface PagamentoNota { code: string; label: string; paid: number; troco: number }
+
+/**
+ * Pedido do iFood: o que não passou pelo caixa (pago no app, ou o cupom que o iFood banca no cobrado pela loja) vem
+ * pelo repasse do iFood → linha tPag 99 "iFood - online" (pedido do dono, 05/10/2026) com a diferença até o valor da
+ * venda. Pago a mais (ex.: taxa de serviço do iFood cobrada em dinheiro) fica para o ajuste geral da nota.
+ */
+export function completarPagamentoIfood(pagamentos: PagamentoNota[], valorVenda: number): PagamentoNota[] {
+  const out = pagamentos.map((p) => ({ ...p }));
+  const falta = round2(valorVenda - out.reduce((s, p) => s + p.paid - p.troco, 0));
+  if (falta >= 0.01) {
+    const cur = out.find((p) => p.code === '99' && p.label === 'iFood - online');
+    if (cur) cur.paid = round2(cur.paid + falta);
+    else out.push({ code: '99', label: 'iFood - online', paid: falta, troco: 0 });
+  }
+  return out;
+}

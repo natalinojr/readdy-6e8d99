@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { kindConfig } from '@/contexts/PendenciasContext';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
+import BoletoPorFoto from '@/components/feature/assistente/BoletoPorFoto';
 import TarefasPendencia, { minhasTarefasPendentes } from '@/components/feature/assistente/TarefasPendencia';
 import { chamarPedidos } from '@/pages/receber/pedidos/api';
 import { LigarSangria, ProcurarNota, ResumoCompra } from '@/components/feature/assistente/PendenciaDireta';
@@ -556,6 +557,10 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
                   className={p.payload?.vencida ? SECUNDARIO : PRINCIPAL}>
                   <i className="ri-barcode-line" /> Mandar o boleto
                 </button>
+                {/* Foto/PDF do boleto no próprio cartão (2026-10-05): lê, confere valor e vencimento e guarda na conta. */}
+                {typeof p.payload?.bill_id === 'string' && (
+                  <BoletoPorFoto billIds={[p.payload.bill_id]} className={SECUNDARIO} onFeito={() => { recarregar(); onMudou?.(); }} />
+                )}
                 {typeof p.payload?.bill_id === 'string' && (
                   <button onClick={() => setExpandida((x) => (x === p.id ? null : p.id))} disabled={busy}
                     className={expandida === p.id ? `${SECUNDARIO} bg-violet-100` : p.payload?.vencida ? PRINCIPAL : SECUNDARIO}>

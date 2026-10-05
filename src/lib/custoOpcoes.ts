@@ -91,6 +91,15 @@ async function resolver(tenantId: string, escolhidas: Array<{ order_item_id: str
   return out;
 }
 
+/** Custo de 1 unidade de cada opção (mesma regra da baixa). Opção sem insumo fica fora do mapa. */
+export async function custoUnitDasOpcoes(tenantId: string, optionIds: string[]): Promise<Map<string, number>> {
+  const ids = [...new Set(optionIds.filter(Boolean))];
+  const det = await resolver(tenantId, ids.map((id) => ({ order_item_id: id, option_id: id })));
+  const out = new Map<string, number>();
+  for (const [k, l] of det) out.set(k, l.reduce((s, x) => s + x.custo, 0));
+  return out;
+}
+
 /** Custo das opções de cada item vendido no período (por 1 unidade do item). */
 export async function custoOpcoesNoPeriodo(tenantId: string, deIso: string, ateIso: string): Promise<Map<string, number>> {
   const det = await insumosDasOpcoesNoPeriodo(tenantId, deIso, ateIso);

@@ -2265,7 +2265,7 @@ const EDGE_MAP = `MAPA DE AÇÕES (erpos_executar: funcao + action + dados). Ids
 
 menu-write (cardápio; retorna {success,data})
 - upsert_item: id?, category_id, name, description, price, is_active?(true), sla_minutes?(10), sort_order?, channels?{cashier,waiter,delivery,table_qr,self_service}, option_groups?[{id?,name,is_required,min_selections,max_selections,options[{id?,name,additional_price,is_active}]}] (substitui todos os grupos: para só mudar preço/nome/ativo, NÃO mande option_groups), promotions?[{promotional_price,days_of_week[],is_recurring,specific_date,is_active}]. Para editar, mande id + os campos completos do item (busque antes em menu_items).
-- delete_item (S): id. upsert_category: id?, name, station_id?, sort_order?, is_active?. delete_category (S): id.
+- delete_item (S): id. upsert_category: id?, name, station_id?, sort_order?, is_active?. delete_category (S): id — exclui também todos os itens da categoria; diga quantos itens saem junto antes de confirmar.
 - set_category_channel: category_id, disponibilidade 'ambos'|'casa'|'delivery'. upsert_combo: id?, name, description, price, is_active?, items?[{item_id,name,quantity}]. delete_combo (S): id.
 - upsert_item_ingredients (ficha técnica): item_id, ingredients[{ingredient_id,quantity,unit}]. upsert_highlight: id?, item_id, custom_price?, sort_order?, is_active?, channel?('ambos').
 - Esgotar/voltar item: upsert_item com id + is_active false/true (mande também category_id, name, price atuais).

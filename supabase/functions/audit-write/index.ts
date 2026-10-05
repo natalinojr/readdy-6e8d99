@@ -1,4 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
+import { fiqueDeOlho } from './fique-de-olho.ts';
+import { regraDoEvento } from '../_shared/fique-de-olho.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -220,10 +222,52 @@ async function handleLogEvent(
     }
   }
 
+  // "Fique de olho": cancelamento/desconto/sangria altos viram cartão na Hoje + aviso no celular.
+  // Nunca atrapalha o registro: qualquer erro aqui só vai para o log.
+  await olhar(admin, tenantId, userId, {
+    action_type, entity_type, entity_label, description, before, after, notes, user_name,
+  }, entityUUID === NIL_UUID ? null : String(entityUUID));
+
   return corsResponse({ success: true }, 200);
 }
 
+async function olhar(
+  admin: ReturnType<typeof createClient>,
+  tenantId: string,
+  userId: string,
+  e: Record<string, unknown>,
+  entityId: string | null,
+): Promise<void> {
+  try {
+    const r = await fiqueDeOlho(admin, { ...e, tenantId, userId, entityId });
+    if (r.startsWith('cartão')) console.log(`[audit-write] fique-de-olho tenant=${tenantId} ${r}`);
+  } catch (err) {
+    console.warn('[audit-write] fique-de-olho falhou:', err instanceof Error ? err.message : String(err));
+  }
+}
+
 async function handleLogBatch(
+  body: Record<string, unknown>,
+  tenantId: string,
+  userId: string,
+  admin: ReturnType<typeof createClient>,
+): Promise<Response> {
+  const resp = await gravarLote(body, tenantId, userId, admin);
+  if (resp.status !== 200) return resp;
+  // Fila do aparelho que voltou da queda de rede: as ocorrências altas também entram no cartão (no máximo 10).
+  const events = (body.events as Record<string, unknown>[]).slice(0, 100);
+  let avaliados = 0;
+  for (const ev of events) {
+    if (avaliados >= 10) break;
+    if (!regraDoEvento(ev)) continue;
+    const id = ev.entity_id && UUID_RE.test(ev.entity_id as string) ? String(ev.entity_id) : null;
+    avaliados++;
+    await olhar(admin, tenantId, userId, ev, id);
+  }
+  return resp;
+}
+
+async function gravarLote(
   body: Record<string, unknown>,
   tenantId: string,
   userId: string,

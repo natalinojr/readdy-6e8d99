@@ -25,6 +25,9 @@ import { usePaymentMethods } from '@/hooks/usePaymentMethods';
 
 import { useToast } from '@/contexts/ToastContext';
 import PixConfigModal from './PixConfigModal';
+import RecursosLojaCard from './RecursosLojaCard';
+import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 
 const CFG_DEFAULTS: ConfigOperacao = {
   taxaServico: 10,
@@ -52,11 +55,15 @@ const CFG_DEFAULTS: ConfigOperacao = {
   caixaEnviarCozinha: true,
 };
 
-interface ToggleProps { checked: boolean; onChange: (v: boolean) => void; }
-function Toggle({ checked, onChange }: ToggleProps) {
+// Interruptores que são gravados mas que nenhuma tela de venda lê (conferido no código em 2026-10-05).
+// Ficam visíveis (nada sai da tela), porém travados, para ninguém achar que mudam algo.
+const SEM_LEITOR: string[] = ['impressaoAutomatica', 'impressaoKDS', 'impressaoViasCozinhaAtiva'];
+
+interface ToggleProps { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean; }
+function Toggle({ checked, onChange, disabled }: ToggleProps) {
   return (
-    <button onClick={() => onChange(!checked)}
-      className={`relative w-11 h-6 rounded-full transition-colors cursor-pointer flex-shrink-0 ${checked ? 'bg-amber-500' : 'bg-zinc-200'}`}>
+    <button onClick={() => { if (!disabled) onChange(!checked); }} disabled={disabled}
+      className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'} ${checked ? 'bg-amber-500' : 'bg-zinc-200'}`}>
       <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${checked ? 'left-6' : 'left-1'}`} />
     </button>
   );
@@ -79,7 +86,8 @@ function SectionCard({ title, subtitle, icon, children }: SectionCardProps) {
 }
 
 export default function OperacaoTab() {
-  const { settings, loading: settingsLoading, salvar } = useSystemSettings();
+  const { settings, loading: settingsLoading, loadError, salvar } = useSystemSettings();
+  const { user } = useAuth();
   const { usuarios: usuariosReais, loading: loadingUsuarios, editarUsuario } = useUsuarios();
   const { formasAtivas: formasPagamento, loading: loadingFormas } = usePaymentMethods();
   const { success: toastSuccess, error: toastError } = useToast();
@@ -88,7 +96,42 @@ export default function OperacaoTab() {
   // Ref para rastrear quando os dados do servidor realmente mudaram,
   // evitando sobrescrever o estado local quando o componente \u00e9 remontado
   const lastSettingsUpdatedAtRef = useRef<string | undefined>(undefined);
-  const [pixCfg, setPixCfg] = useState({ stoneClientId: '', stoneClientSecret: '', chavePixTipo: 'cnpj' as const, chavePix: '', webhookUrl: '' });
+  const [pixCfg, setPixCfg] = useState({ stoneClientId: '', stoneClientSecret: '', chavePixTipo: 'cnpj' as string, chavePix: '', webhookUrl: '' });
+  // Chave Pix, tipo e webhook ficam em colunas próprias de system_settings (pix_key, pix_key_type,
+  // stone_webhook_url), fora do config-write. Guardamos o que veio do banco: só gravamos o que o
+  // usuário mudou, e só se a leitura deu certo (senão um campo em branco apagaria o valor real).
+  const extrasBaseRef = useRef<{ pix_key: string; pix_key_type: string; stone_webhook_url: string }>({ pix_key: '', pix_key_type: 'cnpj', stone_webhook_url: '' });
+  const [pixLido, setPixLido] = useState(false);
+  const [webhookLido, setWebhookLido] = useState(false);
+  const tenantIdOp = user?.tenantId;
+  // Sobe quando o modal de Pix fecha: ele grava a mesma chave direto no banco.
+  const [extrasTick, setExtrasTick] = useState(0);
+  useEffect(() => {
+    setPixLido(false);
+    setWebhookLido(false);
+    if (!tenantIdOp) return;
+    let cancelado = false;
+    (async () => {
+      const pix = await supabase.from('system_settings').select('pix_key, pix_key_type').eq('tenant_id', tenantIdOp).maybeSingle();
+      if (cancelado) return;
+      if (!pix.error) {
+        const chave = (pix.data?.pix_key as string | null) ?? '';
+        const tipo = (pix.data?.pix_key_type as string | null) || 'cnpj';
+        extrasBaseRef.current = { ...extrasBaseRef.current, pix_key: chave, pix_key_type: tipo };
+        setPixCfg((p) => ({ ...p, chavePix: chave, chavePixTipo: tipo }));
+        setPixLido(true);
+      }
+      const wh = await supabase.from('system_settings').select('stone_webhook_url').eq('tenant_id', tenantIdOp).maybeSingle();
+      if (cancelado) return;
+      if (!wh.error) {
+        const url = (wh.data?.stone_webhook_url as string | null) ?? '';
+        extrasBaseRef.current = { ...extrasBaseRef.current, stone_webhook_url: url };
+        setPixCfg((p) => ({ ...p, webhookUrl: url }));
+        setWebhookLido(true);
+      }
+    })();
+    return () => { cancelado = true; };
+  }, [tenantIdOp, extrasTick]);
   const [deliveryCommissionRates, setDeliveryCommissionRates] = useState<Record<string, number>>({});
   // IDs das formas de pagamento aceitas no delivery (null = todas aceitas)
   const [deliveryPaymentMethods, setDeliveryPaymentMethods] = useState<string[] | null>(null);
@@ -242,18 +285,45 @@ export default function OperacaoTab() {
         caixa_enviar_cozinha: cfg.caixaEnviarCozinha,
       } as Record<string, boolean>,
     });
-    setSalvando(false);
     if (!result.success) {
+      setSalvando(false);
       console.error('[OperacaoTab] save error:', result.error);
-      toastError('Erro ao salvar', 'Não foi possível salvar as configurações. Tente novamente.');
+      toastError('NÃO salvou as configurações', result.error || 'Não foi possível salvar. Tente novamente.');
       return;
     }
+    // Chave Pix, tipo e webhook: gravados só se mudaram e se foram lidos do banco.
+    const base = extrasBaseRef.current;
+    const extras: Record<string, string | null> = {};
+    // A chave Pix é a do Pix da LOJA (PDV e totem): só muda pelo "Configurar Pix", nunca por aqui.
+    if (webhookLido && pixCfg.webhookUrl.trim() !== base.stone_webhook_url) extras.stone_webhook_url = pixCfg.webhookUrl.trim() || null;
+    if (Object.keys(extras).length > 0 && tenantIdOp) {
+      const { data: linhas, error: errExtras } = await supabase
+        .from('system_settings')
+        .update({ ...extras, updated_at: new Date().toISOString() })
+        .eq('tenant_id', tenantIdOp)
+        .select('tenant_id');
+      if (errExtras || !linhas || linhas.length === 0) {
+        setSalvando(false);
+        console.error('[OperacaoTab] extras save error:', errExtras);
+        toastError(
+          'Salvou o resto, mas NÃO salvou a chave Pix / webhook',
+          errExtras?.message || 'O banco não aceitou a gravação (sem permissão para esta loja). Tente de novo.',
+        );
+        return;
+      }
+      extrasBaseRef.current = {
+        pix_key: 'pix_key' in extras ? (extras.pix_key ?? '') : base.pix_key,
+        pix_key_type: 'pix_key_type' in extras ? (extras.pix_key_type ?? 'cnpj') : base.pix_key_type,
+        stone_webhook_url: 'stone_webhook_url' in extras ? (extras.stone_webhook_url ?? '') : base.stone_webhook_url,
+      };
+    }
+    setSalvando(false);
     setSalvo(true);
     toastSuccess('Configurações salvas!', 'Operação e integrações atualizadas com sucesso.');
     setTimeout(() => setSalvo(false), 2500);
   // pdvTerminais DEVE estar nas deps — sem isso o React reutiliza o closure antigo
   // e qualquer toggle feito pelo usuário é ignorado no save (stale closure bug)
-  }, [cfg, pixCfg, salvar, pdvTerminais, settings.pdv_config, deliveryCommissionRates, deliveryPaymentMethods, kioskPaymentMethods, qrPagaAntes, toastSuccess, toastError]);
+  }, [cfg, pixCfg, pixLido, webhookLido, tenantIdOp, salvar, pdvTerminais, settings.pdv_config, deliveryCommissionRates, deliveryPaymentMethods, kioskPaymentMethods, qrPagaAntes, toastSuccess, toastError]);
 
   const handleToggleTreino = useCallback(
     async (userId: string) => {
@@ -266,7 +336,8 @@ export default function OperacaoTab() {
 
   return (
     <div className="space-y-5 max-w-3xl">
-      {showPixModal && <PixConfigModal onClose={() => setShowPixModal(false)} />}
+      <RecursosLojaCard />
+      {showPixModal && <PixConfigModal onClose={() => { setShowPixModal(false); setExtrasTick((n) => n + 1); }} />}
       {salvo && (
         <div className="flex items-center gap-2 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl">
           <div className="w-4 h-4 flex items-center justify-center text-emerald-500"><Save size={14} /></div>
@@ -335,8 +406,9 @@ export default function OperacaoTab() {
             <div>
               <p className="text-sm font-semibold text-zinc-700">Identificação obrigatória</p>
               <p className="text-xs text-zinc-400">Não permite finalizar pedido sem dados do cliente</p>
+              <p className="text-[10px] font-semibold text-amber-600 mt-0.5">Ainda não faz nada nas vendas (nenhuma tela lê este ajuste).</p>
             </div>
-            <Toggle checked={(cfg as Record<string, unknown>).deliveryIdentificacaoObrigatoria as boolean ?? true} onChange={(v) => set('deliveryIdentificacaoObrigatoria' as keyof ConfigOperacao, v as ConfigOperacao[keyof ConfigOperacao])} />
+            <Toggle disabled checked={(cfg as Record<string, unknown>).deliveryIdentificacaoObrigatoria as boolean ?? true} onChange={(v) => set('deliveryIdentificacaoObrigatoria' as keyof ConfigOperacao, v as ConfigOperacao[keyof ConfigOperacao])} />
           </div>
           <div className="border-t border-zinc-50 pt-4">
             <label className="block text-xs font-semibold text-zinc-600 mb-2">Tipo de atendimento padrão</label>
@@ -651,8 +723,9 @@ export default function OperacaoTab() {
               <div>
                 <p className="text-sm font-semibold text-zinc-700">{label}</p>
                 <p className="text-xs text-zinc-400">{sub}</p>
+                {SEM_LEITOR.includes(key) && <p className="text-[10px] font-semibold text-amber-600 mt-0.5">Ainda não faz nada nas vendas (nenhuma tela lê este ajuste).</p>}
               </div>
-              <Toggle checked={cfg[key]} onChange={(v) => set(key, v)} />
+              <Toggle disabled={SEM_LEITOR.includes(key)} checked={cfg[key]} onChange={(v) => set(key, v)} />
             </div>
           ))}
         </div>
@@ -957,33 +1030,25 @@ export default function OperacaoTab() {
               </button>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Tipo de chave PIX</label>
-              <select value={pixCfg.chavePixTipo} onChange={(e) => setPixCfg((p) => ({ ...p, chavePixTipo: e.target.value as typeof pixCfg.chavePixTipo }))}
-                className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2.5 text-zinc-800 focus:outline-none focus:border-amber-400 cursor-pointer">
-                <option value="cnpj">CNPJ</option>
-                <option value="email">E-mail</option>
-                <option value="celular">Celular</option>
-                <option value="aleatoria">Chave aleatória</option>
-              </select>
+          <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-zinc-600">Chave PIX da loja</p>
+              <p className="text-sm text-zinc-800 truncate">{pixCfg.chavePix ? `${({ cpf: 'CPF', cnpj: 'CNPJ', email: 'E-mail', phone: 'Telefone', random: 'Chave aleatória' } as Record<string, string>)[pixCfg.chavePixTipo] ?? pixCfg.chavePixTipo} · ${pixCfg.chavePix}` : 'Nenhuma chave configurada'}</p>
+              <p className="text-[11px] text-zinc-500">É a mesma chave do Pix do caixa e do totem. Muda só em “Configurar Pix”.</p>
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Chave PIX</label>
-              <input value={pixCfg.chavePix} onChange={(e) => setPixCfg((p) => ({ ...p, chavePix: e.target.value }))}
-                className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2.5 text-zinc-800 focus:outline-none focus:border-amber-400" />
-            </div>
+            <button type="button" onClick={() => setShowPixModal(true)}
+              className="flex-shrink-0 px-3 py-2 text-xs font-bold rounded-lg border border-zinc-200 bg-white hover:border-amber-400 cursor-pointer">Configurar Pix</button>
           </div>
           <div>
             <label className="block text-xs font-semibold text-zinc-600 mb-1.5">URL do Webhook</label>
-            <input value={pixCfg.webhookUrl} onChange={(e) => setPixCfg((p) => ({ ...p, webhookUrl: e.target.value }))}
+            <input value={pixCfg.webhookUrl} disabled={!webhookLido} onChange={(e) => setPixCfg((p) => ({ ...p, webhookUrl: e.target.value }))}
               className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2.5 text-zinc-800 focus:outline-none focus:border-amber-400 font-mono text-xs" />
           </div>
         </div>
       </div>
 
       <div className="flex justify-end pb-4">
-        <button onClick={handleSalvar} disabled={salvando}
+        <button onClick={handleSalvar} disabled={salvando || !!loadError}
           className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 text-white text-sm font-bold rounded-lg hover:bg-amber-600 disabled:opacity-60 cursor-pointer transition-colors whitespace-nowrap">
           <div className="w-4 h-4 flex items-center justify-center">
             {salvando ? <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <Save size={14} />}

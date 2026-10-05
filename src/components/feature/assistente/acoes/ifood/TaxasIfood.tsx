@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAcessoAcoes, rotaLiberada } from '../acesso';
 import { Roteiro, useRoteiro, Opcao, Fim, brl, hojeISO, type AcaoProps } from '../kit';
 import { Painel, Kpis, Barras, Linhas, Variacao } from '../painel';
 import { resumoIfood, lojasIfood, atualizarVendasIfood, canceladoIfood, nm } from './comum';
@@ -25,6 +26,7 @@ async function primeiraVenda(tenantId: string, mes: string): Promise<string | nu
 const nomeMes = (m: string) => new Date(`${m}-15T12:00:00Z`).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
 
 export default function TaxasIfood({ onFechar, irPara }: AcaoProps) {
+  const verIfood = rotaLiberada('/ifood', useAcessoAcoes());
   const { user } = useAuth();
   const tenantId = user?.tenantId ?? '';
   const { baloes, bot, eu, painel } = useRoteiro();
@@ -108,7 +110,9 @@ export default function TaxasIfood({ onFechar, irPara }: AcaoProps) {
       {(passo === 'fim' || !tenantId) && (
         <Fim onFechar={onFechar} acoes={tenantId ? [
           { label: 'Outro mês', onClick: () => { bot('Qual mês?'); setPasso('mes'); } },
-          { label: 'Abrir iFood no Financeiro', onClick: () => irPara('/financeiro?tab=ifood') },
+          verIfood
+            ? { label: 'Abrir o dinheiro do iFood', onClick: () => irPara('/ifood?aba=dinheiro') }
+            : { label: 'Abrir iFood no Financeiro', onClick: () => irPara('/financeiro?tab=ifood') },
         ] : []} />
       )}
     </Roteiro>

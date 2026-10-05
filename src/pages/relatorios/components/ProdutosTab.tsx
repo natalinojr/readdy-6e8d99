@@ -9,6 +9,8 @@ import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
 import type { SessionInfo } from '@/hooks/useSessions';
 import { normalizarNomeItem } from './nomeItem';
 import ProdutosPorHora from './ProdutosPorHora';
+import { useRegistrarExport, type RegistrarExport } from '../useRegistrarExport';
+import { reais } from '@/lib/exportRelatorio';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
@@ -231,9 +233,11 @@ const CAT_COLORS = ['#f59e0b', '#10b981', '#06b6d4', '#f97316', '#8b5cf6', '#ec4
 interface Props {
   periodo: string;
   externalSession?: SessionInfo | null;
+  /** Botão "Baixar" do topo da página dos Relatórios. */
+  onExport?: RegistrarExport;
 }
 
-export default function ProdutosTab({ periodo, externalSession }: Props) {
+export default function ProdutosTab({ periodo, externalSession, onExport }: Props) {
   const { modo } = useModoFaturamento();
   const isSessao = modo === 'sessao';
   const selectedSession = externalSession ?? null;
@@ -399,6 +403,20 @@ export default function ProdutosTab({ periodo, externalSession }: Props) {
     setItemSelecionado(null);
     setCategoriaFiltro('todas');
   }, [periodo]);
+
+  // Baixar (topo da página): o ranking como está na tela (busca, categoria e ordem aplicadas).
+  useRegistrarExport(onExport, () => {
+    if (loading || itens.length === 0) return null;
+    return {
+      base: 'ranking-produtos',
+      periodo: isSessao ? periodo : periodoEfetivo,
+      cabecalho: ['Posição', 'Item', 'Categoria', 'Qtd. vendida', 'Preço médio (R$)', 'Receita (R$)', '% da receita'],
+      linhas: itens.map((i, idx) => [
+        idx + 1, i.nome, i.categoria, i.qtd, reais(i.precoMedio), reais(i.receita),
+        totalReceita > 0 ? Math.round((i.receita / totalReceita) * 1000) / 10 : 0,
+      ]),
+    };
+  });
 
   if (loading) {
     return (

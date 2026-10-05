@@ -1,4 +1,4 @@
-import { MenuMais, type ItemMenu } from '@/pages/estoque/components/ui/EstoqueUi';
+import { MenuMais, type ItemMenu } from '@/components/kit';
 
 // Topo da tela de Pedidos no layout novo (protótipo docs/prototipos/pedidos-proposta.html).
 // Linha 1: ícone + título, busca (só computador), botão de período e menu ⋯.

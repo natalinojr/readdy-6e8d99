@@ -178,4 +178,21 @@ cupom e quem paga, código de coleta e CPF da nota. Se falhar, anotar o passo e 
   Merchant, homologado 25/09). Pedir que aceitem o C ou liberem o D.
 - **Chamado novo** (separado, pedido pelo suporte): acesso ao Portal do Parceiro da loja de teste 4117700 para
   autorizar o app de teste "Teste (D)".
+  **ABERTO em 2026-09-30 15:20: chamado 34164879**, tipo "Dúvidas ou Informações" › Acessos/Permissões › Dúvidas
+  sobre credenciais de acesso (NÃO é homologação). Pergunta: qual login/senha do Portal do Parceiro da loja 4117700,
+  como criar/redefinir a senha, e outra forma de autorizar app distribuído nela. A IA do portal sugeriu "Esqueci a
+  senha" + olhar o spam (já tentado) — seguimos com o ticket.
+  **2026-10-02 (noite): DESTRAVADO.** O dono entrou no Portal do Parceiro com as credenciais do Portal do
+  Desenvolvedor e autorizou o app D na Testes PDV (ifood_pdv_auths com a loja 4117700). Homologação religada até
+  04/10 00h13 UTC; polling poll_all respondendo 200 sem erro. Próximo: dono inicia Homologação › Nova homologação (Order).
+  **2026-10-02 (noite): ORDER HOMOLOGADO** — homologação automática "Concluído", 6/6 itens com sucesso, 0 falhas
+  (o dono exportou o PDF no Devportal). Chamado 34062004 pode ser encerrado; 34164879 também (acesso resolvido).
+  Relatório: app homologada `erpos-pdv`, app de teste `…-teste-d`, merchant 1fac24ad-b86c-49d6-a8c3-6a60a57294c4,
+  protocolo POLLING, status CONCLUDED em 03/10/2026 (UTC), **60/60 pontos**. Cenários: heartbeat (Firefly), eventos
+  (Firefly Audit), Confirmado, Cancelado, Despachado imediato, Despachado agendado — todos 10/10. Recomendações
+  genéricas do iFood: manter heartbeat/ack em produção, tratar timeout/indisponibilidade/evento duplicado.
+  **2026-10-03: APP `erpos-pdv` APROVADO PARA PRODUÇÃO** (e-mail "Homologação aprovada" do iFood for Developers,
+  ID 7ecddd73-…). Lojas reais já podem autorizar o ERPOS PDV (antes dava "integrações não homologadas"). Em 05/10
+  nenhuma loja real tinha autorização (`ifood_pdv_auths` só da Testes PDV; Paranaguá, Vila Leste e Vila Burguer com
+  código gerado e vencido). Conferir no Devportal se Shipping/Merchant/Review (chamado 34064791) entraram junto.
 - Tela: botões de tipo em Avançado agora dizem "Distribuído (app de teste "D")" / "Centralizado (app de teste "C")".

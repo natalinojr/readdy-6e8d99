@@ -90,12 +90,21 @@ export function recarregarApp(): void {
  */
 const CHAVE_ULTIMA_AUTO = 'erpos-recarga-auto-em';
 const INTERVALO_MIN_AUTO_MS = 10 * 60 * 1000;
+// Abaixo da conferência periódica (5 min): só uma checagem logo ao abrir explicaria — é o loop.
+const SUSPEITA_DE_LOOP_MS = 2 * 60 * 1000;
 
 export function recarregarAppSozinho(): boolean {
   let ultima = 0;
   try { ultima = Number(localStorage.getItem(CHAVE_ULTIMA_AUTO)) || 0; } catch { /* sem storage */ }
   const agora = Date.now();
   if (agora - ultima < INTERVALO_MIN_AUTO_MS) {
+    // 2026-10-05: segurar é o normal quando saem duas publicações do totem em menos de 10 min
+    // (a 2ª é vista na conferência de 5 em 5 min logo depois da recarga — o registro de 04/10
+    // mostrava 310 s, casando com dois pushes seguidos). Com o kiosk-version.json a conferência
+    // da abertura só guarda a referência, então isso não é loop e não vai mais para
+    // dev_error_events. O loop de verdade (recarga devolvendo o build velho e conferindo de
+    // novo logo ao abrir) aparece em segundos — só esse continua registrado.
+    if (agora - ultima >= SUSPEITA_DE_LOOP_MS) return false;
     reportError('Recarga automática repetida em menos de 10 min — segurada para não entrar em loop', {
       fn: 'versaoApp.recarregarAppSozinho',
       severity: 'warning',

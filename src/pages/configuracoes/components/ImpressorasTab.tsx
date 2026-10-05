@@ -8,6 +8,7 @@ import {
 } from '@/contexts/ImpressorasContext';
 import { printHTML } from '@/lib/printUtils';
 import { useToast } from '@/contexts/ToastContext';
+import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 
@@ -325,7 +326,9 @@ export default function ImpressorasTab() {
     clearImpressoraEstacao,
     salvarImpressoras,
     salvando,
+    erroSalvar,
   } = useImpressoras();
+  const { loadError } = useSystemSettings();
 
   const { user } = useAuth();
   const { success: toastSuccess, error: toastError } = useToast();
@@ -427,7 +430,12 @@ export default function ImpressorasTab() {
   // ── Botao Salvar ──
   // (auto-save ja acontece no contexto, mas o botao manual da seguranca extra)
   const handleSalvar = async () => {
-    await salvarImpressoras();
+    const r = await salvarImpressoras();
+    if (!r.success) {
+      setSalvo(false);
+      toastError('Não salvou as impressoras', r.error || 'Não foi possível gravar. Tente de novo.');
+      return;
+    }
     setSalvo(true);
     toastSuccess('Impressoras salvas!', 'Configuracoes de impressoras atualizadas com sucesso.');
     setTimeout(() => setSalvo(false), 2500);
@@ -487,6 +495,14 @@ export default function ImpressorasTab() {
 
   return (
     <div className="space-y-6 max-w-4xl">
+      {erroSalvar && (
+        <div className="flex items-start gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
+          <i className="ri-error-warning-line text-red-500 text-sm mt-0.5" />
+          <p className="text-xs font-semibold text-red-700">
+            NÃO foi salvo no sistema: {erroSalvar} O sistema tenta de novo sozinho; a alteração continua na tela.
+          </p>
+        </div>
+      )}
       {salvo && (
         <div className="flex items-center gap-2 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl">
           <i className="ri-check-line text-emerald-500 text-sm" />
@@ -877,7 +893,7 @@ export default function ImpressorasTab() {
         </span>
         <button
           onClick={handleSalvar}
-          disabled={salvando}
+          disabled={salvando || !!loadError}
           className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 text-white text-sm font-bold rounded-lg hover:bg-amber-600 disabled:opacity-60 cursor-pointer transition-colors whitespace-nowrap"
         >
           {salvando ? (

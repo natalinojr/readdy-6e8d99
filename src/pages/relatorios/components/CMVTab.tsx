@@ -3,8 +3,10 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from 'recharts';
 import { useCmvRelatorio } from '@/hooks/useCmvRelatorio';
+import { useRegistrarExport, type RegistrarExport } from '../useRegistrarExport';
+import { reais } from '@/lib/exportRelatorio';
 
-interface Props { periodo: string; }
+interface Props { periodo: string; onExport?: RegistrarExport; }
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -33,7 +35,7 @@ function cmvLabel(pct: number): { text: string; cls: string } {
   return { text: 'Alto', cls: 'bg-red-100 text-red-700' };
 }
 
-export default function CMVTab({ periodo }: Props) {
+export default function CMVTab({ periodo, onExport }: Props) {
   const { data, loading } = useCmvRelatorio(periodo);
   const [sortBy, setSortBy] = useState<'receita' | 'cmv' | 'margem'>('receita');
   const [filtro, setFiltro] = useState<'todos' | 'com_ficha' | 'sem_ficha'>('todos');
@@ -71,6 +73,22 @@ export default function CMVTab({ periodo }: Props) {
         cmv: i.cmv_pct,
       }));
   }, [itensCom]);
+
+  // Baixar (topo da página): a tabela de itens como está na tela (filtro e ordem aplicados).
+  useRegistrarExport(onExport, () => {
+    if (loading || itens.length === 0) return null;
+    return {
+      base: 'cmv-margem',
+      cabecalho: ['Item', 'Categoria', 'Qtd. vendida', 'Receita (R$)', 'Custo (R$)', 'CMV %', 'Margem (R$)', 'Tem ficha técnica'],
+      linhas: itens.map(i => [
+        i.item_name, i.category_name, i.total_qty, reais(i.receita_total),
+        i.tem_ficha_tecnica ? reais(i.custo_total) : '',
+        i.tem_ficha_tecnica ? Math.round(i.cmv_pct * 10) / 10 : '',
+        i.tem_ficha_tecnica ? reais(i.margem_bruta) : '',
+        i.tem_ficha_tecnica ? 'Sim' : 'Não',
+      ]),
+    };
+  });
 
   if (loading) {
     return (

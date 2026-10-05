@@ -4,7 +4,7 @@
 // função, nunca CPF/telefone/Pix. Freelancer não tem login: fica só o nome. Um componente só: a proposta do
 // "celular da loja" (outra sessão) acrescenta o PIN aqui quando mexer em estoque/dinheiro.
 import { useEffect, useState } from 'react';
-import Folha from '@/pages/estoque/components/inicio/Folha';
+import { Folha } from '@/components/kit';
 import { pessoasDaLoja, type PessoaDaLoja, type QuemFezEscolha } from './useRotina';
 import { perfilConfig, type PerfilUsuario } from '@/constants/usuarios';
 

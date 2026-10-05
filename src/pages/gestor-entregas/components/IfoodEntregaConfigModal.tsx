@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
+import { confirmar as confirmarDialogo } from '@/components/base/Dialogos';
 import { ifoodShipping, type IfoodShippingConfig } from '@/lib/ifoodShipping';
 
 interface Props {
@@ -50,7 +51,9 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
     const r = await ifoodShipping<Record<string, unknown>>(action, tenantId, extra);
     setBusy('');
     if (!r.success) { setErro(r.error || 'Falhou.'); return null; }
-    if (sucesso) setOk(sucesso);
+    // aviso = salvou, mas com ressalva (ex.: loja do iFood de outra loja do ERPOS não foi ligada).
+    if (r.aviso) setErro(String(r.aviso));
+    else if (sucesso) setOk(sucesso);
     await carregar();
     onChanged();
     return r;
@@ -65,12 +68,16 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
     if (r) setUserCode({ code: String(r.user_code), url: (r.verification_url as string) ?? null });
   };
   const confirmar = async () => {
-    const r = await run('auth', 'confirm_authorization', { authorization_code: authCode.trim() }, 'Loja autorizada.');
+    const r = await run('auth', 'confirm_authorization', { authorization_code: authCode.trim() }, 'Autorização confirmada — confira abaixo as lojas do iFood.');
     if (r) { setAuthCode(''); setUserCode(null); }
   };
 
   const voltarParaSistema = async () => {
-    if (conectado && !window.confirm('Voltar para o app ERPOS PDV? As autorizações feitas com o app próprio deixam de valer e a loja precisa autorizar de novo.')) return;
+    if (conectado && !(await confirmarDialogo({
+      titulo: 'Voltar para o app ERPOS PDV?',
+      mensagem: 'As autorizações feitas com o app próprio deixam de valer e a loja precisa autorizar de novo.',
+      confirmarLabel: 'Voltar para o ERPOS PDV', perigo: true,
+    }))) return;
     const r = await run('sistema', 'use_system_app', {}, 'Usando o app ERPOS PDV. Gere o código para autorizar a loja.');
     if (r) setAvancado(false);
   };
@@ -106,6 +113,15 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
                 <section className="space-y-2">
                   <p className="text-xs font-bold text-zinc-700">1. Autorizar a loja no Portal do Parceiro{usaSistema ? ' (app ERPOS PDV)' : ''}</p>
                   {cfg.merchants.length > 0 && <p className="text-xs text-emerald-700"><i className="ri-checkbox-circle-line" /> Autorizadas: {cfg.merchants.map((m) => m.name).join(', ')}</p>}
+                  {conectado && cfg.app_type !== 'centralized' && (
+                    <div className={`flex flex-wrap items-center gap-2 ${cfg.merchants.length === 0 ? 'p-2.5 rounded-lg bg-amber-50 border border-amber-200' : ''}`}>
+                      {cfg.merchants.length === 0 && <p className="text-xs text-amber-800 flex-1 min-w-[12rem]">A autorização ainda não trouxe nenhuma loja do iFood. Se o ERPOS PDV já aparece ativo no Portal do Parceiro, clique em <b>Atualizar lojas</b>.</p>}
+                      <button disabled={!!busy} onClick={() => run('refresh', 'refresh_merchants', {}, 'Lojas atualizadas.')} className="px-3 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50">
+                        {busy === 'refresh' ? 'Atualizando…' : 'Atualizar lojas'}
+                      </button>
+                      <p className="text-[11px] text-zinc-500 w-full">Loja recém-autorizada no Portal do Parceiro pode levar alguns minutos para aparecer aqui — se não vier, espere um pouco e clique em Atualizar lojas de novo.</p>
+                    </div>
+                  )}
                   {cfg.app_type === 'centralized' ? (
                     <button disabled={!!busy} onClick={() => run('central', 'connect_centralized', {}, 'Conectado.')} className="px-4 py-2 rounded-lg bg-red-600 text-white text-xs font-bold disabled:opacity-50">
                       {busy === 'central' ? 'Conectando…' : conectado ? 'Conectar de novo' : 'Conectar (app de teste, sem código)'}
@@ -136,7 +152,7 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
                     <select className={inp} value={cfg.shipping_merchant_id ?? ''} disabled={!!busy}
                       onChange={(e) => run('merchant', 'set_options', { shipping_merchant_id: e.target.value })}>
                       <option value="">Escolha…</option>
-                      {cfg.merchants.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                      {cfg.merchants.map((m) => <option key={m.id} value={m.id} disabled={!!m.outra_loja}>{m.name}{m.outra_loja ? ` — é da loja ${m.outra_loja}` : ''}</option>)}
                     </select>
                   </div>
                   <div className="w-48"><label className={lbl}>Tempo de preparo padrão (min)</label>
@@ -168,16 +184,16 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
                   <p className="text-[11px] text-zinc-500">Traz cada pedido do iFood com os itens para o ERPOS. Escolha se a loja continua operando no tablet do iFood ou se o pedido passa pela cozinha e pelas entregas do ERPOS.</p>
                   <label className="flex items-center gap-2 text-sm text-zinc-700 cursor-pointer">
                     <input type="checkbox" checked={cfg.order_enabled} disabled={!!busy}
-                      onChange={(e) => run('ord-on', 'set_options', { order_enabled: e.target.checked, ...(e.target.checked && cfg.order_merchant_ids.length === 0 ? { order_merchant_ids: cfg.merchants.map((m) => m.id) } : {}) }, e.target.checked ? 'Pedidos do iFood ligados.' : 'Pedidos do iFood desligados.')} />
+                      onChange={(e) => run('ord-on', 'set_options', { order_enabled: e.target.checked, ...(e.target.checked && cfg.order_merchant_ids.length === 0 ? { order_merchant_ids: cfg.merchants.filter((m) => !m.outra_loja).map((m) => m.id) } : {}) }, e.target.checked ? 'Pedidos do iFood ligados.' : 'Pedidos do iFood desligados.')} />
                     Receber os pedidos do iFood
                   </label>
                   {cfg.order_enabled && (
                     <div className="space-y-1 pl-6">
                       {cfg.merchants.map((m) => (
-                        <label key={m.id} className="flex items-center gap-2 text-xs text-zinc-600 cursor-pointer">
-                          <input type="checkbox" checked={cfg.order_merchant_ids.includes(m.id)} disabled={!!busy}
+                        <label key={m.id} className={`flex items-center gap-2 text-xs cursor-pointer ${m.outra_loja ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                          <input type="checkbox" checked={cfg.order_merchant_ids.includes(m.id)} disabled={!!busy || (!!m.outra_loja && !cfg.order_merchant_ids.includes(m.id))}
                             onChange={(e) => run('ord-m', 'set_options', { order_merchant_ids: e.target.checked ? [...cfg.order_merchant_ids, m.id] : cfg.order_merchant_ids.filter((x) => x !== m.id) })} />
-                          {m.name}
+                          {m.name}{m.outra_loja && <span className="text-[11px]">— é da loja {m.outra_loja} no ERPOS</span>}
                         </label>
                       ))}
                       <div className="pt-1 space-y-1">
@@ -199,6 +215,38 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
                             Aceitar sozinho (desligado: alguém aperta "Aceitar" em Pedidos iFood antes do prazo do iFood)
                           </label>
                         )}
+                        {cfg.order_mode === 'funnel' && (
+                          <label className="flex items-start gap-2 text-xs text-zinc-600 cursor-pointer pl-5">
+                            <input type="checkbox" className="mt-0.5" checked={cfg.order_emit_nfce} disabled={!!busy}
+                              onChange={(e) => run('ord-nfce', 'set_options', { order_emit_nfce: e.target.checked }, e.target.checked ? 'NFC-e dos pedidos do iFood ligada.' : 'NFC-e dos pedidos do iFood desligada.')} />
+                            <span>Emitir NFC-e dos pedidos do iFood — valor da venda (itens + entrega da loja − desconto da loja); pago no app sai como "iFood - online". Precisa do fiscal da loja ligado.</span>
+                          </label>
+                        )}
+                        {cfg.order_mode === 'funnel' && cfg.order_emit_nfce && (
+                          <div className="pl-10 space-y-1">
+                            <p className="text-[11px] font-semibold text-zinc-500">Quando a nota sai</p>
+                            {([
+                              ['saida', 'Quando o pedido fica pronto ou sai (recomendado)', 'A NFC-e deve estar autorizada antes de a mercadoria sair (regra da SEFAZ).'],
+                              ['conclusao', 'Quando o iFood conclui o pedido', 'Sem risco de cancelamento, mas a nota sai depois de a mercadoria circular.'],
+                            ] as const).map(([v, t, d]) => (
+                              <label key={v} className="flex items-start gap-2 text-xs text-zinc-600 cursor-pointer">
+                                <input type="radio" name="ifood-nfce-momento" className="mt-0.5" checked={(cfg.order_nfce_momento ?? 'saida') === v} disabled={!!busy}
+                                  onChange={() => run('ord-nfce-mom', 'set_options', { order_nfce_momento: v }, 'Momento da nota salvo.')} />
+                                <span><b className="text-zinc-700">{t}</b> — {d}</span>
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="pt-2 flex flex-wrap items-center gap-2">
+                        <button disabled={!!busy} className="px-3 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+                          onClick={async () => {
+                            const r = await run('backfill', 'order_backfill', {});
+                            if (r) setOk(`${Number(r.importados ?? 0)} pedido(s) antigo(s) trazidos com itens${Number(r.sem_detalhe ?? 0) ? ` · ${Number(r.sem_detalhe)} sem detalhe no iFood` : ''}.`);
+                          }}>
+                          {busy === 'backfill' ? 'Buscando… (pode levar 1 min)' : 'Buscar itens dos pedidos dos últimos 15 dias'}
+                        </button>
+                        <p className="text-[11px] text-zinc-500 w-full">Para pedidos de antes de ligar: o iFood guarda os itens por cerca de 15 dias. Só lê — não mexe em cozinha nem estoque.</p>
                       </div>
                     </div>
                   )}

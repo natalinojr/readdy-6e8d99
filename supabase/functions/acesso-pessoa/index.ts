@@ -85,9 +85,9 @@ async function contextoDaLoja(admin: any, tenantId: string, alvo: { id: string; 
   const cargosPossiveis = editorPapel === 'admin' ? PAPEIS_DO_DONO : PAPEIS_DO_GERENTE;
   const padroes = Object.fromEntries(cargosPossiveis.map((p) => [p, padraoDoCargo(p, cargos.get(PAPEL_TO_DB_ROLE[p] ?? p) ?? [])]));
   let motivo: string | null = null;
-  if (alvo.id === editor.id) motivo = 'Ninguém muda o próprio acesso — peça a outra pessoa (o dono).';
+  if (alvo.id === editor.id) motivo = 'Ninguém muda o próprio acesso — peça a outra pessoa (o Administrador).';
   else if (papel === 'admin') motivo = 'Administrador tem tudo. O cargo dele muda em "Editar".';
-  else if (editorPapel !== 'admin' && !PAPEIS_DO_GERENTE.includes(papel)) motivo = 'Só o dono muda o acesso de supervisor, financeiro e contabilidade.';
+  else if (editorPapel !== 'admin' && !PAPEIS_DO_GERENTE.includes(papel)) motivo = 'Só o Administrador muda o acesso de supervisor, financeiro e contabilidade.';
   else if (!PAPEIS_DO_DONO.includes(papel)) motivo = 'Este tipo de usuário (totem, tablet) não tem ajuste por pessoa.';
   return {
     papel,
@@ -125,7 +125,7 @@ Deno.serve(async (req) => {
 
     if (action === 'equipe') {
       const tenantId = String(body.tenant_id ?? '');
-      if (!(await gestor(tenantId))) return erro('Só o dono, ou o supervisor com "Cadastra pessoas da equipe", vê o acesso da equipe.', 403);
+      if (!(await gestor(tenantId))) return erro('Só o Administrador, ou o supervisor com "Cadastra pessoas da equipe", vê o acesso da equipe.', 403);
       const { data: membros, error } = await admin.from('user_tenants').select('user_id, role').eq('tenant_id', tenantId);
       if (error) throw new Error(error.message);
       const lista = (membros ?? []) as Array<{ user_id: string; role: string }>;
@@ -148,7 +148,7 @@ Deno.serve(async (req) => {
     for (const r of (dele ?? []) as Array<{ tenant_id: string; role: string; tenants: { name?: string } | null }>) {
       if (await gestor(String(r.tenant_id))) lojasDele.push(r);
     }
-    if (!lojasDele.length) return erro('Você não é dono, nem supervisor com "Cadastra pessoas da equipe", em nenhuma loja desta pessoa.', 403);
+    if (!lojasDele.length) return erro('Você não é Administrador, nem supervisor com "Cadastra pessoas da equipe", em nenhuma loja desta pessoa.', 403);
 
     if (action === 'ler') {
       const { data: u } = await admin.from('users').select('name, email').eq('id', alvoId).maybeSingle();
@@ -164,7 +164,7 @@ Deno.serve(async (req) => {
     if (action === 'salvar') {
       const tenantId = String(body.tenant_id ?? '');
       const r = lojasDele.find((x) => String(x.tenant_id) === tenantId);
-      if (!r) return erro('Você não é dono, nem supervisor com "Cadastra pessoas da equipe", nesta loja da pessoa.', 403);
+      if (!r) return erro('Você não é Administrador, nem supervisor com "Cadastra pessoas da equipe", nesta loja da pessoa.', 403);
       if (alvoId !== eu && await isPlatformOwner(admin, alvoId)) return erro('Este usuário só pode ser alterado por ele mesmo.', 403);
       const papelNovo = String(body.papel ?? '');
       const keys = [...new Set((Array.isArray(body.keys) ? body.keys : []).map((k: unknown) => String(k)))] as string[];

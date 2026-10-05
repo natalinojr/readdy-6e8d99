@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import Folha from '@/pages/estoque/components/inicio/Folha';
-import { btn, brl, Nota } from '@/pages/estoque/components/ui/EstoqueUi';
+import { Folha } from '@/components/kit';
+import { btn, brl, Nota } from '@/components/kit';
 import type { SessionInfo } from '@/hooks/useSessions';
 import { MESES, formatarDataExibicao, somarDias } from '../utils';
 

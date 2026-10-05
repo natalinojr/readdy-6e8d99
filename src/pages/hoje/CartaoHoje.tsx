@@ -3,11 +3,12 @@
 // para dinheiro do dono (pagar com PIN, pedir boleto), pede ao chat — o mesmo caminho de sempre.
 import { useState, type ReactElement } from 'react';
 import { supabase } from '@/lib/supabase';
-import { confirmar } from '@/components/base/Dialogos';
+import { confirmarDecisao } from '@/lib/confirmarDecisao';
 import { kindConfig } from '@/contexts/PendenciasContext';
 import { pedirAoChat } from '@/lib/assistenteFoco';
 import { chamarAssistente } from '@/lib/assistenteApp';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
+import BoletoPorFoto from '@/components/feature/assistente/BoletoPorFoto';
 import { BaixaDaConta, ContasAtrasadasInline, ContasDreInline } from '@/components/feature/assistente/PendenciasChat';
 import type { ItemHoje, PendHoje, Porcao } from './organizar';
 import { diasEntre } from './organizar';
@@ -33,6 +34,9 @@ const SEM_DESCARTE = new Set(['boleto_faltando', 'aprovacao', 'pedido_pagamento'
   'compra_pelo_celular', 'sangria_sem_cupom', 'sangria_nao_saiu', 'sangria_valor_diferente', 'recebimento_sem_nota', 'boleto_email',
   // Avisos antes de virar problema (2026-10-03): saem por "Ciente"/"Já comprei" ou fecham sozinhos.
   'vendas_abaixo_ritmo', 'caixa_nao_cobre', 'insumo_antes_do_pico']);
+
+/** Contas (em aberto, sem boleto) que as pendências "Falta o boleto" cobrem: para a foto do boleto. */
+const contasDe = (ps: PendHoje[]) => ps.map((x) => x.payload?.bill_id).filter((b): b is string => typeof b === 'string');
 
 /** Texto do pedido de boleto que vai para a caixa de digitação do chat (o dono revisa e envia). */
 function textoPedirBoletos(item: ItemHoje, ps: PendHoje[]): string {
@@ -98,10 +102,14 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
         <i className="ri-barcode-line" /> Pedir {item.juntas.length === 1 ? 'o boleto' : `os ${item.juntas.length} boletos`}
       </button>);
     }
+    if (dono && contasDe(item.juntas).length > 0) {
+      add('foto', <BoletoPorFoto billIds={contasDe(item.juntas)} className={SECUNDARIO} onFeito={onMudou} />);
+    }
   } else if (item.tipo === 'boletos_fornecedor') {
     if (dono) add('pedir', <button onClick={() => pedirAoChat({ tipo: 'pedir', texto: textoPedirBoletos(item, item.juntas) })} className={PRINCIPAL}>
       <i className="ri-barcode-line" /> {item.pedidoHaDias != null ? 'Pedir de novo' : `Pedir os ${item.juntas.length} boletos`}
     </button>);
+    if (dono && contasDe(item.juntas).length > 0) add('foto', <BoletoPorFoto billIds={contasDe(item.juntas)} className={SECUNDARIO} onFeito={onMudou} />);
     if (financeiro) add('pago', <button onClick={() => alternar('baixas')} className={dono ? SECUNDARIO : PRINCIPAL}>
       <i className="ri-check-double-line" /> {aberto === 'baixas' ? 'Fechar' : 'Já paguei alguma'}
     </button>);
@@ -109,6 +117,7 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
     if (dono) add('pedir', <button onClick={() => pedirAoChat({ tipo: 'pedir', texto: textoPedirBoletos(item, [p]) })} className={PRINCIPAL}>
       <i className="ri-barcode-line" /> {item.pedidoHaDias != null ? 'Pedir de novo' : 'Pedir o boleto'}
     </button>);
+    if (dono && bill) add('foto', <BoletoPorFoto billIds={[bill]} className={SECUNDARIO} onFeito={onMudou} />);
     if (bill && financeiro) add('baixa', <button onClick={() => alternar('baixa')} className={dono ? SECUNDARIO : PRINCIPAL}>
       <i className="ri-check-double-line" /> {aberto === 'baixa' ? 'Fechar' : 'Já paguei — dar baixa'}
     </button>);
@@ -124,14 +133,7 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
   } else if (p.kind === 'aprovacao' && p.ref) {
     // Uma janela a mais antes de decidir (pedido do dono, 2026-10-03): evita aprovar/recusar sem querer.
     const decidir = (aprovar: boolean) => rodar(async () => {
-      const ok = await confirmar({
-        titulo: aprovar ? 'Aprovar este pedido?' : 'Recusar este pedido?',
-        mensagem: p.titulo,
-        confirmarLabel: aprovar ? 'Sim, aprovar' : 'Sim, recusar',
-        cancelarLabel: 'Voltar',
-        perigo: !aprovar,
-      });
-      if (!ok) return;
+      if (!(await confirmarDecisao(aprovar, p.titulo))) return;
       const { error } = await supabase.rpc('fn_pdv_approval_decide', { p_id: p.ref, p_aprovar: aprovar, p_nome: meuNome });
       if (error) throw new Error(error.message);
     });

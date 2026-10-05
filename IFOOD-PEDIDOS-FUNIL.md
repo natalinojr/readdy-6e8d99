@@ -147,3 +147,41 @@ d95420e); foi **desfeita** no mesmo dia porque o dono escolheu este desenho. Apr
 - Estoque pela ficha **testado** (#7445 → P2609260011): item→Quesadilla, complemento→item Burrito (linha própria),
   complemento→opção Guacamole — as 7 baixas certas. Vínculos de teste ficaram na Testes PDV.
 
+
+## Etapa 5 — NFC-e (2026-10-05, Claude; chave desligada em todas as lojas)
+- **Regra única do valor da venda** em `supabase/functions/_shared/ifood-valores.ts` (funil e NFC-e usam a mesma):
+  itens pelo preço do iFood + entrega feita pela loja − desconto bancado pela loja (MERCHANT e CHAIN). Cupom do iFood
+  (IFOOD) e da indústria (EXTERNAL) não abatem; taxa de serviço do iFood não entra. **Correção:** a entrega grátis
+  bancada pela loja (benefício DELIVERY_FEE) só abate quando a LOJA entrega — com entregador do iFood a taxa não está
+  na venda (1º pedido real, #1631 da Paranaguá: 31,49 − 5,00 = 26,49; antes o funil gravava 19,50).
+- **fiscal-write:** pedido com `orders.ifood_order_id` usa os valores do `ifood_orders` (não o `orders.total_amount`,
+  que no cobrado pela loja é o que o cliente paga, já sem o cupom do iFood). O que não passou pelo caixa vira tPag 99
+  com descrição **"iFood - online"** (pedido do dono). Emissão automática de pedido do iFood só com
+  `ifood_pdv_config.order_emit_nfce` (trava também o cobrado na entrega, que o order-write dispara ao receber no
+  caixa). Emissão manual (Notas Fiscais, force) não depende da chave.
+- **Quando sai: escolha da loja (`order_nfce_momento`, dono 05/10)** — `saida` (padrão, recomendado: pronto ou saiu;
+  a NFC-e deve estar autorizada antes da mercadoria circular, Ajuste SINIEF 19/16 + FAQ SEFA-PR 1504) ou `conclusao`.
+  Versão anterior (só conclusão): com o pedido CONCLUÍDO no iFood e pago — o que acontecer por último
+  (depois da conclusão não há mais risco de cancelamento). Pago no app → no CONCLUDED; cobrado pela loja → no CONCLUDED
+  se o caixa já recebeu, senão quando o caixa receber (a fiscal-write recusa pedido do iFood não concluído). Tempos
+  vistos: entregador do iFood conclui na validação do código (#1631: 23 min); entrega pela loja ~30 min; consumo no
+  local ~4 h. Roda em segundo plano (não segura o polling). **Uma tentativa automática só**: qualquer
+  documento já criado (erro, rejeição, cancelado à mão) fica para a tela Notas Fiscais — erro de tempo esgotado pode
+  ter sido autorizado na SEFAZ e reenviar sozinho geraria 2ª nota.
+  Pedido do iFood decide só pela chave do iFood (não pelas chaves por canal); pedido de teste do iFood (`is_test`)
+  nunca vira nota. Revisão Opus 05/10: 0 P1; 4 P2 + 4 P3 corrigidos.
+- **Cancelado pelo iFood depois da nota:** cancela a NFC-e (justificativa fixa); se a SEFAZ recusar (prazo), fica o
+  aviso em `ifood_orders.funnel_error`.
+- **Chave:** Gestor de Entregas › iFood Entrega › Pedidos do iFood › "Emitir NFC-e dos pedidos do iFood" (aparece no
+  modo "Pedido entra no ERPOS").
+- **Presença e intermediador (contadora 05/10: "não presencial" + iFood como intermediador)** — `_shared/ifood-nota.ts`.
+  NFC-e só aceita indPres 1, 4 ou 5 (rejeição 717); "não presencial" na NFC-e = 4 (entrega a domicílio), que exige
+  destinatário com endereço (787/788; Ajuste SINIEF 09/2026) e indIntermed (434). **Teste em homologação na SEFAZ-PR
+  (05/10, conta Brasil NFe da Paranaguá, autorizado pelo dono):** entrega + CPF + endereço + intermediador (CNPJ iFood
+  14.380.200/0001-21 + merchant id como idCadIntTran) → **AUTORIZADA**; entrega **sem CPF** → 787 (o Brasil NFe não
+  manda o grupo dest sem documento); retirada (indPres 1) + intermediador → o Brasil NFe recusa ("só com indPres 2, 3,
+  4 ou 9"). **Regra:** entrega com CPF (o cliente pediu CPF na nota) → indPres 4 + intermediador + destinatário com
+  endereço (código IBGE pelo CEP: ViaCEP, depois lista do IBGE); entrega sem CPF, endereço incompleto, retirada e
+  consumo no local → presencial sem intermediador (como o delivery da loja). O iFood esconde o CPF, então a maioria
+  sai presencial. Para mudar isso: perguntar ao Brasil NFe se aceitam destinatário sem documento (idEstrangeiro vazio).
+- **Regra do dono (05/10):** a loja só abre no iFood depois de abrir o caixa no ERPOS.

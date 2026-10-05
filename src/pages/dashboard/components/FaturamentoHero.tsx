@@ -4,14 +4,24 @@ import type { DashboardMeta } from '@/hooks/useDashboardPainel';
 const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 const DIAS = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
 
-export function Variacao({ pct, rotulo }: { pct: number | undefined; rotulo: string }) {
+/** Com `onPorQue` vira botão: tocar na variação abre "Por que mudou?" (2026-10-05). */
+export function Variacao({ pct, rotulo, onPorQue }: { pct: number | undefined; rotulo: string; onPorQue?: () => void }) {
   if (pct === undefined || !Number.isFinite(pct)) return null;
   const sobe = pct >= 0;
-  return (
-    <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-semibold tabular-nums whitespace-nowrap ${sobe ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+  const cls = `inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[11px] font-semibold tabular-nums whitespace-nowrap ${sobe ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`;
+  const conteudo = (
+    <>
       <i className={sobe ? 'ri-arrow-up-line' : 'ri-arrow-down-line'} />
       {Math.abs(pct).toFixed(0)}% {rotulo}
-    </span>
+    </>
+  );
+  if (!onPorQue) return <span className={cls}>{conteudo}</span>;
+  return (
+    <button type="button" onClick={onPorQue} title="Por que mudou?" aria-label={`${sobe ? 'Alta' : 'Queda'} de ${Math.abs(pct).toFixed(0)}% ${rotulo}. Por que mudou?`}
+      className={`${cls} cursor-pointer hover:brightness-95 border-0`}>
+      {conteudo}
+      <i className="ri-question-line text-[12px] opacity-70" />
+    </button>
   );
 }
 
@@ -29,11 +39,13 @@ interface Props {
   horaAgora: string;
   podeEditarMetas: boolean;
   onEditarMetas: () => void;
+  /** tocar na variação abre "Por que mudou?" */
+  onPorQue?: () => void;
 }
 
 export default function FaturamentoHero({
   titulo, ajuda, valor, varSemana, rotuloSemana, meta, diaSemana, ritmoEsperado, horaAgora,
-  podeEditarMetas, onEditarMetas,
+  podeEditarMetas, onEditarMetas, onPorQue,
 }: Props) {
   const alvo = meta?.faturamento ?? 0;
   const pct = alvo > 0 ? valor / alvo : 0;
@@ -60,7 +72,7 @@ export default function FaturamentoHero({
         <div className="flex items-end gap-x-3 gap-y-1 mt-1.5 flex-wrap">
           <p className="text-3xl md:text-4xl font-bold tabular-nums tracking-tight text-zinc-900">{fmt(valor)}</p>
           <div className="flex gap-1.5 pb-1.5 flex-wrap">
-            <Variacao pct={varSemana} rotulo={rotuloSemana} />
+            <Variacao pct={varSemana} rotulo={rotuloSemana} onPorQue={onPorQue} />
           </div>
         </div>
 

@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FileCheck2, Save, Wifi, ShieldCheck, Printer } from 'lucide-react';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useImpressoras } from '@/contexts/ImpressorasContext';
+import { confirmar } from '@/components/base/Dialogos';
 import { CSOSN_OPTIONS, CST_ICMS_OPTIONS, CFOP_OPTIONS, NCM_SUGESTOES, type FiscalSettingsRow } from '@/lib/fiscal';
 import EnvioXmlContabilidade from './EnvioXmlContabilidade';
 
@@ -65,15 +66,28 @@ export default function FiscalTab() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [hasToken, setHasToken] = useState(false);
+  // Falha ao LER: a tela ficaria com o padrão (fiscal desligado, homologação) e o Salvar
+  // gravaria isso por cima da configuração real. Enquanto houver erro, o Salvar fica travado.
+  const [erroLeitura, setErroLeitura] = useState<string | null>(null);
+  const [leituraTick, setLeituraTick] = useState(0);
+  // O que está gravado no banco (para só perguntar ao LIGAR a produção, não a cada salvar).
+  const gravadoRef = useRef<{ enabled: boolean; environment: number }>({ enabled: false, environment: 2 });
   const podeEditar = user?.perfil === 'admin' || user?.perfil === 'gerente';
 
   useEffect(() => {
     if (!user?.tenantId) { setLoading(false); return; }
     (async () => {
-      const { data } = await supabase.from('fiscal_settings').select(SELECT_COLS).eq('tenant_id', user.tenantId).maybeSingle();
+      setErroLeitura(null);
+      const { data, error: erroSel } = await supabase.from('fiscal_settings').select(SELECT_COLS).eq('tenant_id', user.tenantId).maybeSingle();
+      if (erroSel) {
+        setErroLeitura(erroSel.message || 'Falha na leitura');
+        setLoading(false);
+        return;
+      }
       // has_token não é coluna: pergunta à Edge Function (que enxerga o token) só quando existe linha.
       if (data) {
         const row = data as unknown as FiscalSettingsRow;
+        gravadoRef.current = { enabled: row.enabled === true, environment: Number(row.environment) || 2 };
         setForm(f => ({ ...f, ...Object.fromEntries(Object.entries(row).filter(([, v]) => v !== null && v !== undefined)) as Partial<Form>, provider_token: '' }));
         const { data: st } = await invokeWithAuth<{ success: boolean; data?: { has_token?: boolean } | null }>('fiscal-write', { body: { action: 'get_settings', tenant_id: user.tenantId } }).catch(() => ({ data: null }));
         setHasToken(Boolean(st?.data?.has_token));
@@ -84,12 +98,28 @@ export default function FiscalTab() {
       }
       setLoading(false);
     })();
-  }, [user?.tenantId]);
+  }, [user?.tenantId, leituraTick]);
 
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm(f => ({ ...f, [k]: v }));
 
   const salvar = async (): Promise<boolean> => {
     if (!user?.tenantId) return false;
+    if (erroLeitura) {
+      toastError('Não salvou', 'A configuração fiscal não foi carregada, então não vou gravar por cima. Use "Tentar de novo" no aviso vermelho.');
+      return false;
+    }
+    // Ligar a emissão em PRODUÇÃO é o único passo com efeito fiscal real: pergunta antes.
+    const ligandoProducao = form.enabled && form.environment === 1
+      && !(gravadoRef.current.enabled && gravadoRef.current.environment === 1);
+    if (ligandoProducao) {
+      const ok = await confirmar({
+        titulo: 'Ligar a NFC-e em Produção?',
+        mensagem: 'As notas passam a valer de verdade na SEFAZ: cada venda emite uma nota fiscal real, com valor fiscal e imposto. Confirme com o contador antes.',
+        confirmarLabel: 'Sim, ligar em Produção',
+        perigo: true,
+      });
+      if (!ok) return false;
+    }
     setSaving(true);
     const { provider_token, has_token: _h, ...rest } = form;
     const settings: Record<string, unknown> = { ...rest };
@@ -102,6 +132,7 @@ export default function FiscalTab() {
       toastError('Erro ao salvar', error?.message || data?.error || 'Tente novamente');
       return false;
     }
+    gravadoRef.current = { enabled: form.enabled, environment: form.environment };
     setHasToken(Boolean(data.data?.has_token));
     set('provider_token', '');
     toastSuccess('Configuração fiscal salva');
@@ -145,6 +176,19 @@ export default function FiscalTab() {
           </p>
         </div>
       </div>
+
+      {erroLeitura && (
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
+          <i className="ri-error-warning-line text-red-500 text-base" />
+          <p className="flex-1 min-w-[200px] text-xs font-semibold text-red-700">
+            Não consegui carregar as configurações fiscais ({erroLeitura}). Os valores abaixo NÃO são os da loja, e por isso o Salvar está bloqueado.
+          </p>
+          <button onClick={() => { setLoading(true); setLeituraTick(n => n + 1); }}
+            className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap">
+            Tentar de novo
+          </button>
+        </div>
+      )}
 
       {!podeEditar && (
         <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg p-3">Apenas administradores e supervisores podem alterar a configuração fiscal.</p>
@@ -312,7 +356,7 @@ export default function FiscalTab() {
 
       {podeEditar && (
         <div className="flex justify-end">
-          <button onClick={() => salvar()} disabled={saving}
+          <button onClick={() => salvar()} disabled={saving || !!erroLeitura}
             className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-amber-500 rounded-lg hover:bg-amber-600 disabled:opacity-40 cursor-pointer whitespace-nowrap">
             <Save size={15} /> {saving ? 'Salvando…' : 'Salvar configuração fiscal'}
           </button>

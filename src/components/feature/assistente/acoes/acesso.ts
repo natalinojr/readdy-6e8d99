@@ -4,9 +4,8 @@
 // Sidebar, abas do Financeiro, módulos por usuário). A gravação continua conferida no servidor
 // (edge/RLS) — isto aqui só evita botão que daria "sem permissão".
 // Ação nova sem linha aqui NÃO aparece para ninguém (nem para o dono): acrescente a regra junto.
-import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useLojaTemIfood } from '@/hooks/useLojaTemIfood';
 import { usePermissoes, RECEBER_MODULO_KEYS, type PermissaoKey } from '@/hooks/usePermissoes';
 import { useModuleAccess, type ModuloLivre } from '@/hooks/useModuleAccess';
 import { rotaForcada } from '@/lib/acessoRota';
@@ -47,6 +46,8 @@ export function rotaLiberada(rota: string, c: ContextoAcesso): boolean {
   // /receber = Recebimentos e pagamentos: quem recebe mercadoria (estoque_receber abre só ele;
   // quem movimenta estoque também entra) ou quem faz/aprova pedido de pagamento.
   if (caminho.startsWith('/receber')) return algum(c, ...RECEBER_MODULO_KEYS);
+  // Área iFood (2026-10-05): só em loja com iFood na API; mesmas chaves da RotaProtegida.
+  if (caminho.startsWith('/ifood')) return !!c.ifood && c.temPdv !== false && algum(c, 'rel_ifood', 'fin_ifood', 'gestao_pedidos', 'gestao_delivery');
   if (caminho.startsWith('/estoque')) return c.pode('estoque_movimentar');
   if (caminho.startsWith('/cardapio')) return c.pode('cardapio_editar');
   if (caminho.startsWith('/pedidos')) return c.pode('gestao_pedidos');
@@ -136,27 +137,6 @@ export function acaoLiberada(id: string, c: ContextoAcesso): boolean {
 }
 
 /** Contexto de acesso do usuário logado. `carregando` = permissões/módulos ainda chegando. */
-// Loja ativa tem iFood ligado na API? Uma leitura por loja na sessão (quase nunca muda).
-const IFOOD_POR_LOJA = new Map<string, boolean>();
-function useLojaTemIfood(tenantId: string | undefined): boolean | null {
-  const [tem, setTem] = useState<boolean | null>(tenantId ? IFOOD_POR_LOJA.get(tenantId) ?? null : false);
-  useEffect(() => {
-    if (!tenantId) { setTem(false); return; }
-    const salvo = IFOOD_POR_LOJA.get(tenantId);
-    if (salvo !== undefined) { setTem(salvo); return; }
-    let vivo = true;
-    setTem(null);
-    supabase.from('fin_ifood_merchants').select('merchant_id', { count: 'exact', head: true }).eq('tenant_id', tenantId).eq('api_sync', true)
-      .then(({ count, error }) => {
-        const v = !error && (count ?? 0) > 0;
-        if (!error) IFOOD_POR_LOJA.set(tenantId, v);
-        if (vivo) setTem(v);
-      });
-    return () => { vivo = false; };
-  }, [tenantId]);
-  return tem;
-}
-
 export function useAcessoAcoes(): ContextoAcesso & { carregando: boolean } {
   const { user, hasNoTenants } = useAuth();
   const { hasPermissao, loading } = usePermissoes();

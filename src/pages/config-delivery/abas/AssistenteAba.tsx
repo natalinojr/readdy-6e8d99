@@ -123,7 +123,7 @@ export default function AssistenteAba() {
         .update({ ...camposAssistente(bot), updated_at: new Date().toISOString() })
         .eq('tenant_id', tenantId).select('*').maybeSingle();
       if (error) { toast.error('Não salvou o assistente', error.message); return; }
-      if (!data) { toast.error('Não salvou o assistente', 'O banco não aceitou a mudança. Só o dono da loja pode mudar o assistente.'); return; }
+      if (!data) { toast.error('Não salvou o assistente', 'O banco não aceitou a mudança. Só o Administrador da loja pode mudar o assistente.'); return; }
       setSalvo(data as Bot); setBot(data as Bot);
       toast.success('Assistente salvo', 'Vale para as próximas conversas.');
     } finally {

@@ -8,6 +8,7 @@ import { getAppUrl, getPublicUrl } from '@/lib/appUrl';
 import { supabase } from '@/lib/supabase';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { confirmar } from '@/components/base/Dialogos';
 
 /* ─── Setor type alias for local use ─── */
 type SetorConfig = SectorConfig;
@@ -588,12 +589,18 @@ export default function MesasConfigTab() {
   }, [settings.sectors_config]);
 
   // Persist sectors to DB whenever they change (after initial load)
-  const persistSetores = useCallback(async (novosSetores: SectorConfig[]) => {
-    await salvarSettings({ sectors_config: novosSetores });
-  }, [salvarSettings]);
-
   const { mesas: mesasDB, loading: loadingMesas, criarMesa, editarMesa, excluirMesa: excluirMesaDB } = useTablesConfig();
   const { success: toastSuccess, error: toastError } = useToast();
+
+  // Devolve se gravou de verdade. Quem chama desfaz a mudança na tela quando não gravou.
+  const persistSetores = useCallback(async (novosSetores: SectorConfig[]): Promise<boolean> => {
+    const r = await salvarSettings({ sectors_config: novosSetores });
+    if (!r.success) {
+      toastError('Não salvou os setores', `${r.error || 'Erro desconhecido.'} A tela voltou ao que está gravado.`);
+      return false;
+    }
+    return true;
+  }, [salvarSettings, toastError]);
   const [mesas, setMesas] = useState<MesaConfig[]>([]);
   useEffect(() => { if (mesasDB.length > 0 || !loadingMesas) setMesas(mesasDB); }, [mesasDB, loadingMesas]);
   const [filtroSetor, setFiltroSetor] = useState<string>('Todos');
@@ -633,11 +640,18 @@ export default function MesasConfigTab() {
 
   const handleRegenerarQR = async () => {
     if (!universalMesa || !user?.tenantId) return;
+    const ok = await confirmar({
+      titulo: 'Regenerar o QR Code universal?',
+      mensagem: 'Os QR Codes já impressos nas mesas e no balcão param de funcionar. Será preciso imprimir e trocar todos.',
+      confirmarLabel: 'Sim, regenerar',
+      perigo: true,
+    });
+    if (!ok) return;
     try {
       const novoQrToken = crypto.randomUUID().replace(/-/g, '');
       // Usa invokeWithAuth para bypassar RLS — evita conflito de auth_tenant_id()
       // quando o usuário tem múltiplas lojas
-      const { error } = await invokeWithAuth('config-write', {
+      const { data: respQr, error } = await invokeWithAuth<{ success?: boolean; error?: string }>('config-write', {
         body: {
           action: 'update_table',
           tenant_id: user.tenantId,
@@ -645,8 +659,8 @@ export default function MesasConfigTab() {
           qr_token: novoQrToken,
         },
       });
-      if (error) {
-        toastError('Erro ao regenerar QR Code', 'error');
+      if (error || respQr?.success === false) {
+        toastError('Não regenerou o QR Code', error?.message || respQr?.error || 'Tente de novo. O QR atual continua valendo.');
         return;
       }
       // Recarregar via fn_get_tables
@@ -707,6 +721,8 @@ export default function MesasConfigTab() {
 
   const handleSalvarSetor = useCallback(async (dados: Omit<SectorConfig, 'id'>) => {
     let novosSetores: SectorConfig[];
+    const setoresAntes = setores;
+    let renomeado: { de: string; para: string } | null = null;
     if (setorModal === 'new') {
       const novo: SectorConfig = { id: `s${Date.now()}`, ...dados };
       novosSetores = [...setores, novo];
@@ -714,25 +730,40 @@ export default function MesasConfigTab() {
       const nomeAntigo = setorModal.nome;
       novosSetores = setores.map((s) => s.id === setorModal.id ? { ...s, ...dados } : s);
       if (nomeAntigo !== dados.nome) {
+        renomeado = { de: nomeAntigo, para: dados.nome };
         setMesas((prev) => prev.map((m) => m.setor === nomeAntigo ? { ...m, setor: dados.nome } : m));
       }
     } else {
       return;
     }
     setSetores(novosSetores);
-    await persistSetores(novosSetores);
+    const gravou = await persistSetores(novosSetores);
+    if (!gravou) {
+      setSetores(setoresAntes);
+      if (renomeado) {
+        const r = renomeado;
+        setMesas((prev) => prev.map((m) => m.setor === r.para ? { ...m, setor: r.de } : m));
+      }
+    }
   }, [setorModal, setores, persistSetores]);
 
   const handleExcluirSetor = useCallback(async (setor: SectorConfig) => {
     const principal = setores.find((s) => s.id !== setor.id);
     const fallback = principal?.nome ?? 'Principal';
+    const mesasDoSetor = mesas.filter((m) => m.setor === setor.nome).map((m) => m.id);
     setMesas((prev) => prev.map((m) => m.setor === setor.nome ? { ...m, setor: fallback } : m));
     const novosSetores = setores.filter((s) => s.id !== setor.id);
     setSetores(novosSetores);
-    await persistSetores(novosSetores);
-    if (filtroSetor === setor.nome) setFiltroSetor('Todos');
     setExcluirSetorModal(null);
-  }, [setores, filtroSetor, persistSetores]);
+    const gravou = await persistSetores(novosSetores);
+    if (!gravou) {
+      // Não gravou: o setor e as mesas voltam como estavam.
+      setSetores(setores);
+      setMesas((prev) => prev.map((m) => mesasDoSetor.includes(m.id) ? { ...m, setor: setor.nome } : m));
+      return;
+    }
+    if (filtroSetor === setor.nome) setFiltroSetor('Todos');
+  }, [setores, mesas, filtroSetor, persistSetores]);
 
   /* Mesa helpers — persistidos no banco */
   const handleSalvarMesa = useCallback(async (dados: Partial<MesaConfig>) => {

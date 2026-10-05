@@ -223,7 +223,7 @@ export default function InventarioTab() {
                   {textoDiasSemContar(diasSemContar)} Programe quando contar e o que contar:
                   {' '}no dia, quem cuida do estoque recebe aviso no celular.
                 </p>
-                {!podeConfigurar && <p className="text-[11.5px] text-zinc-400 mt-1.5">Quem programa é o supervisor ou o dono.</p>}
+                {!podeConfigurar && <p className="text-[11.5px] text-zinc-400 mt-1.5">Quem programa é o Supervisor ou o Administrador.</p>}
               </>
             ) : (
               <ul className="space-y-1">

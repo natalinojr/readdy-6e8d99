@@ -54,7 +54,7 @@ const r2 = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) && n > 0
 const dataOk = (d: unknown) => (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(`${d}T12:00:00Z`)) ? d : null);
 const txt = (s: unknown, max = 120) => (typeof s === 'string' && s.trim() ? s.trim().slice(0, max) : null);
 
-async function lerComIa(model: string, bloco: any, admin: any, tenantId: string, userId: string): Promise<any | { erro: string; status: number }> {
+async function lerComIa(model: string, bloco: any, admin: any, tenantId: string, userId: string, feature: string): Promise<any | { erro: string; status: number }> {
   const client = new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY') ?? '' });
   try {
     const res: any = await client.messages.create({
@@ -62,7 +62,7 @@ async function lerComIa(model: string, bloco: any, admin: any, tenantId: string,
       output_config: { format: { type: 'json_schema', schema: SCHEMA } },
       messages: [{ role: 'user', content: [bloco, { type: 'text', text: 'Leia este boleto.' }] }],
     } as any);
-    await registrarUsoIa(admin, { feature: 'leitura-boleto-beneficio', model: res.model, usage: res.usage, tenantId, userId });
+    await registrarUsoIa(admin, { feature, model: res.model, usage: res.usage, tenantId, userId });
     if (res.stop_reason === 'refusal') return { erro: 'A leitura foi recusada para este arquivo.', status: 422 };
     return JSON.parse((res.content ?? []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join(''));
   } catch (e) {
@@ -73,7 +73,9 @@ async function lerComIa(model: string, bloco: any, admin: any, tenantId: string,
   }
 }
 
-export async function lerBoletoBeneficio(admin: any, tenantId: string, userId: string, arq: { base64?: string; media_type?: string }): Promise<{ lido?: BoletoBeneficio; erro?: string; status?: number }> {
+// `feature` só rotula o custo em ai_usage_events: a foto do boleto no cartão da Hoje (assistente-app ›
+// conta_ler_boleto, 2026-10-05) reaproveita esta leitura e se identifica como 'leitura-boleto-conta'.
+export async function lerBoletoBeneficio(admin: any, tenantId: string, userId: string, arq: { base64?: string; media_type?: string }, feature = 'leitura-boleto-beneficio'): Promise<{ lido?: BoletoBeneficio; erro?: string; status?: number }> {
   if (!Deno.env.get('ANTHROPIC_API_KEY')) return { erro: 'Leitura por IA não configurada no servidor.', status: 503 };
   const tipo = String(arq?.media_type ?? '').toLowerCase();
   const data = String(arq?.base64 ?? '').replace(/^data:[^;]+;base64,/, '').replace(/\s/g, '');
@@ -91,11 +93,11 @@ export async function lerBoletoBeneficio(admin: any, tenantId: string, userId: s
   const bloco = pdf
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data } }
     : { type: 'image', source: { type: 'base64', media_type: tipo, data } };
-  let ia = await lerComIa(MODEL, bloco, admin, tenantId, userId);
+  let ia = await lerComIa(MODEL, bloco, admin, tenantId, userId, feature);
   if (ia?.erro) return ia;
   if (!ia?.e_boleto) return { erro: 'Isso não parece um boleto. Mande o PDF do boleto ou uma foto dele inteiro.' };
   if (r2(ia.valor) == null) {
-    const ia2 = await lerComIa(MODEL_2, bloco, admin, tenantId, userId);
+    const ia2 = await lerComIa(MODEL_2, bloco, admin, tenantId, userId, feature);
     if (!ia2?.erro && ia2?.e_boleto) ia = ia2;
   }
 

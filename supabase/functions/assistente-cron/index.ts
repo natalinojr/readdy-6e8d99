@@ -29,6 +29,7 @@ import {
 } from '../_shared/previsao.ts';
 import { PAPEL_DO_BANCO, DONO_EMAIL } from '../_shared/pendencia-visivel.ts';
 import { situacaoPlano, descreverFrequencia, type PlanoContagem } from '../_shared/estoque-planos.ts';
+import { decidirAvisoEstoque, resumoEstoque, painelEstoque, ROTA_COMPRAR, type InsumoCritico } from '../_shared/estoque-aviso.ts';
 import { contagemDaLoja, insumosDaSituacao, papeisDaPessoa, precisaSituacao, rotinaDeHoje, type DadosRotina, type EstadoItem } from '../_shared/rotina.ts';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import { registrarUsoIa } from '../_shared/ai-usage.ts';
@@ -1212,9 +1213,10 @@ async function dueTomorrowText(tenants: Array<{ id: string; name: string }>, tod
 // Estoque crítico: manda só os itens que ENTRARAM em crítico desde o último aviso
 // (e quantos saíram). Estado por loja: lista de ids já avisados.
 // deno-lint-ignore no-explicit-any
-async function stockText(tenants: Array<{ id: string; name: string }>, state: any): Promise<{ text: string | null; newState: Record<string, string[]>; painel?: Painel }> {
+async function stockText(tenants: Array<{ id: string; name: string }>, state: any): Promise<{ text: string | null; newState: Record<string, string[]>; painel?: Painel; criticos: Record<string, InsumoCritico[]> }> {
   const prev: Record<string, string[]> = state.stock ?? {};
   const next: Record<string, string[]> = {};
+  const criticos: Record<string, InsumoCritico[]> = {};
   const parts: string[] = [];
   const pLin: NonNullable<Painel['lin']> = [];
   let totalCritico = 0;
@@ -1223,6 +1225,7 @@ async function stockText(tenants: Array<{ id: string; name: string }>, state: an
       select id::text, name, current_stock::float, min_stock::float, unit::text from ingredients
       where tenant_id = ${t.id} and deleted_at is null and insumo_abaixo_minimo(track_stock, min_stock, current_stock) order by name`;
     next[t.id] = rows.map((r) => r.id);
+    criticos[t.id] = rows.map((r) => ({ id: r.id, nome: r.name, atual: r.current_stock, minimo: r.min_stock, unidade: r.unit }));
     const before = new Set(prev[t.id] ?? []);
     const novos = rows.filter((r) => !before.has(r.id));
     const resolvidos = (prev[t.id] ?? []).filter((id) => !next[t.id].includes(id)).length;
@@ -1243,7 +1246,7 @@ async function stockText(tenants: Array<{ id: string; name: string }>, state: an
     t: 'Abaixo do mínimo', s: 'O que mudou', kpi: { p: { l: 'Abaixo do mínimo agora', v: String(totalCritico) } }, lin: pLin,
     bt: [{ l: 'Estoque', r: '/estoque', i: 'ri-archive-line' }],
   } : undefined;
-  return { text: parts.length ? `📦 *Abaixo do mínimo — o que mudou*\n\n${parts.join('\n\n')}` : null, newState: next, painel };
+  return { text: parts.length ? `📦 *Abaixo do mínimo — o que mudou*\n\n${parts.join('\n\n')}` : null, newState: next, painel, criticos };
 }
 
 // ── Avisos da equipe (2026-09-25) ───────────────────────────────────────────
@@ -1509,7 +1512,7 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
           p_tenant: t.id, p_kind: 'estoque_critico', p_ref: 'pendentes',
           p_titulo: `${est.n} ${est.n === 1 ? 'insumo abaixo' : 'insumos abaixo'} do mínimo`,
           p_detalhe: 'A lista de compras está no Início do Estoque, por fornecedor.',
-          p_payload: { total: est.n }, p_rota: '/estoque',
+          p_payload: { total: est.n }, p_rota: ROTA_COMPRAR,
           p_urgencia: 'normal', p_acao_requerida: false, p_origem: 'cron', p_reabrir: true,
         });
         if (antes?.status === 'vista' && est.n > Number(antes.payload?.total ?? 0)) {
@@ -1932,13 +1935,15 @@ async function proactive(admin: SupabaseClient, cfg: Record<string, any>, ownerC
     }
   }
   if (want('stock') && (dry || (inWindow(pro.stock.time, now) && state.stock_date !== today))) {
-    const { text, newState, painel: pnStock } = await stockText(tenants, state);
-    // Equipe: por loja, com o estado de ANTES (o "o que mudou" é o mesmo que o dono recebe).
+    const { text, newState, painel: pnStock, criticos } = await stockText(tenants, state);
+    // Equipe (2026-10-05): UM aviso por loja, com os nomes, e só quando entrou insumo novo desde o estado
+    // de ANTES (_shared/estoque-aviso.ts). Sem novidade não repete; só melhorou também não avisa.
     if (!dry) {
       for (const lj of tenants) {
         try {
-          const u = await stockText([lj], state);
-          if (u.text && u.painel) await avisarEquipe(admin, lj, 'estoque_movimentar', 'estoque_critico', today, `Estoque crítico — ${lj.name}`, { ...u.painel, s: lj.name }, cfg.owner_user_id);
+          const atuais = criticos[lj.id] ?? [];
+          const d = decidirAvisoEstoque((state.stock ?? {})[lj.id], atuais);
+          if (d.avisar) await avisarEquipe(admin, lj, 'estoque_movimentar', 'estoque_critico', today, resumoEstoque(lj.name, atuais, d.novos), painelEstoque(lj.name, atuais, d.novos) as Painel, cfg.owner_user_id);
         } catch (e) { log('ERROR', 'avisos equipe estoque', { tenant: lj.id, error: errMsg(e) }); }
       }
     }

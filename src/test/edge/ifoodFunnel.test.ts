@@ -129,3 +129,73 @@ describe('revisão 2026-09-27', () => {
     ]);
   });
 });
+
+describe('ficha do iFood (2026-10-05): baixa de toda a ficha', () => {
+  const F = (level: string, name: string, group: string, kind: string, id: string, quantity: number, unit: string | null = null, ordem = 0) => ({
+    level, name_key: name.toLowerCase(), group_key: group.toLowerCase(), kind, quantity, unit, ordem,
+    menu_item_id: kind === 'item' ? id : null, ingredient_id: kind === 'insumo' ? id : null,
+  });
+  const menuF = new Map<string, any>([
+    ['mi-burger', { skip_kds: false, station_id: 'st-chapa', name: 'Burger' }],
+    ['mi-batata', { skip_kds: false, station_id: 'st-frita', name: 'Batata' }],
+    ['mi-coca', { skip_kds: true, station_id: 'st-bar', name: 'Coca lata' }],
+  ]);
+  const combo = [{ idx: 1, name: 'Combo Casal', quantity: 2, unit_price: 50, options: [] }];
+
+  it('vários itens: 1º item com qtd 1 é o produto; os outros viram linhas a R$ 0 "parte de"; insumos saem para a baixa solta', () => {
+    const fichas = [
+      F('item', 'Combo Casal', '', 'item', 'mi-burger', 1, null, 0),
+      F('item', 'Combo Casal', '', 'item', 'mi-batata', 2, null, 1),
+      F('item', 'Combo Casal', '', 'insumo', 'ing-emb', 1, 'un', 2),
+      F('item', 'Combo Casal', '', 'insumo', 'ing-ketchup', 15, 'g', 3),
+    ];
+    const r = m.montarPedidoErpos(pedido(), combo, [], menuF, fichas);
+    expect(r.items).toHaveLength(2);
+    expect(r.items[0]).toMatchObject({ item_id: 'mi-burger', item_name: 'Combo Casal', item_price: 50, quantity: 2, station_id: 'st-chapa' });
+    expect(r.items[1]).toMatchObject({ item_id: 'mi-batata', item_name: 'Batata', item_price: 0, quantity: 4, notes: 'parte de Combo Casal', station_id: 'st-frita' });
+    expect(r.insumos).toEqual([
+      { ingredient_id: 'ing-emb', menu_item_id: null, quantity: 2, unit: 'un', origem: 'Combo Casal' },
+      { ingredient_id: 'ing-ketchup', menu_item_id: null, quantity: 30, unit: 'g', origem: 'Combo Casal' },
+    ]);
+    expect(r.semVinculo).toEqual([]);
+    expect(r.order.subtotal).toBe(37); // valores do pedido não mudam com a ficha
+  });
+
+  it('ficha vale mais que a ligação simples (1 item ×1 + insumo): mantém o item e baixa o insumo extra', () => {
+    const lk = [L('item', 'Combo Casal', '', 'item', 'mi-burger')];
+    const fichas = [F('item', 'Combo Casal', '', 'item', 'mi-burger', 1), F('item', 'Combo Casal', '', 'insumo', 'ing-emb', 1, 'un', 1)];
+    const r = m.montarPedidoErpos(pedido(), combo, lk, menuF, fichas);
+    expect(r.items).toHaveLength(1);
+    expect(r.items[0]).toMatchObject({ item_id: 'mi-burger', quantity: 2 });
+    expect(r.insumos).toEqual([{ ingredient_id: 'ing-emb', menu_item_id: null, quantity: 2, unit: 'un', origem: 'Combo Casal' }]);
+  });
+
+  it('sem item com qtd 1: produto entra sem item (texto) e todas as partes viram linhas; só bebidas → produto pula a cozinha', () => {
+    const fichas = [F('item', 'Combo Casal', '', 'item', 'mi-coca', 2)];
+    const r = m.montarPedidoErpos(pedido(), combo, [], menuF, fichas);
+    expect(r.items[0]).toMatchObject({ item_id: null, item_price: 50, skip_kds: true });
+    expect(r.items[1]).toMatchObject({ item_id: 'mi-coca', quantity: 4, item_price: 0, skip_kds: true, notes: 'parte de Combo Casal' });
+  });
+
+  it('item com quantidade quebrada (½ porção) não vira linha: vai para a baixa solta pela ficha do item', () => {
+    const its = [{ idx: 1, name: 'Combo Casal', quantity: 1, unit_price: 50, options: [] }];
+    const fichas = [F('item', 'Combo Casal', '', 'item', 'mi-burger', 1), F('item', 'Combo Casal', '', 'item', 'mi-batata', 0.5, null, 1)];
+    const r = m.montarPedidoErpos(pedido(), its, [], menuF, fichas);
+    expect(r.items).toHaveLength(1);
+    expect(r.insumos).toEqual([{ ingredient_id: null, menu_item_id: 'mi-batata', quantity: 0.5, unit: null, origem: 'Combo Casal' }]);
+  });
+
+  it('complemento com ficha: texto com o preço no produto, itens a R$ 0, insumos × qtd do item × qtd do complemento', () => {
+    const its = [{ idx: 1, name: 'X', quantity: 2, unit_price: 10, options: [{ id: 'z', name: 'Batata grande', groupName: 'Acompanha', quantity: 1, price: 6, unitPrice: 6 }] }];
+    const fichas = [F('complemento', 'Batata grande', 'Acompanha', 'item', 'mi-batata', 1), F('complemento', 'Batata grande', 'Acompanha', 'insumo', 'ing-cx', 1, 'un', 1)];
+    const r = m.montarPedidoErpos(pedido(), its, [], menuF, fichas);
+    expect(r.items[0].options).toEqual([{ option_id: null, option_name: 'Batata grande', group_name: 'Acompanha', additional_price: 6 }]);
+    expect(r.items[1]).toMatchObject({ item_id: 'mi-batata', quantity: 2, item_price: 0, notes: 'parte de Batata grande' });
+    expect(r.insumos).toEqual([{ ingredient_id: 'ing-cx', menu_item_id: null, quantity: 2, unit: 'un', origem: 'Batata grande' }]);
+    expect(r.semVinculo).toEqual(['X']);
+  });
+
+  it('sem ficha: nada muda (insumos vazio)', () => {
+    expect(m.montarPedidoErpos(pedido(), itens, links, menu).insumos).toEqual([]);
+  });
+});

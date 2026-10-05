@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { somarDias } from '@/lib/dateUtils';
 import { useAuth } from '@/contexts/AuthContext';
@@ -36,6 +37,18 @@ export default function InicioTab({ situacao, carregando, erro, onReload }: {
   const { abrirArrumar } = useEstoqueTela();
 
   const hoje = useMemo(() => (situacao ? contagemDeHoje(situacao) : null), [situacao]);
+
+  // Vindo do aviso de estoque (?ir=comprar): rola até a lista de compras, que já tem o pedido por fornecedor.
+  const [params, setParams] = useSearchParams();
+  const irComprar = params.get('ir') === 'comprar';
+  useEffect(() => {
+    if (!irComprar || !situacao) return;
+    const t = setTimeout(() => {
+      document.getElementById('inicio-comprar')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setParams({ tab: 'inicio' }, { replace: true });
+    }, 150);
+    return () => clearTimeout(t);
+  }, [irComprar, situacao, setParams]);
 
   if (!situacao || !hoje) {
     return (
