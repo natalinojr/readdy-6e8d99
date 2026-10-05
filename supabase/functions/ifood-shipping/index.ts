@@ -12,7 +12,7 @@
 //   save_config    { client_id, client_secret? }    admin/gerente — só app PRÓPRIO (teste); sem isso a loja usa
 //                                                   o app ERPOS PDV do sistema (secrets IFOOD_PDV_CLIENT_ID/SECRET)
 //   use_system_app                                  volta a loja para o app do sistema
-//   set_options    { homologation_mode?, shipping_enabled?, default_prep_min?, shipping_merchant_id? }
+//   set_options    { homologation_mode?, shipping_enabled?, default_prep_min?, shipping_merchant_id?, order_*?, order_emit_nfce? }
 //   request_user_code / confirm_authorization { authorization_code } / delete_config   admin/gerente
 //   refresh_merchants                                renova o acesso e relê as lojas de cada autorização   admin/gerente
 //   prepare        { order_id }                     formulário pré-preenchido (endereço, telefone, itens, pagamento)
@@ -520,6 +520,64 @@ async function aceiteAutomatico(admin: Admin, c: Ctx, row: any) {
   }
 }
 
+// ── NFC-e dos pedidos do iFood (IFOOD-PEDIDOS-FUNIL.md, etapa 5) ──
+// Só com a chave da loja order_emit_nfce (+ fiscal da loja ligado; a fiscal-write confere e calcula o valor da venda).
+// Pago no app / cobrado pelo entregador do iFood (orders.ifood_repasse): a nota sai quando o pedido fica pronto, sai
+// para entrega ou conclui — o que vier primeiro. Cobrado pela loja: sai quando o caixa recebe (order-write).
+// A chamada à fiscal-write não segura o polling (até 70 s do provedor; trava de 90 s da loja): roda em segundo plano.
+function emSegundoPlano(p: Promise<unknown>) {
+  // deno-lint-ignore no-explicit-any
+  const rt = (globalThis as any).EdgeRuntime;
+  if (rt && typeof rt.waitUntil === 'function') rt.waitUntil(p); else p.catch(() => {});
+}
+
+async function chamarFiscal(body: Record<string, unknown>) {
+  const anon = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+  const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/fiscal-write?forceFunctionRegion=sa-east-1`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${anon}`, apikey: anon, 'x-internal-key': Deno.env.get('FISCAL_INTERNAL_KEY') ?? '' },
+    body: JSON.stringify(body),
+  });
+  return { http: r.status, data: await r.json().catch(() => ({})) as any };
+}
+
+async function notaFiscalIfood(admin: Admin, cfg: any, row: any) {
+  if (cfg.order_emit_nfce !== true || !row.order_id || row.is_test === true || !['ready', 'dispatched', 'concluded'].includes(row.status)) return;
+  const { data: o } = await admin.from('orders').select('id, is_paid, is_draft, ifood_repasse, status, is_training').eq('id', row.order_id).maybeSingle();
+  if (!o || !o.is_paid || !o.ifood_repasse || o.is_draft || o.status === 'cancelled' || o.is_training) return;
+  // Uma tentativa automática só: qualquer documento já criado (autorizado, em andamento, rejeitado, erro, cancelado à
+  // mão) fica com a tela Notas Fiscais. Erro de tempo esgotado pode ter sido autorizado na SEFAZ — reenviar sozinho
+  // geraria uma 2ª nota.
+  const { data: docs } = await admin.from('fiscal_documents').select('id').eq('tenant_id', row.tenant_id).contains('order_ids', [o.id]).limit(1);
+  if ((docs ?? []).length) return;
+  emSegundoPlano(chamarFiscal({ action: 'emit', tenant_id: row.tenant_id, source_type: 'order', source_id: o.id, trigger: 'ifood_funnel' })
+    .then((r) => log('INFO', 'fiscal', 'NFC-e do iFood', { ifood: row.ifood_order_id, order: o.id, http: r.http, status: r.data?.status, msg: String(r.data?.message ?? '').slice(0, 200) }))
+    .catch((e) => log('WARN', 'fiscal', 'NFC-e do iFood falhou', { ifood: row.ifood_order_id, error: String(e) })));
+}
+
+/** iFood cancelou depois da nota: cancela a NFC-e autorizada; se a SEFAZ recusar (prazo) ou a nota ainda estiver
+ *  em emissão, fica o aviso no pedido (ifood_orders.funnel_error). */
+async function cancelarNotaIfood(admin: Admin, row: any) {
+  const { data: docs } = await admin.from('fiscal_documents').select('id, numero, status').eq('tenant_id', row.tenant_id)
+    .contains('order_ids', [row.order_id]).in('status', ['authorized', 'processing', 'pending']);
+  for (const d of (docs ?? []) as any[]) {
+    const nota = `NFC-e${d.numero ? ` nº ${d.numero}` : ''}`;
+    if (d.status !== 'authorized') {
+      await funnelErro(admin, row.id, `Pedido cancelado no iFood com a ${nota} ainda em emissão. Confira em Configurações › Fiscal › Notas e cancele se ela for autorizada.`);
+      continue;
+    }
+    emSegundoPlano((async () => {
+      let erro: string | null = null;
+      try {
+        const r = await chamarFiscal({ action: 'cancel', tenant_id: row.tenant_id, document_id: d.id, justificativa: 'Pedido cancelado pelo iFood depois da emissao da nota' });
+        if (!r.data?.success) erro = String(r.data?.error ?? `HTTP ${r.http}`);
+      } catch (e) { erro = String((e as Error)?.message ?? e); }
+      log(erro ? 'WARN' : 'INFO', 'fiscal', 'cancelar NFC-e do iFood', { ifood: row.ifood_order_id, doc: d.id, erro });
+      if (erro) await funnelErro(admin, row.id, `Pedido cancelado no iFood, mas a ${nota} não foi cancelada (${erro.slice(0, 160)}). Veja em Configurações › Fiscal › Notas.`);
+    })());
+  }
+}
+
 /** Depois de cada evento do pedido: cria no ERPOS, repassa cancelamento ou conclusão. */
 async function funnelAfterEvent(admin: Admin, c: Ctx, rowId: string) {
   const { data: row } = await admin.from('ifood_orders').select('*').eq('id', rowId).maybeSingle();
@@ -528,6 +586,7 @@ async function funnelAfterEvent(admin: Admin, c: Ctx, rowId: string) {
     if (row.order_id) {
       const { error } = await admin.rpc('fn_ifood_cancel_erpos_order', { p_order_id: row.order_id, p_reason: `iFood: ${row.cancel_reason ?? 'cancelado'}` });
       if (error) throw new Error('Cancelar pedido no ERPOS: ' + error.message);
+      await cancelarNotaIfood(admin, row);
     }
     return;
   }
@@ -544,9 +603,11 @@ async function funnelAfterEvent(admin: Admin, c: Ctx, rowId: string) {
       await admin.from('order_items').update({ status: 'delivered', delivered_at: new Date().toISOString() }).eq('order_id', o.id).in('status', ['new', 'preparing', 'ready']);
       await admin.from('orders').update({ status: 'delivered', is_draft: false, updated_at: new Date().toISOString() }).eq('id', o.id);
     }
+    await notaFiscalIfood(admin, c.cfg, row);
     return;
   }
   if (!row.order_id && funnelOn(c.cfg)) await criarPedidoFunil(admin, c, row);
+  else if (row.order_id) await notaFiscalIfood(admin, c.cfg, row);
 }
 
 /** A cada polling da loja no funil: pedidos que não entraram (ex.: caixa fechado), confirmações pendentes e avisos. */
@@ -750,6 +811,7 @@ function safeConfig(cfg: any, auths: any[]) {
     order_enabled: cfg.order_enabled === true,
     order_mode: cfg.order_mode === 'operate' || cfg.order_mode === 'funnel' ? cfg.order_mode : 'read_only',
     order_auto_confirm: cfg.order_auto_confirm !== false,
+    order_emit_nfce: cfg.order_emit_nfce === true,
     order_merchant_ids: cfg.order_merchant_ids ?? [],
   };
 }
@@ -1412,6 +1474,7 @@ Deno.serve(async (req) => {
         if (body.order_mode === 'funnel' && cfg.order_mode !== 'funnel') upd.funnel_since = new Date().toISOString();
       }
       if (typeof body.order_auto_confirm === 'boolean') upd.order_auto_confirm = body.order_auto_confirm;
+      if (typeof body.order_emit_nfce === 'boolean') upd.order_emit_nfce = body.order_emit_nfce;
       let aviso: string | null = null;
       const pedidosLigados = (upd.order_enabled ?? cfg.order_enabled) === true;
       if (Array.isArray(body.order_merchant_ids) || (pedidosLigados && typeof body.order_enabled === 'boolean')) {

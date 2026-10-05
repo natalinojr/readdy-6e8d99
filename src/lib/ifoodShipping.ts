@@ -22,6 +22,7 @@ export interface IfoodShippingConfig {
   order_enabled: boolean;
   order_mode: 'read_only' | 'operate' | 'funnel';
   order_auto_confirm: boolean;
+  order_emit_nfce: boolean; // emitir NFC-e dos pedidos do iFood (funil; exige o fiscal da loja ligado)
   order_merchant_ids: string[];
 }
 

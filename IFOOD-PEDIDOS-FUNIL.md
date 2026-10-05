@@ -147,3 +147,30 @@ d95420e); foi **desfeita** no mesmo dia porque o dono escolheu este desenho. Apr
 - Estoque pela ficha **testado** (#7445 → P2609260011): item→Quesadilla, complemento→item Burrito (linha própria),
   complemento→opção Guacamole — as 7 baixas certas. Vínculos de teste ficaram na Testes PDV.
 
+
+## Etapa 5 — NFC-e (2026-10-05, Claude; chave desligada em todas as lojas)
+- **Regra única do valor da venda** em `supabase/functions/_shared/ifood-valores.ts` (funil e NFC-e usam a mesma):
+  itens pelo preço do iFood + entrega feita pela loja − desconto bancado pela loja (MERCHANT e CHAIN). Cupom do iFood
+  (IFOOD) e da indústria (EXTERNAL) não abatem; taxa de serviço do iFood não entra. **Correção:** a entrega grátis
+  bancada pela loja (benefício DELIVERY_FEE) só abate quando a LOJA entrega — com entregador do iFood a taxa não está
+  na venda (1º pedido real, #1631 da Paranaguá: 31,49 − 5,00 = 26,49; antes o funil gravava 19,50).
+- **fiscal-write:** pedido com `orders.ifood_order_id` usa os valores do `ifood_orders` (não o `orders.total_amount`,
+  que no cobrado pela loja é o que o cliente paga, já sem o cupom do iFood). O que não passou pelo caixa vira tPag 99
+  com descrição **"iFood - online"** (pedido do dono). Emissão automática de pedido do iFood só com
+  `ifood_pdv_config.order_emit_nfce` (trava também o cobrado na entrega, que o order-write dispara ao receber no
+  caixa). Emissão manual (Notas Fiscais, force) não depende da chave.
+- **Quando sai:** pago no app/entregador do iFood (`ifood_repasse`) → no 1º evento READY_TO_PICKUP, DISPATCHED ou
+  CONCLUDED (o que vier primeiro), em segundo plano (não segura o polling). **Uma tentativa automática só**: qualquer
+  documento já criado (erro, rejeição, cancelado à mão) fica para a tela Notas Fiscais — erro de tempo esgotado pode
+  ter sido autorizado na SEFAZ e reenviar sozinho geraria 2ª nota. Cobrado pela loja → quando o caixa recebe.
+  Pedido do iFood decide só pela chave do iFood (não pelas chaves por canal); pedido de teste do iFood (`is_test`)
+  nunca vira nota. Revisão Opus 05/10: 0 P1; 4 P2 + 4 P3 corrigidos.
+- **Cancelado pelo iFood depois da nota:** cancela a NFC-e (justificativa fixa); se a SEFAZ recusar (prazo), fica o
+  aviso em `ifood_orders.funnel_error`.
+- **Chave:** Gestor de Entregas › iFood Entrega › Pedidos do iFood › "Emitir NFC-e dos pedidos do iFood" (aparece no
+  modo "Pedido entra no ERPOS").
+- **Pendente com a contadora:** NFC-e hoje sai "presencial" (indPres 1) sem intermediador; venda por marketplace
+  talvez precise de indPres 4 + intermediador iFood (CNPJ 14.380.200/0001-21, o mesmo que vem como adquirente no Pix).
+  Emissão em produção NÃO testada (Testes PDV sem fiscal); valores e pagamentos cobertos em
+  `src/test/edge/ifoodValores.test.ts`.
+- **Regra do dono (05/10):** a loja só abre no iFood depois de abrir o caixa no ERPOS.

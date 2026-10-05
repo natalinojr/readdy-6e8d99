@@ -19,7 +19,8 @@
 // (balcão, delivery, QR universal, mesa numerada). Sessão de mesa só por emissão manual.
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
-import { calcularValores } from './valores.ts';
+import { calcularValores, completarPagamentoIfood } from './valores.ts';
+import { valorVendaIfood, type ValorIfood } from '../_shared/ifood-valores.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -136,7 +137,7 @@ interface OrderRow {
   discount_amount: number | null; service_fee_amount: number | null; tip_amount: number | null;
   delivery_fee: number | null; subtotal: number | null; total_amount: number | null;
   is_training: boolean | null; is_draft: boolean | null; is_cortesia: boolean | null; is_paid: boolean | null;
-  created_at: string;
+  created_at: string; ifood_order_id?: string | null;
 }
 
 type Admin = SupabaseClient;
@@ -203,7 +204,7 @@ async function loadSettings(admin: Admin, tenantId: string): Promise<FiscalSetti
 async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: string, sourceType: string, sourceId: string, consumer?: { cpf?: string | null; name?: string | null } | null): Promise<{ note: BuiltNote | null; skipReason?: string }> {
   // 1. Pedidos da origem
   let q = admin.from('orders')
-    .select('id, number, origin_type, status, table_session_id, table_number, destination_name, customer_cpf, customer_id, participant_id, discount_amount, service_fee_amount, tip_amount, delivery_fee, subtotal, total_amount, is_training, is_draft, is_cortesia, is_paid, created_at')
+    .select('id, number, origin_type, status, table_session_id, table_number, destination_name, customer_cpf, customer_id, participant_id, discount_amount, service_fee_amount, tip_amount, delivery_fee, subtotal, total_amount, is_training, is_draft, is_cortesia, is_paid, created_at, ifood_order_id')
     .eq('tenant_id', tenantId);
   if (sourceType === 'order') q = q.eq('id', sourceId);
   else if (sourceType === 'table_session') q = q.eq('table_session_id', sourceId);
@@ -217,8 +218,26 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
   }
   const { data: ordersRaw, error: ordErr } = await q;
   if (ordErr) throw new Error(`orders: ${ordErr.message}`);
-  const orders = ((ordersRaw ?? []) as OrderRow[]).filter((o) => o.status !== 'cancelled' && !o.is_draft && !o.is_training);
-  if (orders.length === 0) return { note: null, skipReason: 'Nenhum pedido válido (cancelado, rascunho ou treino)' };
+  const ordersValidos = ((ordersRaw ?? []) as OrderRow[]).filter((o) => o.status !== 'cancelled' && !o.is_draft && !o.is_training);
+  if (ordersValidos.length === 0) return { note: null, skipReason: 'Nenhum pedido válido (cancelado, rascunho ou treino)' };
+
+  // Pedido do iFood (funil): a nota vale a VENDA — itens pelo preço do iFood + entrega da loja − desconto bancado pela
+  // loja (_shared/ifood-valores.ts). O cupom que o iFood banca não abate (volta no repasse) e a comissão/taxas do iFood
+  // são serviço do iFood (despesa), não abatimento da nota. orders.total_amount do cobrado pela loja é o que o cliente
+  // paga (já sem o cupom do iFood), por isso os valores vêm do pedido do iFood e não do orders.
+  const ifoodPorId = new Map<string, ValorIfood>();
+  const ifoodIds = [...new Set(ordersValidos.map((o) => o.ifood_order_id).filter(Boolean))] as string[];
+  if (ifoodIds.length > 0) {
+    const { data: ifs, error: ifErr } = await admin.from('ifood_orders').select('ifood_order_id, order_type, delivered_by, total, benefits')
+      .eq('tenant_id', tenantId).in('ifood_order_id', ifoodIds);
+    if (ifErr) throw new Error(`ifood_orders: ${ifErr.message}`);
+    for (const r of ifs ?? []) ifoodPorId.set(String(r.ifood_order_id), valorVendaIfood(r));
+    if (ifoodPorId.size < ifoodIds.length) throw new Error('Pedido do iFood sem os dados do iFood (ifood_orders)');
+  }
+  const orders = ordersValidos.map((o) => {
+    const v = o.ifood_order_id ? ifoodPorId.get(o.ifood_order_id) : null;
+    return v ? { ...o, subtotal: v.subtotal, total_amount: v.valorVenda, discount_amount: v.descLoja, service_fee_amount: 0, tip_amount: 0, delivery_fee: v.taxaLoja } : o;
+  });
 
   const orderIds = orders.map((o) => o.id);
   const expectedTotal = round2(orders.reduce((s, o) => s + Number(o.total_amount ?? 0), 0));
@@ -344,6 +363,9 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
     byCode.set(code, cur);
   }
   let pagamentos = [...byCode.values()];
+  // iFood: o que não passou pelo caixa (pago no app, ou o cupom que o iFood banca no cobrado pela loja) vem pelo
+  // repasse do iFood → tPag 99 com a descrição "iFood - online" (pedido do dono, 05/10).
+  if (ifoodPorId.size > 0) pagamentos = completarPagamentoIfood(pagamentos, expectedTotal);
   if (pagamentos.length === 0) pagamentos = [{ code: '99', label: 'Outros', paid: expectedTotal, troco: 0 }];
   // Σ(pago − troco) tem que bater com o total da nota; ajusta a maior linha.
   const netPaid = round2(pagamentos.reduce((s, p) => s + p.paid - p.troco, 0));
@@ -711,16 +733,28 @@ Deno.serve({ verify_jwt: false } as any, async (req: Request) => {
         // Regra (2026-09-09): a NFC-e sai SEMPRE por pedido, no pagamento — balcão, delivery,
         // QR universal e mesa numerada. Sessão de mesa só por emissão manual (force).
         if (sourceType === 'table_session') return json({ success: false, status: 'skipped', skipped: true, message: 'Notas saem por pedido, no pagamento; sessão de mesa só manualmente' });
-        let firstOrderId = sourceId;
+        let groupOrderIds = [sourceId];
         if (sourceType === 'payment_group') {
-          const { data: g1 } = await admin.from('payments').select('order_id').eq('tenant_id', tenantId).eq('payment_group_id', sourceId).limit(1).maybeSingle();
-          firstOrderId = String(g1?.order_id ?? '');
+          const { data: gIds } = await admin.from('payments').select('order_id').eq('tenant_id', tenantId).eq('payment_group_id', sourceId);
+          groupOrderIds = [...new Set((gIds ?? []).map((p: any) => String(p.order_id ?? '')).filter(Boolean))];
         }
-        const { data: o } = await admin.from('orders').select('origin_type, table_session_id').eq('id', firstOrderId).maybeSingle();
-        const canal = o?.origin_type === 'delivery' ? 'delivery' : (o?.table_session_id || o?.origin_type === 'table' || o?.origin_type === 'waiter') ? 'mesa' : 'balcao';
-        if (canal === 'delivery' && !settings.emit_on_delivery) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão no delivery desligada' });
-        if (canal === 'mesa' && !settings.emit_on_table_close) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão em mesas/QR desligada' });
-        if (canal === 'balcao' && !settings.emit_on_counter) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão no balcão desligada' });
+        const { data: gOrders } = await admin.from('orders').select('origin_type, table_session_id, ifood_order_id').eq('tenant_id', tenantId).in('id', groupOrderIds.length ? groupOrderIds : [sourceId]);
+        const ifoodIdsGrupo = (gOrders ?? []).map((x: any) => x.ifood_order_id).filter(Boolean) as string[];
+        if (ifoodIdsGrupo.length > 0) {
+          // Pedido do iFood (funil): decide só a chave da loja "Emitir NFC-e dos pedidos do iFood" (Gestor de Entregas ›
+          // iFood Entrega), não as chaves por canal. Vale também para o cobrado na entrega, que passa pelo caixa
+          // (order-write dispara). Pedido de TESTE do iFood nunca vira nota.
+          const { data: ic } = await admin.from('ifood_pdv_config').select('order_emit_nfce').eq('tenant_id', tenantId).maybeSingle();
+          if (ic?.order_emit_nfce !== true) return json({ success: false, status: 'skipped', skipped: true, message: 'Pedido do iFood: NFC-e dos pedidos do iFood desligada nesta loja' });
+          const { data: testes } = await admin.from('ifood_orders').select('ifood_order_id').eq('tenant_id', tenantId).in('ifood_order_id', ifoodIdsGrupo).eq('is_test', true).limit(1);
+          if ((testes ?? []).length) return json({ success: false, status: 'skipped', skipped: true, message: 'Pedido de teste do iFood: NFC-e não emitida' });
+        } else {
+          const o = (gOrders ?? [])[0] as any;
+          const canal = o?.origin_type === 'delivery' ? 'delivery' : (o?.table_session_id || o?.origin_type === 'table' || o?.origin_type === 'waiter') ? 'mesa' : 'balcao';
+          if (canal === 'delivery' && !settings.emit_on_delivery) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão no delivery desligada' });
+          if (canal === 'mesa' && !settings.emit_on_table_close) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão em mesas/QR desligada' });
+          if (canal === 'balcao' && !settings.emit_on_counter) return json({ success: false, status: 'skipped', skipped: true, message: 'Emissão no balcão desligada' });
+        }
       }
       const consumer = body.customer_cpf ? { cpf: String(body.customer_cpf), name: body.customer_name ? String(body.customer_name) : null } : null;
       if (consumer) { const d = onlyDigits(consumer.cpf); if (!((d.length === 11 && isValidCpf(d)) || (d.length === 14 && isValidCnpj(d)))) return errResp('CPF/CNPJ inválido'); }
