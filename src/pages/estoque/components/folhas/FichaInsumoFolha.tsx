@@ -74,6 +74,7 @@ function FichaInterna({ insumoId, onFechar }: { insumoId: string | null; onFecha
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [recarga, setRecarga] = useState(0);
+  const [verPratos, setVerPratos] = useState(false);
 
   const [escolhendo, setEscolhendo] = useState(false);
   const [salvandoForn, setSalvandoForn] = useState(false);
@@ -289,14 +290,25 @@ function FichaInterna({ insumoId, onFechar }: { insumoId: string | null; onFecha
             {!dados ? <span className="text-zinc-400 font-semibold">{erro ? '—' : '…'}</span>
               : pratos.length === 0 ? <span className="text-zinc-400 font-semibold">nenhum prato</span>
               : (
-                <>
+                <button type="button" onClick={() => setVerPratos((v) => !v)} aria-expanded={verPratos}
+                  className="text-right cursor-pointer font-bold text-zinc-800">
                   {pratos.length} {pratos.length === 1 ? 'prato' : 'pratos'}
-                  <span className="block text-xs font-semibold text-zinc-400 truncate">
-                    {pratos.slice(0, 3).map((p) => p.nome).join(', ')}{pratos.length > 3 ? '…' : ''}
-                  </span>
-                </>
+                  <i className={`ml-1 text-zinc-400 ${verPratos ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'}`} />
+                  {!verPratos && (
+                    <span className="block text-xs font-semibold text-zinc-400 truncate">
+                      {pratos.slice(0, 3).map((p) => p.nome).join(', ')}{pratos.length > 3 ? ' · ver todos' : ''}
+                    </span>
+                  )}
+                </button>
               )}
           </Linha>
+          {verPratos && pratos.length > 0 && (
+            <ul className="mb-2 rounded-xl bg-zinc-50 px-3 py-1.5 text-[13px] text-zinc-700">
+              {[...pratos].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')).map((p) => (
+                <li key={p.id} className="py-1 border-t border-zinc-100 first:border-t-0">{p.nome}</li>
+              ))}
+            </ul>
+          )}
           <Linha rotulo="Última contagem">
             {contagemEm ?? <span className="text-zinc-400 font-semibold">ainda não contado</span>}
           </Linha>
