@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import ExplicaLucro from './ExplicaLucro';
+import ValorNotaIfood from './ValorNotaIfood';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -401,6 +402,7 @@ export default function DetalhePedidoIfood({ p, lojas, acesso, tenantId, modo, o
           {o && (p.comida != null
             ? <Linha rotulo="Comida (fichas)" valor={menos(p.comida)} tom="menos" />
             : <Linha rotulo="Comida (fichas)" valor={<span className="text-orange-600">item sem ficha</span>} />)}
+          {o && <ValorNotaIfood o={o} />}
         </Bloco>
       )}
 
