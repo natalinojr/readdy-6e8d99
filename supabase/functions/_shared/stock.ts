@@ -203,6 +203,69 @@ export async function deductStockForOrderItem(admin: ReturnType<typeof createCli
   for (const [ingredientId, delta] of deltaMap.entries()) { await admin.rpc("fn_update_ingredient_stock", { p_ingredient_id: ingredientId, p_tenant_id: tenantId, p_delta: delta }); }
 }
 
+// Baixa solta ligada ao PEDIDO (não a uma linha de item): insumos extras da ficha do iFood (embalagem, sachê…) e item
+// do cardápio com quantidade quebrada (baixa pela ficha dele, proporcional). Uma baixa por pedido + marca:
+// reason `item_sale:<order_id>:<marca>` — conta como venda nos relatórios; o sufixo NÃO é um order_item_id, então a
+// ficha retroativa (_shared/ficha-retroativa.ts) e o estorno por item (order-write restockForOrderItem) não mexem nela.
+// Idempotente (já baixou → não baixa de novo); o estorno é o de restockLooseStockForOrder.
+export type LooseStockLine = { ingredient_id?: string | null; menu_item_id?: string | null; quantity: number; unit?: string | null };
+const looseReason = (orderId: string, marca: string) => `item_sale:${orderId}:${marca}`;
+const looseRestockReason = (orderId: string, marca: string) => `Estorno pedido #${orderId.slice(0, 8)} (${marca}):${orderId}`;
+
+export async function deductLooseStockForOrder(
+  // deno-lint-ignore no-explicit-any
+  admin: any, tenantId: string, orderId: string, operatorId: string, marca: string, lines: LooseStockLine[], notes: string | null = null,
+): Promise<number> {
+  const validas = lines.filter((l) => Number(l.quantity) > 0 && (l.ingredient_id || l.menu_item_id));
+  if (!validas.length) return 0;
+  const { data: ja } = await admin.from("stock_movements").select("id").eq("tenant_id", tenantId).eq("order_id", orderId).eq("type", "theoretical_out").eq("reason", looseReason(orderId, marca)).limit(1);
+  if (ja && ja.length) return 0;
+  const porIng = new Map<string, { quantity: number; unit: string }>();
+  const somar = (id: string, q: number, unit: string) => { const c = porIng.get(id); if (c) c.quantity += q; else porIng.set(id, { quantity: q, unit }); };
+  const ingIds = [...new Set(validas.map((l) => l.ingredient_id).filter((x): x is string => !!x))];
+  const { data: ings } = ingIds.length ? await admin.from("ingredients").select("id, unit").in("id", ingIds).eq("tenant_id", tenantId) : { data: [] };
+  const unidade = new Map(((ings ?? []) as Array<{ id: string; unit: string | null }>).map((i) => [i.id, i.unit ?? "unit"]));
+  for (const l of validas) {
+    if (l.ingredient_id) {
+      if (!unidade.has(l.ingredient_id)) continue; // insumo de outra loja / apagado
+      const u = unidade.get(l.ingredient_id)!;
+      somar(l.ingredient_id, convertUnitQty(Number(l.quantity), l.unit || u, u), u);
+    } else if (l.menu_item_id) {
+      for (const d of await buildDeductions(admin, tenantId, l.menu_item_id, null, Number(l.quantity))) somar(d.ingredient_id, d.quantity, d.unit);
+    }
+  }
+  const moves = [...porIng.entries()].filter(([, d]) => d.quantity > 0).map(([ingredient_id, d]) => ({
+    tenant_id: tenantId, ingredient_id, type: "theoretical_out", quantity: d.quantity, signed_quantity: -d.quantity, unit: d.unit,
+    reason: looseReason(orderId, marca), order_id: orderId, operator_id: operatorId, notes,
+  }));
+  if (!moves.length) return 0;
+  const { error } = await admin.from("stock_movements").insert(moves);
+  if (error) throw new Error(`baixa solta: ${error.message}`);
+  for (const m of moves) await admin.rpc("fn_update_ingredient_stock", { p_ingredient_id: m.ingredient_id, p_tenant_id: tenantId, p_delta: -m.quantity });
+  slog("INFO", "deductLooseStockForOrder", "baixa solta do pedido", { order_id: orderId, marca, insumos: moves.length });
+  return moves.length;
+}
+
+/** Desfaz a baixa solta do pedido (entrada "Estorno", igual ao estorno por item). Idempotente. */
+export async function restockLooseStockForOrder(
+  // deno-lint-ignore no-explicit-any
+  admin: any, tenantId: string, orderId: string, operatorId: string, marca: string,
+): Promise<number> {
+  const { data: outs } = await admin.from("stock_movements").select("ingredient_id, quantity, unit").eq("tenant_id", tenantId).eq("order_id", orderId).eq("type", "theoretical_out").eq("reason", looseReason(orderId, marca));
+  if (!outs || !outs.length) return 0;
+  const { data: ja } = await admin.from("stock_movements").select("id").eq("tenant_id", tenantId).eq("order_id", orderId).eq("type", "in").eq("reason", looseRestockReason(orderId, marca)).limit(1);
+  if (ja && ja.length) return 0;
+  const moves = (outs as Array<{ ingredient_id: string; quantity: number; unit: string | null }>).map((o) => ({
+    tenant_id: tenantId, ingredient_id: o.ingredient_id, type: "in", quantity: Number(o.quantity), signed_quantity: Number(o.quantity), unit: o.unit,
+    reason: looseRestockReason(orderId, marca), order_id: orderId, operator_id: operatorId,
+  }));
+  const { error } = await admin.from("stock_movements").insert(moves);
+  if (error) throw new Error(`estorno da baixa solta: ${error.message}`);
+  for (const m of moves) await admin.rpc("fn_update_ingredient_stock", { p_ingredient_id: m.ingredient_id, p_tenant_id: tenantId, p_delta: m.quantity });
+  slog("INFO", "restockLooseStockForOrder", "estorno da baixa solta", { order_id: orderId, marca, insumos: moves.length });
+  return moves.length;
+}
+
 // Pedidos que nascem fora do order-write (QR de mesa, fila do QR universal, delivery público):
 // itens "sem preparo" (skip_kds — ex.: refrigerante) nunca passam pelo KDS, então baixam aqui,
 // quando o pedido vira pedido real. Itens de cozinha continuam baixando quando o KDS marca pronto

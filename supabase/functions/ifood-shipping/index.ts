@@ -33,9 +33,9 @@ import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-
 import { isContabilidadeRole, isManagerRole } from '../_shared/tenant-auth.ts';
 import { ACTIVE, buildItems as buildItemsPure, cut, eventName, norm, onlyDigits, parseEnderecoPedido, paymentFromNotes, planEvent, round2, splitPhone, type OrderSignal } from './core.ts';
 import { orderEventName, orderItemsFromDetails, orderRowFromDetails, planOrderEvent } from './order.ts';
-import { montarPedidoErpos, type IfoodLink, type MenuInfo } from './funnel.ts';
+import { montarPedidoErpos, type FichaLinha, type IfoodLink, type MenuInfo } from './funnel.ts';
 import { consultaKpis, corpoHomologacao, mensagemErroKpis, periodoKpis, resumirLinhas, validarCorpoKpis } from './analytics.ts';
-import { deductStockForOrderItem } from '../_shared/stock.ts';
+import { deductLooseStockForOrder, deductStockForOrderItem, restockLooseStockForOrder } from '../_shared/stock.ts';
 
 type Admin = SupabaseClient;
 
@@ -436,12 +436,51 @@ async function aceitarPedidoFunil(admin: Admin, c: Ctx, row: any): Promise<strin
       await admin.from('ifood_order_outbox').upsert(['start', 'ready'].map((op) => ({ tenant_id: row.tenant_id, order_id: o.id, ifood_order_id: row.ifood_order_id, op })), { onConflict: 'ifood_order_id,op', ignoreDuplicates: true });
     }
   }
+  await baixarFichaIfood(admin, row, o.id);
   if (row.status === 'placed') {
     const r = await call(admin, c, 'POST', `/order/v1.0/orders/${row.ifood_order_id}/confirm`, undefined, { 'idempotency-key': `confirm-${row.ifood_order_id}` });
     if (!r.ok && r.status !== 409) { const m = apiError(r, 'Confirmar no iFood'); await funnelErro(admin, row.id, m); return m; }
   }
   await funnelErro(admin, row.id, null);
   return null;
+}
+
+// Ficha do iFood (ifood_ficha_linhas): itens viram linhas do pedido (baixam como qualquer item); insumos extras e item
+// com quantidade quebrada baixam aqui, ligados ao pedido, quando ele entra na cozinha (ou conclui) — nunca em rascunho,
+// treino ou cancelado. Cancelado no iFood → estorno (restockLooseStockForOrder). Idempotente (_shared/stock.ts).
+const MARCA_FICHA = 'ficha do iFood';
+
+async function carregarFichas(admin: Admin, tenantId: string): Promise<FichaLinha[]> {
+  const { data } = await admin.from('ifood_ficha_linhas').select('level, name_key, group_key, kind, menu_item_id, ingredient_id, quantity, unit, ordem').eq('tenant_id', tenantId);
+  return (data ?? []) as FichaLinha[];
+}
+
+async function operadorDoPedido(admin: Admin, sessionId: string | null): Promise<string | null> {
+  if (!sessionId) return null;
+  const { data } = await admin.from('sessions').select('opened_by').eq('id', sessionId).maybeSingle();
+  return (data?.opened_by as string | null) ?? null;
+}
+
+async function baixarFichaIfood(admin: Admin, row: any, orderId: string) {
+  try {
+    const { data: o } = await admin.from('orders').select('id, status, is_draft, is_training, session_id').eq('id', orderId).maybeSingle();
+    if (!o || o.is_draft || o.status === 'draft' || o.status === 'cancelled' || o.is_training) return;
+    const fichas = await carregarFichas(admin, row.tenant_id);
+    if (!fichas.some((f) => f.kind === 'insumo' || !Number.isInteger(Number(f.quantity)))) return;
+    const [{ data: itens }, { data: links }] = await Promise.all([
+      admin.from('ifood_order_items').select('*').eq('order_row_id', row.id),
+      admin.from('ifood_item_links').select('level, name_key, group_key, ifood_id, external_code, target_kind, menu_item_id, combo_id, option_id').eq('tenant_id', row.tenant_id),
+    ]);
+    const { insumos } = montarPedidoErpos(row, itens ?? [], (links ?? []) as IfoodLink[], new Map(), fichas);
+    if (!insumos.length) return;
+    const operador = await operadorDoPedido(admin, o.session_id);
+    if (!operador) { log('WARN', 'funnel', 'ficha do iFood sem operador (caixa sem opened_by)', { order: orderId }); return; }
+    const origens = [...new Set(insumos.map((i) => i.origem))].join(', ');
+    const n = await deductLooseStockForOrder(admin, row.tenant_id, orderId, operador, MARCA_FICHA, insumos, `Ficha do iFood: ${origens}`.slice(0, 500));
+    if (n) log('INFO', 'funnel', 'baixa dos insumos da ficha do iFood', { ifood: row.ifood_order_id, order: orderId, insumos: n });
+  } catch (e) {
+    log('WARN', 'funnel', 'baixa da ficha do iFood', { ifood: row.ifood_order_id, order: orderId, error: String((e as Error)?.message ?? e) });
+  }
 }
 
 /** Cria o pedido do ERPOS (rascunho) a partir do pedido do iFood; aceite automático se a loja escolheu. */
@@ -453,20 +492,21 @@ async function criarPedidoFunil(admin: Admin, c: Ctx, row: any): Promise<void> {
   const { data: sess } = await admin.from('sessions').select('id').eq('tenant_id', tenantId).eq('status', 'open').order('opened_at', { ascending: false }).limit(1).maybeSingle();
   if (!sess) { await funnelErro(admin, row.id, 'Sem caixa aberto no ERPOS: abra o caixa para o pedido entrar na cozinha.'); return; }
 
-  const [{ data: itens }, { data: links }] = await Promise.all([
+  const [{ data: itens }, { data: links }, fichas] = await Promise.all([
     admin.from('ifood_order_items').select('*').eq('order_row_id', row.id),
     admin.from('ifood_item_links').select('level, name_key, group_key, ifood_id, external_code, target_kind, menu_item_id, combo_id, option_id').eq('tenant_id', tenantId),
+    carregarFichas(admin, tenantId),
   ]);
-  const itemIds = [...new Set(((links ?? []) as IfoodLink[]).map((l) => l.menu_item_id).filter(Boolean))] as string[];
+  const itemIds = [...new Set([...((links ?? []) as IfoodLink[]).map((l) => l.menu_item_id), ...fichas.map((f) => f.menu_item_id)].filter(Boolean))] as string[];
   const menu = new Map<string, MenuInfo>();
   if (itemIds.length) {
-    const { data: mis } = await admin.from('menu_items').select('id, skip_kds, category_id').in('id', itemIds);
+    const { data: mis } = await admin.from('menu_items').select('id, name, skip_kds, category_id').in('id', itemIds);
     const catIds = [...new Set((mis ?? []).map((m: any) => m.category_id).filter(Boolean))];
     const { data: cats } = catIds.length ? await admin.from('menu_categories').select('id, station_id').in('id', catIds) : { data: [] };
     const est = new Map((cats ?? []).map((k: any) => [k.id, k.station_id ?? null]));
-    for (const m of (mis ?? []) as any[]) menu.set(m.id, { skip_kds: !!m.skip_kds, station_id: (est.get(m.category_id) as string | null) ?? null });
+    for (const m of (mis ?? []) as any[]) menu.set(m.id, { skip_kds: !!m.skip_kds, station_id: (est.get(m.category_id) as string | null) ?? null, name: m.name ?? undefined });
   }
-  const p = montarPedidoErpos(row, itens ?? [], (links ?? []) as IfoodLink[], menu);
+  const p = montarPedidoErpos(row, itens ?? [], (links ?? []) as IfoodLink[], menu, fichas);
 
   const { data: numRows } = await admin.rpc('fn_next_tenant_order_number', { p_tenant_id: tenantId });
   const numero = (Array.isArray(numRows) ? numRows[0]?.number : (numRows as any)?.number) ?? `I${Date.now()}`;
@@ -488,7 +528,7 @@ async function criarPedidoFunil(admin: Admin, c: Ctx, row: any): Promise<void> {
     if (iErr) throw new Error('Criar itens no ERPOS: ' + iErr.message);
   }
   await admin.from('ifood_orders').update({ order_id: orderId, funnel_error: null, funnel_at: now, updated_at: now }).eq('id', row.id);
-  log('INFO', 'funnel', 'pedido criado no ERPOS', { ifood: row.ifood_order_id, order: orderId, numero, semVinculo: p.semVinculo.length, tenantId });
+  log('INFO', 'funnel', 'pedido criado no ERPOS', { ifood: row.ifood_order_id, order: orderId, numero, semVinculo: p.semVinculo.length, insumosFicha: p.insumos.length, tenantId });
   if (cfg.order_auto_confirm !== false) await aceiteAutomatico(admin, c, { ...row, order_id: orderId });
 }
 
@@ -587,6 +627,11 @@ async function funnelAfterEvent(admin: Admin, c: Ctx, rowId: string) {
     if (row.order_id) {
       const { error } = await admin.rpc('fn_ifood_cancel_erpos_order', { p_order_id: row.order_id, p_reason: `iFood: ${row.cancel_reason ?? 'cancelado'}` });
       if (error) throw new Error('Cancelar pedido no ERPOS: ' + error.message);
+      try {
+        const { data: oc } = await admin.from('orders').select('session_id').eq('id', row.order_id).maybeSingle();
+        const operador = await operadorDoPedido(admin, oc?.session_id ?? null);
+        if (operador) await restockLooseStockForOrder(admin, row.tenant_id, row.order_id, operador, MARCA_FICHA);
+      } catch (e) { log('WARN', 'funnel', 'estorno da ficha do iFood', { order: row.order_id, error: String(e) }); }
       await cancelarNotaIfood(admin, row);
     }
     return;
@@ -604,6 +649,7 @@ async function funnelAfterEvent(admin: Admin, c: Ctx, rowId: string) {
       await admin.from('order_items').update({ status: 'delivered', delivered_at: new Date().toISOString() }).eq('order_id', o.id).in('status', ['new', 'preparing', 'ready']);
       await admin.from('orders').update({ status: 'delivered', is_draft: false, updated_at: new Date().toISOString() }).eq('id', o.id);
     }
+    if (o && o.status !== 'cancelled') await baixarFichaIfood(admin, row, o.id);
     await notaFiscalIfood(admin, c.cfg, row);
     return;
   }
