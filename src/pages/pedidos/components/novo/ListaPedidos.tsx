@@ -234,8 +234,8 @@ export default function ListaPedidos({
                 className="w-full flex items-center gap-2.5 py-2.5 text-left cursor-pointer">
                 <span className="w-8 h-8 rounded-[10px] bg-red-50 text-red-600 flex items-center justify-center flex-shrink-0"><i className="ri-subtract-line text-base" /></span>
                 <span className="flex-1 min-w-0">
-                  <b className="block text-[13.5px] font-bold text-zinc-800 truncate">{item.quantidade}× {item.nome} · #{numeroCurto(ped)}</b>
-                  <span className="block text-[11.5px] text-zinc-400 truncate">{ondeQuem(ped)} · {ped.criadoEm}</span>
+                  <b className="block text-[13.5px] font-bold text-zinc-800 truncate" title={`${item.quantidade}× ${item.nome} · #${numeroCurto(ped)}`}>{item.quantidade}× {item.nome} · #{numeroCurto(ped)}</b>
+                  <span className="block text-[11.5px] text-zinc-400 truncate" title={`${ondeQuem(ped)} · ${ped.criadoEm}`}>{ondeQuem(ped)} · {ped.criadoEm}</span>
                 </span>
                 <b className="text-[14px] font-extrabold tabular-nums whitespace-nowrap text-zinc-700">{brl(item.preco * item.quantidade)}</b>
               </button>
@@ -603,17 +603,17 @@ function CartaoCelular({ l, chip, ctx, abertos, onAlternarGrupo, onAbrir, emLote
         <div className="flex items-baseline gap-1.5 min-w-0">
           {grupo ? (
             <>
-              <b className="text-[15px] font-extrabold tracking-tight text-zinc-900 truncate min-w-0">{l.onde}</b>
+              <b className="text-[15px] font-extrabold tracking-tight text-zinc-900 truncate min-w-0" title={l.onde}>{l.onde}</b>
               <span className="text-[13.5px] font-bold text-zinc-500 flex-none">· {l.subs.length} pedidos</span>
             </>
           ) : (
             <>
               <b className="text-[15px] font-extrabold tracking-tight text-zinc-900 flex-none">#{l.num}</b>
-              <span className="text-[13.5px] font-bold text-zinc-800 truncate min-w-0">{l.onde}</span>
+              <span className="text-[13.5px] font-bold text-zinc-800 truncate min-w-0" title={l.onde}>{l.onde}</span>
             </>
           )}
         </div>
-        <p className="text-[12px] text-zinc-400 mt-0.5 truncate">{linha2(l, chip)}</p>
+        <p className="text-[12px] text-zinc-400 mt-0.5 truncate" title={linha2(l, chip)}>{linha2(l, chip)}</p>
         {(selos.length > 0 || grupo) && (
           <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
             {selos}
@@ -626,7 +626,7 @@ function CartaoCelular({ l, chip, ctx, abertos, onAlternarGrupo, onAbrir, emLote
               <button key={s.id} type="button" onClick={(e) => { e.stopPropagation(); onAbrir(s); }}
                 className={`w-full flex items-baseline gap-2 py-1.5 text-left text-[12px] border-t border-dashed border-zinc-200 first:border-t-0 cursor-pointer ${ehCancelado(s) ? 'opacity-60' : ''}`}>
                 <b className="flex-none font-extrabold text-zinc-800">#{numeroCurto(s)}</b>
-                <span className="flex-1 min-w-0 truncate text-zinc-400">{s.criadoEm} · {textoItens(s)}</span>
+                <span className="flex-1 min-w-0 truncate text-zinc-400" title={`${s.criadoEm} · ${textoItens(s)}`}>{s.criadoEm} · {textoItens(s)}</span>
                 <em className={`flex-none not-italic font-extrabold text-zinc-700 ${ehCancelado(s) ? 'line-through' : ''}`}>{brl(s.total)}</em>
               </button>
             ))}
@@ -663,7 +663,7 @@ function TabelaComputador({ visiveis, selecionadoId, todosMarcados, onAlternarTo
         <colgroup>
           {emLote && <col style={{ width: 40 }} />}
           <col style={{ width: 84 }} />
-          {compacta ? <col /> : <col style={{ width: 176 }} />}
+          {compacta ? <col /> : <col style={{ width: 210 }} />}
           {!compacta && <col />}
           <col style={{ width: compacta ? 168 : 200 }} />
           <col style={{ width: 100 }} />
@@ -715,7 +715,7 @@ function LinhasTabela({ l, ctx, selecionadoId, compacta, abertos, onAlternarGrup
   if (grupo) {
     itens = (
       <>
-        <span className="block truncate text-zinc-600" title={l.subs.map((s) => `#${numeroCurto(s)}`).join(' · ')}>
+        <span className="block truncate text-zinc-600" title={`${l.subs.map((s) => `#${numeroCurto(s)}`).join(' · ')} — ${qtdItens(p)} itens`}>
           {l.subs.map((s) => `#${numeroCurto(s)}`).join(' · ')} — {qtdItens(p)} itens
         </span>
         <BotaoVerOs n={l.subs.length} aberto={aberto} onClick={() => onAlternarGrupo(p.id)} />
@@ -724,11 +724,11 @@ function LinhasTabela({ l, ctx, selecionadoId, compacta, abertos, onAlternarGrup
   } else if (cancelado) {
     itens = naTelaCancelados ? (
       <>
-        <span className="block truncate font-semibold text-red-600">{motivoCancelamento(p)}</span>
-        <span className="block truncate text-[11px] text-zinc-400">{quemCancelou(p)}</span>
+        <span className="block truncate font-semibold text-red-600" title={motivoCancelamento(p)}>{motivoCancelamento(p)}</span>
+        <span className="block truncate text-[11px] text-zinc-400" title={quemCancelou(p)}>{quemCancelou(p)}</span>
       </>
     ) : (
-      <span className="block truncate text-zinc-500">{[motivoCancelamento(p), p.canceladoPor].filter(Boolean).join(' · ')}</span>
+      <span className="block truncate text-zinc-500" title={[motivoCancelamento(p), p.canceladoPor].filter(Boolean).join(' · ')}>{[motivoCancelamento(p), p.canceladoPor].filter(Boolean).join(' · ')}</span>
     );
   } else {
     const t = textoItens(p);
@@ -757,8 +757,8 @@ function LinhasTabela({ l, ctx, selecionadoId, compacta, abertos, onAlternarGrup
           <div className="flex items-center gap-2 min-w-0">
             <IconeCanal canal={l.canal} pequeno />
             <div className="min-w-0">
-              <p className="font-bold text-zinc-800 truncate">{grupo ? `${l.onde} · ${l.subs.length} pedidos` : l.onde}</p>
-              <div className="text-[11px] text-zinc-400 truncate">{compacta ? itens : subOnde}</div>
+              <p className="font-bold text-zinc-800 truncate" title={grupo ? `${l.onde} · ${l.subs.length} pedidos` : l.onde}>{grupo ? `${l.onde} · ${l.subs.length} pedidos` : l.onde}</p>
+              <div className="text-[11px] text-zinc-400 truncate" title={compacta ? (grupo ? `${l.subs.map((s) => `#${numeroCurto(s)}`).join(' · ')} — ${qtdItens(p)} itens` : textoItens(p)) : subOnde}>{compacta ? itens : subOnde}</div>
             </div>
           </div>
         </td>

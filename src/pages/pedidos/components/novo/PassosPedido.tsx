@@ -143,7 +143,7 @@ export default function PassosPedido({ pedido, agoraMs }: { pedido: PedidoRecent
                 <i className={p.estado === 'ok' ? 'ri-check-line' : p.icone} />
               </span>
               <b className={`block text-[11px] font-extrabold mt-1 ${p.estado === 'falta' ? 'text-zinc-400' : 'text-zinc-800'}`}>{p.rotulo}</b>
-              <span className="block text-[10.5px] text-zinc-400 tabular-nums truncate px-0.5">{p.sub}</span>
+              <span className="block text-[10.5px] text-zinc-400 tabular-nums truncate px-0.5" title={typeof p.sub === 'string' ? p.sub : undefined}>{p.sub}</span>
             </div>
           );
         })}

@@ -484,8 +484,8 @@ export function NotaDoc({ doc, fiscal, onToast, extra }: {
 function Numero({ valor, rotulo }: { valor: ReactNode; rotulo: string }) {
   return (
     <div className="bg-zinc-50 border border-zinc-100 rounded-2xl px-2.5 py-2 min-w-0">
-      <p className="text-[15px] sm:text-[17px] font-extrabold text-zinc-900 tabular-nums leading-tight truncate">{valor}</p>
-      <p className="text-[10.5px] font-semibold text-zinc-400 mt-0.5 truncate">{rotulo}</p>
+      <p className="text-[15px] sm:text-[17px] font-extrabold text-zinc-900 tabular-nums leading-tight truncate" title={typeof valor === 'string' || typeof valor === 'number' ? String(valor) : undefined}>{valor}</p>
+      <p className="text-[10.5px] font-semibold text-zinc-400 mt-0.5 truncate" title={rotulo}>{rotulo}</p>
     </div>
   );
 }
@@ -569,7 +569,7 @@ export default function PagosJuntos(props: PropsDetalhe) {
               <button key={s.id} type="button" onClick={() => onAbrirPedido(s)}
                 className="w-full flex items-center gap-2 py-2.5 text-left border-t border-zinc-200/70 first:border-t-0 cursor-pointer hover:bg-zinc-100/60 rounded-lg">
                 <div className="flex-1 min-w-0">
-                  <p className="text-[13px] text-zinc-500 truncate">
+                  <p className="text-[13px] text-zinc-500 truncate" title={`#${numeroCurto(s)} · ${hhmm(s._criadoTs) ?? s.criadoEm} · ${qtdItens(s)} ${qtdItens(s) === 1 ? 'item' : 'itens'}`}>
                     <b className="text-zinc-900 font-extrabold">#{numeroCurto(s)}</b> · {hhmm(s._criadoTs) ?? s.criadoEm} · {qtdItens(s)} {qtdItens(s) === 1 ? 'item' : 'itens'}
                   </p>
                   <div className="mt-1"><SeloSituacao sit={sit} /></div>

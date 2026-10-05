@@ -59,7 +59,7 @@ export default function PedidosCabecalho({ aba, onAba, busca, onBusca, rotuloPer
             <button type="button" onClick={onAbrirPeriodo} aria-label={`Período: ${rotuloPeriodo}. Trocar`}
               className="h-10 min-w-0 inline-flex items-center gap-1.5 px-3 rounded-xl border border-zinc-200 bg-zinc-50 hover:bg-white hover:border-amber-300 text-[13px] font-extrabold text-zinc-800 cursor-pointer flex-shrink-0">
               <i className="ri-calendar-line text-base text-amber-600 flex-shrink-0" />
-              <span className="truncate max-w-[84px] sm:max-w-[140px] md:max-w-[240px]">{rotuloPeriodo}</span>
+              <span className="truncate max-w-[84px] sm:max-w-[140px] md:max-w-[240px]" title={rotuloPeriodo}>{rotuloPeriodo}</span>
               <i className="ri-arrow-down-s-line text-base text-zinc-400 flex-shrink-0" />
             </button>
           </>

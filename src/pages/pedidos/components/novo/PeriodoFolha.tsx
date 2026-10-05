@@ -317,8 +317,8 @@ function LinhaTurno({ selecionado, icone, tomIcone, titulo, sub, n, onClick }: {
         <i className={`${icone} text-base`} />
       </span>
       <span className="flex-1 min-w-0">
-        <span className={`block text-[13.5px] font-bold truncate ${selecionado ? 'text-amber-800' : 'text-zinc-800'}`}>{titulo}</span>
-        <span className="block text-[11.5px] text-zinc-500 truncate tabular-nums">{sub}</span>
+        <span className={`block text-[13.5px] font-bold truncate ${selecionado ? 'text-amber-800' : 'text-zinc-800'}`} title={typeof titulo === 'string' ? titulo : undefined}>{titulo}</span>
+        <span className="block text-[11.5px] text-zinc-500 truncate tabular-nums" title={typeof sub === 'string' ? sub : undefined}>{sub}</span>
       </span>
       {n != null && (
         <span className="text-right flex-shrink-0">
