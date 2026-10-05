@@ -7,7 +7,7 @@ import type { InsumoSituacao, SituacaoEstoque } from '@/lib/estoqueRegras';
 // vem daqui, para nenhuma aba recalcular.
 
 export type AbaEstoque =
-  | 'inicio' | 'insumos' | 'fornecedores' | 'validade'
+  | 'inicio' | 'insumos' | 'fornecedores' | 'compras' | 'validade'
   | 'movimentacoes' | 'producao'
   | 'inventario' | 'teorico'
   | 'cmv' | 'consumo';
