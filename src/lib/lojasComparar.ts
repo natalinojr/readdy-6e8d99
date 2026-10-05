@@ -30,6 +30,8 @@ export interface LinhaLojasRpc {
   tem_ifood: boolean;
   sincroniza_ifood: boolean;
   oculta: boolean;
+  /** faturamento dos últimos 30 dias (PDV + iFood bruto) — só para desempatar a ordem */
+  fat_30d?: number;
 }
 
 export interface NumerosPeriodo {
@@ -64,6 +66,8 @@ export interface LojaComparada {
   temIfood: boolean;
   /** iFood ainda chegando (o número ainda é só do PDV) */
   ifoodCarregando: boolean;
+  /** faturamento dos últimos 30 dias — desempate da ordem */
+  fat30d: number;
 }
 
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -144,7 +148,18 @@ export function montarLoja(l: LinhaLojasRpc, ifAtual: PedidoValor[] | null, ifAn
     parada: !l.vendeu_30d,
     temIfood: l.tem_ifood,
     ifoodCarregando: l.tem_ifood && (ifAtual === null || ifAnterior === null),
+    fat30d: Number(l.fat_30d ?? 0),
   };
+}
+
+/**
+ * Ordem por faturamento (maior primeiro). Empate — de madrugada ou antes de abrir, todas em R$ 0 — vai pelo
+ * faturamento dos últimos 30 dias, depois pelo nome: as lojas maiores ficam sempre em cima.
+ */
+export function ordenarPorFaturamento<T extends Pick<LojaComparada, 'atual' | 'fat30d' | 'nome'>>(lojas: T[]): T[] {
+  return [...lojas].sort((a, b) => (b.atual.faturamento - a.atual.faturamento)
+    || (b.fat30d - a.fat30d)
+    || a.nome.localeCompare(b.nome, 'pt-BR'));
 }
 
 export interface TotalLojas { faturamento: number; pedidos: number; ticket: number; variacao: number | null; abertas: number }

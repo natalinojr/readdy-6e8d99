@@ -1,1469 +1,367 @@
-import { useState, useEffect } from 'react';
-import AcertoRegraCard from './AcertoRegraCard';
-import { lerAcertoCfg, acertoParaSalvar, ACERTO_PADRAO, type AcertoCfg } from './acertoCfg';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
-import { getPublicUrl, getAppUrl } from '@/lib/appUrl';
+import { useToast } from '@/contexts/ToastContext';
 import { supabase } from '@/lib/supabase';
-import { Truck } from 'lucide-react';
-import MapaPin from '@/components/feature/MapaPin';
-import { useCardapio } from '@/contexts/CardapioContext';
-import type { MotoboyAlertEntry } from '@/contexts/SystemSettingsContext';
-import GerirEntregasTab from './GerirEntregasTab';
-import AtendimentoWhatsAppTab from './AtendimentoWhatsAppTab';
-import QrCodeDelivery from './QrCodeDelivery';
-import { confirmar } from '@/components/base/Dialogos';
+import { getPublicUrl } from '@/lib/appUrl';
+import { useDeliveryState } from '@/hooks/useDeliveryState';
+import { podeSair, registrarGuardaSaida } from '@/lib/guardaSaida';
+import { CONFIG_VAZIA, chamarDelivery, contarMudancas, faixasOrdenadas, lerConfig, mudancasParaSalvar, type ConfigDelivery } from './config';
+import { DeliveryTelaContext, type AbaDelivery, type DeliveryTelaApi, type Motoboy } from './DeliveryTela';
+import { btn } from './ui';
+import InicioAba from './abas/InicioAba';
+import AreaTaxaAba from './abas/AreaTaxaAba';
+import HorarioAba from './abas/HorarioAba';
+import PagamentoAba from './abas/PagamentoAba';
+import RegrasAba from './abas/RegrasAba';
+import EquipeAba from './abas/EquipeAba';
+import AcertoAba from './abas/AcertoAba';
+import AvisosAba from './abas/AvisosAba';
+import LinksAba from './abas/LinksAba';
+import ConversasAba from './abas/ConversasAba';
+import AssistenteAba from './abas/AssistenteAba';
+import MensagensAba from './abas/MensagensAba';
+import { useAtualizacao } from './abas/inicio/usarAtualizacao';
 
-interface Neighborhood {
-  id: string;
-  name: string;
-  delivery_fee: number;
-  is_active: boolean;
-}
+// Tela Delivery (menu Gestão › Delivery). Layout novo aprovado pelo dono em 2026-10-05
+// (docs/prototipos/delivery-proposta.html): 5 grupos — Início · Pedido · Entregadores · Divulgar · WhatsApp —
+// com as abas de cada grupo em pílula, como o Estoque e o Financeiro. Nenhum bloco antigo saiu: o que era
+// "Configurações" (14 blocos numa coluna) foi distribuído pelos grupos, "Gerir entregas" virou "Entregas agora"
+// no Início e "Atendimento WhatsApp" virou o grupo WhatsApp. O carrinho abandonado foi para
+// Clientes & Marketing › Funil › Visitas sem pedido (decisão do dono).
 
-interface DriverRow {
-  id: string;
-  name: string;
-  phone: string;
-  is_active: boolean;
-  created_at: string;
-  last_login_at: string | null;
-}
+const ABAS: Record<AbaDelivery, { label: string; Comp: ComponentType }> = {
+  inicio: { label: 'Início', Comp: InicioAba },
+  area: { label: 'Área e taxa', Comp: AreaTaxaAba },
+  horario: { label: 'Horário', Comp: HorarioAba },
+  pagamento: { label: 'Pagamento', Comp: PagamentoAba },
+  regras: { label: 'Mínimo e retirada', Comp: RegrasAba },
+  equipe: { label: 'Equipe', Comp: EquipeAba },
+  acerto: { label: 'Quanto ganham', Comp: AcertoAba },
+  avisos: { label: 'Avisos', Comp: AvisosAba },
+  links: { label: 'Links e QR', Comp: LinksAba },
+  conversas: { label: 'Conversas', Comp: ConversasAba },
+  assistente: { label: 'Assistente', Comp: AssistenteAba },
+  mensagens: { label: 'Mensagens prontas', Comp: MensagensAba },
+};
 
-/** Faixa de entrega por distância (km) configurável pelo lojista. */
-interface FaixaEntrega {
-  ate_km: number;        // distância máxima da faixa (km)
-  taxa: number;          // taxa de entrega (R$)
-  tempo_max_min: number; // tempo máximo de entrega da faixa (min)
-}
+interface Grupo { id: string; label: string; icon: string; abas: AbaDelivery[] }
+const GRUPOS: Grupo[] = [
+  { id: 'inicio', label: 'Início', icon: 'ri-home-5-line', abas: ['inicio'] },
+  { id: 'pedido', label: 'Pedido', icon: 'ri-map-pin-range-line', abas: ['area', 'horario', 'pagamento', 'regras'] },
+  { id: 'entregadores', label: 'Entregadores', icon: 'ri-e-bike-2-line', abas: ['equipe', 'acerto', 'avisos'] },
+  { id: 'divulgar', label: 'Divulgar', icon: 'ri-megaphone-line', abas: ['links'] },
+  { id: 'whatsapp', label: 'WhatsApp', icon: 'ri-whatsapp-line', abas: ['conversas', 'assistente', 'mensagens'] },
+];
+const TODAS = Object.keys(ABAS) as AbaDelivery[];
 
-function getDeliveryWriteUrl(): string {
-  const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
-  return base + '/functions/v1/delivery-write';
-}
+type Selo = { n?: number; cor: 'red' | 'amber'; dica: string } | null;
 
 export default function ConfigDeliveryPage() {
   const { user } = useAuth();
-  const tenantId = (user as any)?.tenantId as string | undefined;
-  const { categorias, itens } = useCardapio();
+  const toast = useToast();
+  // O `toast` muda de identidade a cada aviso; nas dependências de useCallback/useEffect ele reiniciaria a leitura (laço).
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+  const navigate = useNavigate();
+  const tenantId = user?.tenantId ?? '';
+  const ehDono = user?.perfil === 'admin';
 
-  const [city, setCity] = useState('');
-  const [neighborhoods, setNeighborhoods] = useState<Neighborhood[]>([]);
-  const [newBairroNome, setNewBairroNome] = useState('');
-  const [newBairroTaxa, setNewBairroTaxa] = useState('0');
-  const [pedidoMinimoAtivo, setPedidoMinimoAtivo] = useState(false);
-  const [pedidoMinimoValor, setPedidoMinimoValor] = useState('0');
-  const [retiradaAtivo, setRetiradaAtivo] = useState(true);
-  const [whatsappLoja, setWhatsappLoja] = useState('');
-  // ── Entrega por distância (loja + faixas) ──
-  const [storeLat, setStoreLat] = useState<number | null>(null);
-  const [storeLng, setStoreLng] = useState<number | null>(null);
-  const [faixas, setFaixas] = useState<FaixaEntrega[]>([]);
-  const [salvando, setSalvando] = useState(false);
+  const [params, setParams] = useSearchParams();
+  const pedida = params.get('aba') as AbaDelivery | null;
+
+  // ── configuração ──
   const [carregando, setCarregando] = useState(true);
-  const [mensagem, setMensagem] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null);
-  const [deliveryUrl, setDeliveryUrl] = useState('');
-  const [tenantSlug, setTenantSlug] = useState('');
-  // Item selecionado para gerar link de divulgação (?item=<id>)
-  const [itemLinkSelId, setItemLinkSelId] = useState('');
-  // Entregadores (motoboys) com acesso à lista de entregas
-  const [motoboys, setMotoboys] = useState<DriverRow[]>([]);
-  const [motoboysLoading, setMotoboysLoading] = useState(false);
-  const [codigoApp, setCodigoApp] = useState<{ code: string; expires_at: string; gerando: boolean } | null>(null);
-  const [abaAtiva, setAbaAtiva] = useState<'config' | 'entregas' | 'whatsapp'>('config');
-  // Avisar o motoboy: categorias/itens que disparam alerta na msg do motoboy
-  const [alertCategorias, setAlertCategorias] = useState<MotoboyAlertEntry[]>([]);
-  const [alertItens, setAlertItens] = useState<MotoboyAlertEntry[]>([]);
-  // Regra do acerto dos entregadores (delivery_config.acerto_motoboy)
-  const [acertoCfg, setAcertoCfg] = useState<AcertoCfg>(ACERTO_PADRAO);
-  const [itemBusca, setItemBusca] = useState('');
-  // Mensagens pro cliente (WhatsApp) por fase — pode ter mais de uma por fase
-  const [whatsappMsgs, setWhatsappMsgs] = useState<Record<string, string[]>>({});
-  const FASES_MSG = [
-    { key: 'novo', label: 'Recebido' },
-    { key: 'preparo', label: 'Em preparo' },
-    { key: 'pronto', label: 'Pronto' },
-    { key: 'em_rota', label: 'Em rota' },
-    { key: 'entregue', label: 'Entregue' },
-  ];
-  function setMsgFase(fase: string, idx: number, val: string) {
-    setWhatsappMsgs(function (prev) {
-      const arr = (prev[fase] ?? []).slice();
-      arr[idx] = val;
-      return { ...prev, [fase]: arr };
-    });
-  }
-  function addMsgFase(fase: string) {
-    setWhatsappMsgs(function (prev) { return { ...prev, [fase]: (prev[fase] ?? []).concat(['']) }; });
-  }
-  function removeMsgFase(fase: string, idx: number) {
-    setWhatsappMsgs(function (prev) { return { ...prev, [fase]: (prev[fase] ?? []).filter(function (_, i) { return i !== idx; }) }; });
-  }
+  const [erroCarga, setErroCarga] = useState('');
+  const [salvo, setSalvo] = useState<ConfigDelivery>(CONFIG_VAZIA);
+  const [cfg, setCfg] = useState<ConfigDelivery>(CONFIG_VAZIA);
+  const [slug, setSlug] = useState('');
+  const [nomeLoja, setNomeLoja] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [salvouAgora, setSalvouAgora] = useState(false);
 
-  const METODOS_PREDEFINIDOS = [
-    { key: 'dinheiro', label: 'Dinheiro', icon: 'ri-money-dollar-circle-line' },
-    { key: 'cartao_credito', label: 'Cartão de Crédito', icon: 'ri-bank-card-line' },
-    { key: 'cartao_debito', label: 'Cartão de Débito', icon: 'ri-bank-card-2-line' },
-    { key: 'pix', label: 'PIX', icon: 'ri-qr-code-line' },
-    { key: 'vale_refeicao', label: 'Vale Refeição', icon: 'ri-coupon-line' },
-    // Só aparece pro cliente se a loja tiver o Mercado Pago ativo (Configurações › Pagamentos)
-    { key: 'pix_online', label: 'PIX pelo app (pagamento online)', icon: 'ri-smartphone-line' },
-    // Idem, mas só com o cartão ligado no Mercado Pago (Public Key + "Aceitar cartão de crédito pelo app")
-    { key: 'cartao_online', label: 'Cartão de crédito pelo app (pagamento online)', icon: 'ri-bank-card-line' },
-  ];
-  // Formas "pelo app": no cardápio do cliente valem como LIGADAS quando a chave não existe
-  // (só `false` desliga) — o toggle mostra o mesmo, senão a tela diz "desligado" e a loja oferece.
-  const FORMAS_PELO_APP = ['pix_online', 'cartao_online'];
+  /** Lê a configuração gravada (e o nome/slug da loja) no servidor. */
+  const lerDoServidor = useCallback(async () => {
+    const d = await chamarDelivery<{ city: string; delivery_config: unknown; slug: string | null; tenant_name: string | null }>(
+      'get_delivery_settings', { tenant_id: tenantId });
+    return { config: lerConfig(d.delivery_config, d.city), slug: d.slug ?? '', nome: d.tenant_name ?? '' };
+  }, [tenantId]);
 
-  const [formasPagamento, setFormasPagamento] = useState<Record<string, boolean>>({});
-
-  // ── Recuperar carrinho abandonado ──
-  // Quem entrou no cardápio e não pediu aparece na aba Clientes. Este bloco liga
-  // a OFERTA de voucher para essa gente. Desligado = a lista continua visível,
-  // o ERPOS só não sugere nem prepara cupom. Nada é enviado sozinho.
-  const [recupAtivo, setRecupAtivo] = useState(false);
-  const [recupEsperaMin, setRecupEsperaMin] = useState('30');
-  const [recupTipo, setRecupTipo] = useState<'percentual' | 'valor'>('percentual');
-  const [recupValor, setRecupValor] = useState('10');
-  const [recupValidadeDias, setRecupValidadeDias] = useState('7');
-  const [recupMensagem, setRecupMensagem] = useState('');
-
-  // ── Horário de funcionamento do delivery (agendamento por dia da semana) ──
-  // 0=Domingo .. 6=Sábado (alinhado ao Date.getDay() / fuso America/Sao_Paulo no backend).
-  const [horarioAtivo, setHorarioAtivo] = useState(false);
-  const [horarios, setHorarios] = useState<{ enabled: boolean; open: string; close: string }[]>(
-    function () { return Array.from({ length: 7 }, function () { return { enabled: false, open: '18:00', close: '23:00' }; }); }
-  );
-
-  function setDiaHorario(idx: number, patch: Partial<{ enabled: boolean; open: string; close: string }>) {
-    setHorarios(function (prev) {
-      return prev.map(function (d, i) { return i === idx ? { ...d, ...patch } : d; });
-    });
-  }
-
-  useEffect(function () {
-    if (!tenantId) {
+  const carregar = useCallback(async () => {
+    if (!tenantId) { setCarregando(false); return; } // sem loja escolhida não há o que ler: não fica "Carregando…" para sempre
+    try {
+      const r = await lerDoServidor();
+      setSalvo(r.config); setCfg(r.config);
+      setSlug(r.slug); setNomeLoja(r.nome);
+      setErroCarga('');
+    } catch (e) {
+      setErroCarga(e instanceof Error ? e.message : String(e));
+    } finally {
       setCarregando(false);
-      setDeliveryUrl(getPublicUrl('/delivery'));
-      return;
     }
+  }, [tenantId, lerDoServidor]);
+  useEffect(() => { setCarregando(true); void carregar(); }, [carregar]);
 
-    // Busca slug do tenant para montar o link correto
-    const url = getDeliveryWriteUrl();
+  const mudar = useCallback<DeliveryTelaApi['mudar']>((patch) => {
+    setCfg((c) => ({ ...c, ...(typeof patch === 'function' ? patch(c) : patch) }));
+  }, []);
+  const mudancas = useMemo(() => contarMudancas(salvo, cfg), [salvo, cfg]);
 
-    // Busca config do delivery (payload LEVE: só city + delivery_config, sem o cardápio)
-    // + slug do tenant em paralelo. Antes usava get_delivery_config (cardápio inteiro,
-    // ~13 queries) — era o que deixava a aba Delivery lenta.
-    Promise.all([
-      (async function () {
-        const { data: sessionData } = await supabase.auth.getSession();
-        const token = sessionData.session?.access_token;
-        if (!token) return { error: 'no_token' };
-        return fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-          body: JSON.stringify({ action: 'get_delivery_settings', tenant_id: tenantId }),
-        }).then(function (res) { return res.json(); });
-      })(),
-      supabase
-        .from('tenants')
-        .select('slug')
-        .eq('id', tenantId)
-        .maybeSingle(),
-    ])
-      .then(function (results) {
-        const data = results[0];
-        const slugRes = results[1];
-
-        if (slugRes.data?.slug && !slugRes.error) {
-          setTenantSlug(slugRes.data.slug);
-          setDeliveryUrl(getPublicUrl('/' + slugRes.data.slug + '-delivery'));
-        } else {
-          setDeliveryUrl(getPublicUrl('/delivery'));
-        }
-
-        if (!data.error) {
-          setCity(data.city || '');
-          setNeighborhoods(data.neighborhoods || []);
-          const dc = data.delivery_config || {};
-          setPedidoMinimoAtivo(dc.pedido_minimo_ativo === true);
-          setPedidoMinimoValor(dc.pedido_minimo_valor ? String(dc.pedido_minimo_valor) : '0');
-          setRetiradaAtivo(dc.retirada_ativo !== false); // default true
-          setWhatsappLoja(dc.whatsapp_loja ? String(dc.whatsapp_loja) : '');
-          const fp = dc.formas_pagamento;
-          if (fp && typeof fp === 'object') {
-            setFormasPagamento(fp as Record<string, boolean>);
-          }
-          // Localização da loja + faixas de distância
-          const sl = dc.store_location;
-          if (sl && typeof sl === 'object' && typeof sl.lat === 'number' && typeof sl.lng === 'number') {
-            setStoreLat(sl.lat);
-            setStoreLng(sl.lng);
-          }
-          // Horário de funcionamento do delivery
-          const sched = dc.delivery_schedule;
-          if (sched && typeof sched === 'object') {
-            setHorarioAtivo(sched.enabled === true);
-            const days = sched.days;
-            if (days && typeof days === 'object') {
-              setHorarios(function (prev) {
-                return prev.map(function (d, i) {
-                  const sd = days[String(i)];
-                  if (sd && typeof sd === 'object') {
-                    return {
-                      enabled: sd.enabled === true,
-                      open: typeof sd.open === 'string' ? sd.open : d.open,
-                      close: typeof sd.close === 'string' ? sd.close : d.close,
-                    };
-                  }
-                  return d;
-                });
-              });
-            }
-          }
-          const tiers = dc.delivery_fee_tiers;
-          if (Array.isArray(tiers)) {
-            setFaixas(tiers.map(function (t: any) {
-              return {
-                ate_km: Number(t.ate_km) || 0,
-                taxa: Number(t.taxa) || 0,
-                tempo_max_min: Number(t.tempo_max_min) || 0,
-              };
-            }));
-          }
-          // Recuperação de carrinho abandonado (desligada até a loja habilitar)
-          const cr = dc.cart_recovery;
-          if (cr && typeof cr === 'object') {
-            setRecupAtivo(cr.enabled === true);
-            if (cr.delay_min != null) setRecupEsperaMin(String(cr.delay_min));
-            if (cr.voucher_type === 'valor' || cr.voucher_type === 'percentual') setRecupTipo(cr.voucher_type);
-            if (cr.voucher_value != null) setRecupValor(String(cr.voucher_value));
-            if (cr.validade_dias != null) setRecupValidadeDias(String(cr.validade_dias));
-            if (typeof cr.mensagem === 'string') setRecupMensagem(cr.mensagem);
-          }
-          setAcertoCfg(lerAcertoCfg(dc.acerto_motoboy));
-          const ma = dc.motoboy_alertas;
-          if (ma && typeof ma === 'object') {
-            const norm = (x: any): MotoboyAlertEntry[] => Array.isArray(x)
-              ? x.filter(function (e: any) { return e && e.id; }).map(function (e: any) { return { id: String(e.id), nome: String(e.nome ?? '') }; })
-              : [];
-            setAlertCategorias(norm(ma.categorias));
-            setAlertItens(norm(ma.itens));
-          }
-          const wm = dc.whatsapp_msgs;
-          if (wm && typeof wm === 'object') {
-            const normMsgs: Record<string, string[]> = {};
-            for (const k of Object.keys(wm)) {
-              if (Array.isArray(wm[k])) normMsgs[k] = wm[k].filter(function (s: any) { return typeof s === 'string'; });
-            }
-            setWhatsappMsgs(normMsgs);
-          }
-        }
-      })
-      .catch(function () {})
-      .finally(function () {
-        setCarregando(false);
-      });
-  }, [tenantId]);
-
-  // Carrega entregadores cadastrados desta loja.
-  useEffect(function () {
-    if (tenantId) carregarMotoboys();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId]);
-
-  function handleAddBairro() {
-    const nome = newBairroNome.trim();
-    if (!nome) return;
-    const taxa = parseFloat(newBairroTaxa.replace(',', '.')) || 0;
-
-    const jaExiste = neighborhoods.some(function (nb) {
-      return nb.name.toLowerCase() === nome.toLowerCase();
-    });
-    if (jaExiste) {
-      setMensagem({ tipo: 'erro', texto: 'Este bairro já está na lista.' });
-      return;
-    }
-
-    setNeighborhoods(function (prev) {
-      return prev.concat([{
-        id: 'temp-' + Date.now(),
-        name: nome,
-        delivery_fee: taxa,
-        is_active: true,
-      }]);
-    });
-    setNewBairroNome('');
-    setNewBairroTaxa('0');
-  }
-
-  function handleRemoveBairro(id: string) {
-    setNeighborhoods(function (prev) { return prev.filter(function (nb) { return nb.id !== id; }); });
-  }
-
-  function handleToggleBairro(id: string) {
-    setNeighborhoods(function (prev) {
-      return prev.map(function (nb) {
-        if (nb.id === id) return { ...nb, is_active: !nb.is_active };
-        return nb;
-      });
-    });
-  }
-
-  function handleUpdateTaxa(id: string, taxa: number) {
-    setNeighborhoods(function (prev) {
-      return prev.map(function (nb) {
-        if (nb.id === id) return { ...nb, delivery_fee: Math.max(0, taxa) };
-        return nb;
-      });
-    });
-  }
-
-  async function handleSave() {
-    if (!tenantId) return;
-
+  const salvar = async () => {
+    if (salvando) return;
+    const enviado = cfg; // o que a pessoa vê agora; se ela digitar durante o salvamento, `cfg` passa a ser outro objeto
+    const corpo = mudancasParaSalvar(salvo, enviado);
     setSalvando(true);
-    setMensagem(null);
-
-    // Monta o delivery_config (JSON em system_settings) mesclando os campos
-    // existentes + os novos (localização da loja e faixas de distância).
-    const deliveryConfig = {
-      pedido_minimo_ativo: pedidoMinimoAtivo,
-      pedido_minimo_valor: pedidoMinimoAtivo ? parseFloat(pedidoMinimoValor.replace(',', '.')) || 0 : 0,
-      retirada_ativo: retiradaAtivo,
-      whatsapp_loja: whatsappLoja.replace(/\D/g, '') || null,
-      formas_pagamento: formasPagamento,
-      store_location: (storeLat != null && storeLng != null) ? { lat: storeLat, lng: storeLng } : null,
-      delivery_fee_tiers: faixas
-        .filter(function (f) { return f.ate_km > 0; })
-        .sort(function (a, b) { return a.ate_km - b.ate_km; }),
-      delivery_schedule: {
-        enabled: horarioAtivo,
-        days: horarios.reduce(function (acc, d, i) {
-          acc[String(i)] = { enabled: d.enabled, open: d.open, close: d.close };
-          return acc;
-        }, {} as Record<string, { enabled: boolean; open: string; close: string }>),
-      },
-      motoboy_alertas: { categorias: alertCategorias, itens: alertItens },
-      acerto_motoboy: acertoParaSalvar(acertoCfg),
-      cart_recovery: {
-        enabled: recupAtivo,
-        delay_min: Math.min(1440, Math.max(5, parseInt(recupEsperaMin, 10) || 30)),
-        voucher_type: recupTipo,
-        voucher_value: Math.max(0, parseFloat(recupValor.replace(',', '.')) || 0),
-        validade_dias: Math.min(90, Math.max(1, parseInt(recupValidadeDias, 10) || 7)),
-        mensagem: recupMensagem.trim(),
-      },
-      whatsapp_msgs: (function () {
-        const out: Record<string, string[]> = {};
-        for (const k of Object.keys(whatsappMsgs)) {
-          const arr = (whatsappMsgs[k] ?? []).map(function (s) { return s.trim(); }).filter(Boolean);
-          if (arr.length > 0) out[k] = arr;
-        }
-        return out;
-      })(),
-    };
-
-    // Salva via Edge Function (service role + valida que o usuário é admin DESTA loja).
-    // Necessário porque o RLS direto usa auth_tenant_id() = última membership criada,
-    // o que faz o save falhar silenciosamente para donos com mais de uma loja.
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token;
-    if (!token) {
+    try {
+      // Só o que mudou: o servidor junta com o que já existe.
+      await chamarDelivery('save_delivery_settings', { tenant_id: tenantId, ...corpo });
+    } catch (e) {
+      toast.error('Não salvou', e instanceof Error ? e.message : String(e));
       setSalvando(false);
-      setMensagem({ tipo: 'erro', texto: 'Sessão expirada. Entre novamente para salvar.' });
       return;
     }
-
+    // Gravou. Reler é só para conferir: se falhar, o save continua valendo (não troca a tela pelo painel de erro).
     try {
-      const res = await fetch(getDeliveryWriteUrl(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-        body: JSON.stringify({
-          action: 'save_delivery_settings',
-          tenant_id: tenantId,
-          delivery_city: city.trim(),
-          delivery_config: deliveryConfig,
-        }),
-      });
-      const data = await res.json();
-      setSalvando(false);
-      if (data.error) {
-        setMensagem({ tipo: 'erro', texto: 'Erro ao salvar: ' + (data.message || data.error) });
-      } else {
-        setMensagem({ tipo: 'sucesso', texto: 'Configurações de delivery salvas com sucesso!' });
-      }
-    } catch (_e) {
-      setSalvando(false);
-      setMensagem({ tipo: 'erro', texto: 'Erro de conexão ao salvar.' });
+      const r = await lerDoServidor();
+      setSalvo(r.config); setSlug(r.slug); setNomeLoja(r.nome);
+      setCfg((atual) => (atual === enviado ? r.config : atual)); // digitou no meio do salvamento? mantém o que digitou
+    } catch {
+      setSalvo(enviado);
+      toast.warning('Salvou, mas não consegui reler', 'O que você mudou já vale para o cliente. Se algo parecer diferente, atualize a página.');
     }
-  }
+    setSalvando(false);
+    setSalvouAgora(true);
+    setTimeout(() => setSalvouAgora(false), 1800);
+  };
+  const desfazer = () => setCfg(salvo);
 
-  // ── Funções das faixas de entrega por distância ──
-  function handleAddFaixa() {
-    setFaixas(function (prev) {
-      const ultimoKm = prev.length > 0 ? prev[prev.length - 1].ate_km : 0;
-      return prev.concat([{ ate_km: ultimoKm + 2, taxa: 0, tempo_max_min: 40 }]);
+  // ── mudanças não salvas FORA da barra da página (rascunho próprio de uma aba, ex.: Assistente) ──
+  const [extras, setExtras] = useState<Record<string, number>>({});
+  const marcarPendenciaExtra = useCallback((chave: string, n: number) => {
+    setExtras((e) => {
+      if ((e[chave] ?? 0) === Math.max(0, n)) return e;
+      const prox = { ...e };
+      if (n > 0) prox[chave] = n; else delete prox[chave];
+      return prox;
     });
-  }
-  function handleRemoveFaixa(idx: number) {
-    setFaixas(function (prev) { return prev.filter(function (_, i) { return i !== idx; }); });
-  }
-  function handleUpdateFaixa(idx: number, campo: keyof FaixaEntrega, valor: number) {
-    setFaixas(function (prev) {
-      return prev.map(function (f, i) {
-        if (i === idx) return { ...f, [campo]: Math.max(0, valor) };
-        return f;
-      });
-    });
-  }
+  }, []);
+  useEffect(() => { setExtras((e) => (Object.keys(e).length ? {} : e)); }, [tenantId]); // outra loja: nada da anterior
+  const pendenciasExtras = Object.values(extras).reduce((soma, n) => soma + n, 0);
+  const pendentes = mudancas + pendenciasExtras;
+  const fraseSaida = useMemo(() => {
+    const partes: string[] = [];
+    if (mudancas > 0) partes.push(`${mudancas} ${mudancas === 1 ? 'mudança ainda não foi salva' : 'mudanças ainda não foram salvas'} no Delivery.`);
+    for (const chave of Object.keys(extras)) {
+      partes.push(chave === 'assistente' ? 'O assistente do WhatsApp tem mudanças não salvas.' : 'Há mudanças não salvas em outra parte do Delivery.');
+    }
+    return partes.join(' ');
+  }, [mudancas, extras]);
 
-  // ── Entregadores (motoboys): carregar / bloquear / liberar / remover ──
-  async function carregarMotoboys() {
+  // Sair da tela com mudança não salva (inclusive a do Assistente): o navegador pergunta ao fechar/recarregar, os
+  // links do app perguntam aqui e os botões do layout (loja, Perfil, Sair, Voltar) perguntam por `podeSair()`.
+  const temPendencia = pendentes > 0;
+  useEffect(() => {
+    if (!temPendencia) return;
+    return registrarGuardaSaida(() => ({ pendente: pendentes, mensagem: fraseSaida }));
+  }, [temPendencia, pendentes, fraseSaida]);
+  useEffect(() => {
+    if (!temPendencia) return;
+    const antes = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    const clique = (e: MouseEvent) => {
+      // Ctrl/Cmd/Shift/Alt e botão do meio abrem em outra aba ou janela: esta tela não sai do lugar.
+      if (e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+      const a = (e.target as HTMLElement | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
+      if (!a || a.target === '_blank' || a.hasAttribute('download')) return;
+      const url = new URL(a.href, window.location.href);
+      if (url.origin !== window.location.origin || url.pathname === window.location.pathname) return;
+      e.preventDefault(); e.stopPropagation();
+      void podeSair().then((ok) => { if (ok) navigate(url.pathname + url.search + url.hash); });
+    };
+    window.addEventListener('beforeunload', antes);
+    document.addEventListener('click', clique, true);
+    return () => { window.removeEventListener('beforeunload', antes); document.removeEventListener('click', clique, true); };
+  }, [temPendencia, navigate]);
+
+  // ── entregadores (Início, Equipe, Quanto ganham) ──
+  const [motoboys, setMotoboys] = useState<Motoboy[]>([]);
+  const [motoboysCarregando, setMotoboysCarregando] = useState(false);
+  const recarregarMotoboys = useCallback(async () => {
     if (!tenantId) return;
-    setMotoboysLoading(true);
+    setMotoboysCarregando(true);
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData.session?.access_token;
-      if (!token) { setMotoboysLoading(false); return; }
-      const res = await fetch(getDeliveryWriteUrl(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-        body: JSON.stringify({ action: 'list_drivers', tenant_id: tenantId }),
-      });
-      const data = await res.json();
-      if (data.ok) setMotoboys(data.drivers ?? []);
-    } catch (_e) { /* ignora */ } finally {
-      setMotoboysLoading(false);
+      const d = await chamarDelivery<{ drivers: Motoboy[] }>('list_drivers', { tenant_id: tenantId });
+      setMotoboys((d.drivers ?? []).map((m) => ({ ...m, entregas_30d: Number(m.entregas_30d) || 0 })));
+    } catch (e) {
+      toastRef.current.error('Não carregou os entregadores', e instanceof Error ? e.message : String(e));
+    } finally {
+      setMotoboysCarregando(false);
     }
-  }
+  }, [tenantId]);
+  useEffect(() => { void recarregarMotoboys(); }, [recarregarMotoboys]);
 
-  // App "ERPOS Entregas": código de uso único (24 h) para o motoboy ligar esta loja no app.
-  async function gerarCodigoApp() {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token;
-    if (!token) { setMensagem({ tipo: 'erro', texto: 'Sessão expirada. Entre novamente.' }); return; }
-    setCodigoApp({ code: '', expires_at: '', gerando: true });
+  // ── conversas que pedem a equipe (selo do WhatsApp; o banco só deixa o dono ler) ──
+  // Só consulta com a aba do navegador à vista (e atualiza ao voltar). Se a leitura falhar, fica o último número.
+  const [pedemVoce, setPedemVoce] = useState(0);
+  const tenantAtual = useRef(tenantId);
+  tenantAtual.current = tenantId;
+  useEffect(() => { setPedemVoce(0); }, [tenantId]);
+  const lerSelo = useCallback(async () => {
+    if (!tenantId || !ehDono) return;
+    const t = tenantId;
     try {
-      const res = await fetch(getDeliveryWriteUrl(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-        body: JSON.stringify({ action: 'gerar_codigo_motoboy', tenant_id: tenantId }),
-      });
-      const data = await res.json();
-      if (data.ok) setCodigoApp({ code: data.code, expires_at: data.expires_at, gerando: false });
-      else { setCodigoApp(null); setMensagem({ tipo: 'erro', texto: String(data.error || 'Não foi possível gerar o código.') }); }
-    } catch (_e) {
-      setCodigoApp(null);
-      setMensagem({ tipo: 'erro', texto: 'Erro de conexão.' });
-    }
-  }
+      const { count, error } = await supabase.from('wa_loja_conversas').select('id', { count: 'exact', head: true })
+        .eq('tenant_id', t).eq('status', 'aberta').eq('needs_human', true);
+      if (error || count == null || tenantAtual.current !== t) return;
+      setPedemVoce(count);
+    } catch { /* sem rede: fica o último número */ }
+  }, [tenantId, ehDono]);
+  useAtualizacao(lerSelo, 60_000, `${tenantId}|${ehDono}`);
 
-  async function alterarMotoboy(driverId: string, payload: { is_active?: boolean; remover?: boolean }) {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token;
-    if (!token) { setMensagem({ tipo: 'erro', texto: 'Sessão expirada. Entre novamente.' }); return; }
-    try {
-      const res = await fetch(getDeliveryWriteUrl(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-        body: JSON.stringify(
-          payload.remover
-            ? { action: 'delete_driver', tenant_id: tenantId, driver_id: driverId }
-            : { action: 'set_driver_active', tenant_id: tenantId, driver_id: driverId, is_active: payload.is_active }
-        ),
-      });
-      const data = await res.json();
-      if (data.error) {
-        const msg = String(data.message || data.error);
-        // Entregador com lançamentos de acerto (dinheiro) não pode ser apagado: o histórico fica.
-        const temAcerto = payload.remover && /foreign key|delivery_driver_ledger|delivery_driver_settlements/i.test(msg);
-        setMensagem({ tipo: 'erro', texto: temAcerto ? 'Este entregador tem entregas no acerto financeiro e não pode ser removido. Use "Bloquear".' : 'Erro: ' + msg });
-        return;
-      }
-      await carregarMotoboys();
-    } catch (_e) {
-      setMensagem({ tipo: 'erro', texto: 'Erro de conexão.' });
-    }
-  }
+  const estado = useDeliveryState();
 
-  if (carregando && tenantId) {
-    return (
-      <div className="flex flex-col h-full">
-        <div className="px-6 py-4 bg-white border-b border-zinc-100">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 flex items-center justify-center bg-amber-100 rounded-lg">
-              <Truck size={16} className="text-amber-600" />
-            </div>
-            <div>
-              <h1 className="text-base font-bold text-zinc-900">Delivery</h1>
-              <p className="text-xs text-zinc-400">Gerencie bairros, taxas e link público de delivery</p>
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center justify-center py-12 flex-1">
-          <i className="ri-loader-4-line animate-spin text-zinc-400 text-lg" />
-          <span className="ml-2 text-sm text-zinc-500">Carregando...</span>
-        </div>
-      </div>
-    );
-  }
+  // ── abas e grupos ──
+  const grupos = useMemo(() => GRUPOS.map((g) => (g.id === 'whatsapp' && !ehDono ? { ...g, abas: ['mensagens' as AbaDelivery] } : g)), [ehDono]);
+  const visiveis = grupos.flatMap((g) => g.abas);
+  const aba: AbaDelivery = pedida && TODAS.includes(pedida) && visiveis.includes(pedida) ? pedida : 'inicio';
+  const irPara = useCallback((a: AbaDelivery) => { setParams({ aba: a }, { replace: true }); }, [setParams]);
+  const grupoAtivo = grupos.find((g) => g.abas.includes(aba)) ?? grupos[0];
+  const [ultimaDoGrupo, setUltimaDoGrupo] = useState<Record<string, AbaDelivery>>({});
+  useEffect(() => { setUltimaDoGrupo((u) => (u[grupoAtivo.id] === aba ? u : { ...u, [grupoAtivo.id]: aba })); }, [grupoAtivo.id, aba]);
+
+  const semArea = salvo.lojaLat == null || faixasOrdenadas(salvo.faixas).length === 0;
+  const seloAba = (a: AbaDelivery): Selo => {
+    if (carregando) return null; // enquanto carrega, `salvo` é a config vazia: não acender "sem área" à toa
+    if (a === 'area' && semArea) return { cor: 'red', dica: 'Sem pino da loja ou sem faixa: o cliente não consegue pedir entrega' };
+    if (a === 'acerto' && motoboys.length > 0 && !salvo.acerto.ativo) return { cor: 'amber', dica: 'Entregadores sem regra de pagamento' };
+    if (a === 'conversas' && pedemVoce > 0) return { n: pedemVoce, cor: 'red', dica: `${pedemVoce} conversa(s) pedindo a equipe` };
+    return null;
+  };
+  const seloGrupo = (g: Grupo): Selo => {
+    const s = g.abas.map(seloAba).filter(Boolean) as NonNullable<Selo>[];
+    return s.find((x) => x.n) ?? s.find((x) => x.cor === 'red') ?? s[0] ?? null;
+  };
+
+  const situacao = !estado.state ? null
+    : estado.state.open_now ? { txt: 'Aberto', cls: 'bg-emerald-50 text-emerald-700', dot: 'bg-emerald-600' }
+    : estado.state.reason === 'pausado' ? { txt: 'Pausado', cls: 'bg-amber-50 text-amber-800', dot: 'bg-amber-500' }
+    : { txt: 'Fechado', cls: 'bg-zinc-100 text-zinc-600', dot: 'bg-zinc-400' };
+
+  const linkDelivery = slug ? getPublicUrl('/' + slug + '-delivery') : getPublicUrl('/delivery');
+  const [linkCopiado, setLinkCopiado] = useState(false);
+
+  const api: DeliveryTelaApi = {
+    tenantId, slug, nomeLoja, linkDelivery, cfg, salvo, mudar, irPara, ehDono,
+    motoboys, motoboysCarregando, recarregarMotoboys, estado,
+    marcarPendenciaExtra, barraSalvarAberta: mudancas > 0 || salvouAgora,
+  };
+  const Comp = ABAS[aba].Comp;
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="px-6 py-4 bg-white border-b border-zinc-100">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 flex items-center justify-center bg-amber-100 rounded-lg">
-            <Truck size={16} className="text-amber-600" />
-          </div>
-          <div>
-            <h1 className="text-base font-bold text-zinc-900">Delivery</h1>
-            <p className="text-xs text-zinc-400">Gerencie bairros, taxas e link público de delivery</p>
-          </div>
-        </div>
-        {/* Abas */}
-        <div className="flex flex-wrap items-center gap-1 mt-3">
-          {([['config', 'Configurações'], ['entregas', 'Gerir entregas'], ['whatsapp', 'Atendimento WhatsApp']] as const).map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setAbaAtiva(key)}
-              className={'px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ' +
-                (abaAtiva === key ? 'bg-amber-500 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200')}
-            >
-              {label}
+    <DeliveryTelaContext.Provider value={api}>
+      <div className="flex flex-col h-full">
+        {/* Cabeçalho */}
+        <div className="px-4 md:px-6 pt-3 md:pt-5 pb-0 bg-white" style={{ borderBottom: '1px solid #f4f4f5' }}>
+          <div className="flex items-center gap-2 md:gap-3 mb-2 md:mb-4">
+            <div className="w-8 h-8 md:w-9 md:h-9 flex items-center justify-center rounded-xl flex-shrink-0" style={{ background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)' }}>
+              <i className="ri-truck-line text-white text-base md:text-lg" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h1 className="text-base md:text-lg font-bold text-zinc-800">Delivery</h1>
+              <p className="text-xs text-zinc-400 hidden sm:block">Seu delivery próprio: área, entregadores, divulgação e WhatsApp</p>
+            </div>
+            {situacao && (
+              <button type="button" onClick={() => irPara('inicio')} title="Situação do delivery agora"
+                className={`inline-flex items-center gap-1.5 h-9 px-3 rounded-full text-[12.5px] font-extrabold cursor-pointer flex-shrink-0 ${situacao.cls}`}>
+                <span className={`w-2 h-2 rounded-full ${situacao.dot}`} />{situacao.txt}
+              </button>
+            )}
+            <button type="button" title="Copiar o link do delivery" aria-label="Copiar o link do delivery"
+              onClick={() => navigator.clipboard.writeText(linkDelivery).then(() => { setLinkCopiado(true); setTimeout(() => setLinkCopiado(false), 1500); }).catch(() => {})}
+              className="w-9 h-9 flex items-center justify-center rounded-xl border border-zinc-200 bg-zinc-50 text-zinc-500 cursor-pointer flex-shrink-0">
+              <i className={`${linkCopiado ? 'ri-check-line text-emerald-600' : 'ri-link'} text-lg`} />
             </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Conteúdo */}
-      <div className="flex-1 overflow-y-auto p-6">
-        {abaAtiva === 'entregas' ? (
-          <GerirEntregasTab tenantId={tenantId} />
-        ) : abaAtiva === 'whatsapp' ? (
-          <AtendimentoWhatsAppTab tenantId={tenantId} />
-        ) : (
-        <div className="max-w-2xl space-y-6">
-          {/* Mensagem */}
-          {mensagem ? (
-            <div className={'px-4 py-3 rounded-xl text-sm font-medium flex items-center gap-2 ' +
-              (mensagem.tipo === 'sucesso' ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-red-50 text-red-600 border border-red-100')
-            }>
-              <i className={mensagem.tipo === 'sucesso' ? 'ri-checkbox-circle-line' : 'ri-error-warning-line'} />
-              {mensagem.texto}
-            </div>
-          ) : null}
-
-{/* Link do delivery */}
-          <div className="bg-amber-50 rounded-2xl border border-amber-100 p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-8 h-8 flex items-center justify-center bg-amber-500 rounded-lg">
-                <i className="ri-links-line text-white text-sm" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-800">Link do Delivery</h3>
-                <p className="text-xs text-zinc-500">
-                  Compartilhe este link com seus clientes
-                  {tenantSlug ? <span className="text-amber-600 font-semibold"> — Loja: {tenantSlug}</span> : null}
-                </p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 bg-white rounded-xl border border-amber-200 px-4 py-3">
-              <span className="text-sm text-zinc-700 flex-1 truncate font-mono">{deliveryUrl}</span>
-              <button
-                type="button"
-                onClick={function () {
-                  navigator.clipboard.writeText(deliveryUrl).then(function () {
-                    setMensagem({ tipo: 'sucesso', texto: 'Link copiado!' });
-                    setTimeout(function () { setMensagem(null); }, 2000);
-                  });
-                }}
-                className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap transition-colors flex items-center gap-1"
-              >
-                <i className="ri-file-copy-line" />
-                Copiar
-              </button>
-            </div>
-            {deliveryUrl ? (
-              <QrCodeDelivery url={deliveryUrl} nomeArquivo={`qrcode-delivery-${tenantSlug || 'loja'}`} />
-            ) : null}
           </div>
 
-          {/* Divulgar um item específico do cardápio */}
-          <div className="bg-white rounded-2xl border border-zinc-200 p-5 mt-4">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-8 h-8 flex items-center justify-center bg-amber-500 rounded-lg">
-                <i className="ri-price-tag-3-line text-white text-sm" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-800">Divulgar um item específico</h3>
-                <p className="text-xs text-zinc-500">Gere um link que abre direto no item — ótimo para redes sociais e WhatsApp</p>
-              </div>
-            </div>
-
-            <select
-              value={itemLinkSelId}
-              onChange={function (e) { setItemLinkSelId(e.target.value); }}
-              className="w-full bg-white border border-zinc-200 rounded-xl px-3 py-2.5 text-sm text-zinc-700 focus:outline-none focus:ring-2 focus:ring-amber-300 cursor-pointer"
-            >
-              <option value="">Selecione um item do cardápio…</option>
-              {categorias
-                .slice()
-                .sort(function (a, b) { return (a.ordem ?? 0) - (b.ordem ?? 0); })
-                .map(function (cat) {
-                  const itensCat = itens
-                    .filter(function (i) { return i.status === 'ativo' && i.categoriaId === cat.id; })
-                    .sort(function (a, b) { return a.nome.localeCompare(b.nome); });
-                  if (itensCat.length === 0) return null;
-                  return (
-                    <optgroup key={cat.id} label={cat.nome}>
-                      {itensCat.map(function (i) {
-                        return <option key={i.id} value={i.id}>{i.nome}</option>;
-                      })}
-                    </optgroup>
-                  );
-                })}
-            </select>
-
-            {itemLinkSelId && deliveryUrl ? (function () {
-              const itemLink = deliveryUrl + '?item=' + itemLinkSelId;
-              const nomeItem = itens.find(function (i) { return i.id === itemLinkSelId; })?.nome ?? 'item';
-              const slugItem = nomeItem.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+          {/* Grupos: no celular dividem a largura (ícone em cima, nome embaixo) */}
+          <div className="flex md:gap-0.5 -mx-4 md:mx-0 px-1 md:px-0" style={{ borderBottom: '1px solid rgba(245,158,11,0.15)' }}>
+            {grupos.map((g) => {
+              const selo = seloGrupo(g);
+              const ativo = grupoAtivo.id === g.id;
               return (
-                <div className="mt-3">
-                  <div className="flex items-center gap-2 bg-amber-50 rounded-xl border border-amber-200 px-4 py-3">
-                    <span className="text-sm text-zinc-700 flex-1 truncate font-mono">{itemLink}</span>
-                    <button
-                      type="button"
-                      onClick={function () {
-                        navigator.clipboard.writeText(itemLink).then(function () {
-                          setMensagem({ tipo: 'sucesso', texto: 'Link do item copiado!' });
-                          setTimeout(function () { setMensagem(null); }, 2000);
-                        });
-                      }}
-                      className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap transition-colors flex items-center gap-1"
-                    >
-                      <i className="ri-file-copy-line" />
-                      Copiar
-                    </button>
-                  </div>
-                  <QrCodeDelivery url={itemLink} nomeArquivo={'item-' + (tenantSlug || 'loja') + (slugItem ? '-' + slugItem : '')} />
-                </div>
-              );
-            })() : (
-              <p className="text-xs text-zinc-400 mt-2">Quem abrir o link cai direto na página do item, pronto para adicionar ao carrinho.</p>
-            )}
-          </div>
-
-          {/* Pagamento dos entregadores (regra do acerto) */}
-          <AcertoRegraCard value={acertoCfg} onChange={setAcertoCfg} />
-
-          {/* Entregadores (motoboys) — link de acesso + liberar/bloquear */}
-          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
-                <i className="ri-e-bike-2-line text-zinc-600 text-sm" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-800">Entregadores (motoboys)</h3>
-                <p className="text-xs text-zinc-500">Compartilhe o link de acesso e libere/bloqueie quem pode ver os pedidos</p>
-              </div>
-            </div>
-
-            {/* Link de acesso dos motoboys */}
-            {tenantSlug ? (
-              <div className="flex items-center gap-2 bg-zinc-50 rounded-xl border border-zinc-200 px-4 py-3">
-                <span className="text-sm text-zinc-700 flex-1 truncate font-mono">{getPublicUrl('/entregas/' + tenantSlug)}</span>
-                <button
-                  type="button"
-                  onClick={function () {
-                    navigator.clipboard.writeText(getPublicUrl('/entregas/' + tenantSlug)).then(function () {
-                      setMensagem({ tipo: 'sucesso', texto: 'Link dos entregadores copiado!' });
-                      setTimeout(function () { setMensagem(null); }, 2000);
-                    });
-                  }}
-                  className="px-3 py-1.5 bg-zinc-700 hover:bg-zinc-800 text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap transition-colors flex items-center gap-1"
-                >
-                  <i className="ri-file-copy-line" /> Copiar
+                <button key={g.id} type="button" onClick={() => irPara(ultimaDoGrupo[g.id] ?? g.abas[0])}
+                  className={`relative flex flex-1 md:flex-none flex-col md:flex-row items-center gap-0.5 md:gap-1.5 min-w-0 px-1 md:px-4 pt-2 pb-1.5 md:py-2.5 text-[10.5px] md:text-[13px] font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+                    ativo ? 'border-amber-500 text-amber-600' : 'border-transparent text-zinc-400 hover:text-zinc-700'}`}>
+                  <i className={`${g.icon} text-lg leading-none md:text-[13px] md:leading-normal`} />
+                  {g.label}
+                  {selo && (selo.n
+                    ? <span title={selo.dica} className={`absolute top-0.5 left-1/2 ml-2 md:static md:ml-0 text-[9px] font-black px-1.5 py-0.5 rounded-full text-white leading-none md:leading-normal ${selo.cor === 'red' ? 'bg-red-500' : 'bg-amber-500'}`}>{selo.n}</span>
+                    : <span title={selo.dica} className={`absolute top-1.5 left-1/2 ml-2.5 md:static md:ml-0 w-2 h-2 rounded-full ${selo.cor === 'red' ? 'bg-red-500' : 'bg-amber-500'}`} />)}
                 </button>
-              </div>
-            ) : null}
-
-            {/* App "ERPOS Entregas": código de uso único para o motoboy ligar esta loja no app */}
-            <div className="bg-violet-50 rounded-xl border border-violet-200 px-4 py-3 space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-sm font-bold text-violet-900">App ERPOS Entregas</p>
-                  <p className="text-xs text-violet-700">O motoboy digita o código no app (Adicionar loja). Vale uma vez, por 24 h.</p>
-                </div>
-                <button type="button" onClick={gerarCodigoApp} disabled={!!codigoApp?.gerando}
-                  className="px-3 py-1.5 bg-violet-600 hover:bg-violet-700 text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap disabled:opacity-50 flex items-center gap-1">
-                  <i className={codigoApp?.gerando ? 'ri-loader-4-line animate-spin' : 'ri-key-2-line'} /> Código para o app
-                </button>
-              </div>
-              {codigoApp?.code ? (
-                <div className="flex items-center gap-3 bg-white rounded-lg border border-violet-200 px-3 py-2">
-                  <span className="text-xl font-black tracking-widest text-violet-900 font-mono select-all">{codigoApp.code}</span>
-                  <span className="text-[11px] text-zinc-500 flex-1">vale até {new Date(codigoApp.expires_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
-                  <button type="button" onClick={function () {
-                    navigator.clipboard.writeText(codigoApp.code).then(function () {
-                      setMensagem({ tipo: 'sucesso', texto: 'Código copiado!' });
-                      setTimeout(function () { setMensagem(null); }, 2000);
-                    });
-                  }} className="px-2.5 py-1 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-bold rounded-lg flex items-center gap-1">
-                    <i className="ri-file-copy-line" /> Copiar
-                  </button>
-                </div>
-              ) : null}
-            </div>
-
-            {/* Lista de entregadores cadastrados */}
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-zinc-500">Cadastrados</span>
-              <button
-                type="button"
-                onClick={carregarMotoboys}
-                disabled={motoboysLoading}
-                className="inline-flex items-center gap-1 text-xs font-bold text-amber-600 disabled:opacity-50"
-              >
-                <i className={'ri-refresh-line' + (motoboysLoading ? ' animate-spin' : '')} /> Atualizar
-              </button>
-            </div>
-            {motoboysLoading ? (
-              <p className="text-xs text-zinc-400">Carregando entregadores…</p>
-            ) : motoboys.length === 0 ? (
-              <p className="text-xs text-zinc-400">Nenhum entregador entrou ainda. Envie o link acima — ao entrar com nome e celular, ele aparece aqui.</p>
-            ) : (
-              <div className="space-y-2">
-                {motoboys.map(function (m) {
-                  return (
-                    <div key={m.id} className="flex items-center justify-between gap-2 bg-zinc-50 rounded-xl border border-zinc-100 px-3 py-2.5">
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-zinc-800 truncate">{m.name}</p>
-                        <p className="text-xs text-zinc-400">{m.phone}{m.is_active ? '' : ' — bloqueado'}</p>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={function () { alterarMotoboy(m.id, { is_active: !m.is_active }); }}
-                          className={'px-2.5 py-1 rounded-lg text-xs font-bold transition-colors ' + (m.is_active ? 'bg-amber-100 text-amber-700 hover:bg-amber-200' : 'bg-green-100 text-green-700 hover:bg-green-200')}
-                        >
-                          {m.is_active ? 'Bloquear' : 'Liberar'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={async function () { if (await confirmar({ titulo: 'Remover este entregador?', confirmarLabel: 'Remover', perigo: true })) alterarMotoboy(m.id, { remover: true }); }}
-                          className="px-2 py-1 rounded-lg text-xs font-bold bg-zinc-100 text-zinc-500 hover:bg-red-100 hover:text-red-600 transition-colors"
-                        >
-                          <i className="ri-delete-bin-line" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Cidade */}
-          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
-                <i className="ri-building-line text-zinc-600 text-sm" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-800">Cidade de entrega</h3>
-                <p className="text-xs text-zinc-500">Nome da cidade onde o delivery atua</p>
-              </div>
-            </div>
-            <input
-              type="text"
-              value={city}
-              onChange={function (e) { setCity(e.target.value); }}
-              placeholder="Ex: São Paulo"
-              className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
-              maxLength={50}
-            />
-          </div>
-
-          {/* WhatsApp da loja (botão de contato no app do cliente) */}
-          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 flex items-center justify-center bg-green-100 rounded-lg">
-                <i className="ri-whatsapp-line text-green-600 text-sm" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-800">WhatsApp da loja</h3>
-                <p className="text-xs text-zinc-500">Número exibido como botão de contato para o cliente no delivery (com DDD)</p>
-              </div>
-            </div>
-            <input
-              type="tel"
-              inputMode="numeric"
-              value={whatsappLoja}
-              onChange={function (e) { setWhatsappLoja(e.target.value); }}
-              placeholder="Ex: (11) 99999-9999"
-              className="w-full px-3.5 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent transition-all"
-              maxLength={20}
-            />
-            <p className="text-[11px] text-zinc-400">
-              {whatsappLoja.replace(/\D/g, '').length >= 10
-                ? 'O cliente verá um botão "Falar com a loja" no topo do delivery.'
-                : 'Deixe em branco para ocultar o botão de WhatsApp no app do cliente.'}
-            </p>
-          </div>
-
-          {/* Localização da loja (origem do cálculo de distância) */}
-          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
-                <i className="ri-map-pin-2-line text-zinc-600 text-sm" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-800">Localização da loja</h3>
-                <p className="text-xs text-zinc-500">Arraste o mapa para deixar o pino no ponto exato da loja — é a origem das rotas de entrega</p>
-              </div>
-            </div>
-            <MapaPin
-              lat={storeLat}
-              lng={storeLng}
-              onChange={function (lat, lng) { setStoreLat(lat); setStoreLng(lng); }}
-              altura="h-72"
-              confirmed={storeLat != null && storeLng != null}
-            />
-            {storeLat != null && storeLng != null ? (
-              <p className="text-[11px] text-zinc-500">
-                <i className="ri-checkbox-circle-line text-emerald-500 mr-1" />
-                Loja marcada em {storeLat.toFixed(5)}, {storeLng.toFixed(5)}
-              </p>
-            ) : (
-              <p className="text-[11px] text-amber-600">
-                <i className="ri-error-warning-line mr-1" />
-                Marque a loja no mapa para habilitar o cálculo por distância.
-              </p>
-            )}
-          </div>
-
-          {/* Faixas de entrega por distância */}
-          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
-                <i className="ri-route-line text-zinc-600 text-sm" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-800">Entrega por distância</h3>
-                <p className="text-xs text-zinc-500">Faixas por km: taxa e tempo máximo. Pedidos além da última faixa são bloqueados.</p>
-              </div>
-            </div>
-
-            {faixas.length > 0 && (
-              <div className="space-y-2">
-                <div className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 px-1">
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wide">Até (km)</span>
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wide">Taxa (R$)</span>
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wide">Tempo máx (min)</span>
-                  <span />
-                </div>
-                {faixas.map(function (f, idx) {
-                  return (
-                    <div key={idx} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
-                      <input
-                        type="number" min={0} step={0.5} value={f.ate_km}
-                        onChange={function (e) { handleUpdateFaixa(idx, 'ate_km', parseFloat(e.target.value) || 0); }}
-                        className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                      />
-                      <input
-                        type="number" min={0} step={0.5} value={f.taxa}
-                        onChange={function (e) { handleUpdateFaixa(idx, 'taxa', parseFloat(e.target.value) || 0); }}
-                        className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                      />
-                      <input
-                        type="number" min={0} step={5} value={f.tempo_max_min}
-                        onChange={function (e) { handleUpdateFaixa(idx, 'tempo_max_min', parseInt(e.target.value) || 0); }}
-                        className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                      />
-                      <button
-                        onClick={function () { handleRemoveFaixa(idx); }}
-                        className="w-9 h-9 flex items-center justify-center rounded-lg text-red-500 hover:bg-red-50 cursor-pointer transition-colors"
-                        title="Remover faixa"
-                      >
-                        <i className="ri-delete-bin-line text-sm" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            <button
-              onClick={handleAddFaixa}
-              className="w-full flex items-center justify-center gap-2 py-2.5 text-sm font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 border-2 border-dashed border-amber-300 rounded-lg cursor-pointer transition-colors"
-            >
-              <i className="ri-add-line" /> Adicionar faixa
-            </button>
-            <p className="text-[11px] text-zinc-400">
-              Ex.: até 2 km → R$ 5,00 / 30 min · até 5 km → R$ 9,00 / 45 min. As faixas são ordenadas por km ao salvar.
-            </p>
-          </div>
-
-          {/* Pedido Mínimo */}
-          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
-                <i className="ri-shopping-cart-2-line text-zinc-600 text-sm" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-800">Pedido mínimo</h3>
-                <p className="text-xs text-zinc-500">Defina um valor mínimo para aceitar pedidos no delivery</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-4">
-              {/* Toggle */}
-              <button
-                type="button"
-                onClick={function () { setPedidoMinimoAtivo(function (v) { return !v; }); }}
-                className={'relative w-12 h-7 rounded-full transition-colors cursor-pointer flex-shrink-0 ' +
-                  (pedidoMinimoAtivo ? 'bg-amber-500' : 'bg-zinc-200')
-                }
-              >
-                <div className={'absolute top-0.5 w-6 h-6 bg-white rounded-full transition-transform shadow ' +
-                  (pedidoMinimoAtivo ? 'translate-x-[22px]' : 'translate-x-0.5')
-                } />
-              </button>
-              <span className={'text-sm font-semibold ' + (pedidoMinimoAtivo ? 'text-zinc-800' : 'text-zinc-400')}>
-                {pedidoMinimoAtivo ? 'Ativado' : 'Desativado'}
-              </span>
-            </div>
-
-            {pedidoMinimoAtivo ? (
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-zinc-500">Valor mínimo:</span>
-                <div className="flex items-center gap-1 bg-zinc-50 border border-zinc-200 rounded-lg px-3 py-2">
-                  <span className="text-sm font-semibold text-zinc-500">R$</span>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={pedidoMinimoValor}
-                    onChange={function (e) {
-                      const v = e.target.value.replace(/[^0-9,.]/g, '');
-                      setPedidoMinimoValor(v);
-                    }}
-                    onBlur={function () {
-                      const num = parseFloat(pedidoMinimoValor.replace(',', '.')) || 0;
-                      setPedidoMinimoValor(num > 0 ? num.toFixed(2).replace('.', ',') : '0');
-                    }}
-                    placeholder="0,00"
-                    className="w-20 text-center text-sm font-bold text-zinc-800 bg-transparent border-none outline-none"
-                  />
-                </div>
-                <span className="text-xs text-zinc-400">
-                  {pedidoMinimoValor && parseFloat(pedidoMinimoValor.replace(',', '.')) > 0
-                    ? 'O carrinho precisa atingir este valor (sem contar a taxa de entrega)'
-                    : 'Defina um valor acima de R$ 0,00'
-                  }
-                </span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 px-3 py-2 bg-zinc-50 rounded-lg border border-zinc-100">
-                <i className="ri-information-line text-zinc-400 text-sm" />
-                <span className="text-xs text-zinc-400">Nenhum valor mínimo — qualquer pedido será aceito</span>
-              </div>
-            )}
-          </div>
-
-          {/* Retirada na loja */}
-          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
-                <i className="ri-store-2-line text-zinc-600 text-sm" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-800">Retirada na loja</h3>
-                <p className="text-xs text-zinc-500">Permite que o cliente escolha retirar o pedido na loja ao invés de receber em casa</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-4">
-              <button
-                type="button"
-                onClick={function () { setRetiradaAtivo(function (v) { return !v; }); }}
-                className={'relative w-12 h-7 rounded-full transition-colors cursor-pointer flex-shrink-0 ' +
-                  (retiradaAtivo ? 'bg-green-500' : 'bg-zinc-200')
-                }
-              >
-                <div className={'absolute top-0.5 w-6 h-6 bg-white rounded-full transition-transform shadow ' +
-                  (retiradaAtivo ? 'translate-x-[22px]' : 'translate-x-0.5')
-                } />
-              </button>
-              <span className={'text-sm font-semibold ' + (retiradaAtivo ? 'text-green-700' : 'text-zinc-400')}>
-                {retiradaAtivo ? 'Ativado' : 'Desativado'}
-              </span>
-            </div>
-
-            {retiradaAtivo ? (
-              <div className="flex items-start gap-2 px-3 py-2.5 bg-green-50 rounded-lg border border-green-100">
-                <i className="ri-information-line text-green-500 text-sm mt-0.5" />
-                <div>
-                  <span className="text-xs text-green-700 font-semibold">Cliente pode escolher retirada</span>
-                  <p className="text-[10px] text-green-600 mt-0.5">
-                    Ao selecionar "Retirada na loja", o cliente não informa endereço e não paga taxa de entrega. A cozinha prepara e aguarda a retirada.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 px-3 py-2 bg-zinc-50 rounded-lg border border-zinc-100">
-                <i className="ri-information-line text-zinc-400 text-sm" />
-                <span className="text-xs text-zinc-400">Apenas a opção de delivery (entrega) ficará disponível para o cliente</span>
-              </div>
-            )}
-          </div>
-
-          {/* Recuperar carrinho abandonado */}
-          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
-                <i className="ri-shopping-cart-2-line text-zinc-600 text-sm" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-800">Recuperar carrinho abandonado</h3>
-                <p className="text-xs text-zinc-500">Voucher para quem entrou no cardápio, montou o carrinho e não finalizou</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-4">
-              <button
-                type="button"
-                onClick={function () { setRecupAtivo(function (v) { return !v; }); }}
-                className={'relative w-12 h-7 rounded-full transition-colors cursor-pointer flex-shrink-0 ' +
-                  (recupAtivo ? 'bg-green-500' : 'bg-zinc-200')
-                }
-              >
-                <div className={'absolute top-0.5 w-6 h-6 bg-white rounded-full transition-transform shadow ' +
-                  (recupAtivo ? 'translate-x-[22px]' : 'translate-x-0.5')
-                } />
-              </button>
-              <span className={'text-sm font-semibold ' + (recupAtivo ? 'text-green-700' : 'text-zinc-400')}>
-                {recupAtivo ? 'Oferta de voucher ativada' : 'Desativado'}
-              </span>
-            </div>
-
-            <div className="flex items-start gap-2 px-3 py-2.5 bg-blue-50 rounded-lg border border-blue-100">
-              <i className="ri-information-line text-blue-500 text-sm mt-0.5" />
-              <p className="text-[11px] text-blue-700">
-                A lista de quem entrou e não pediu aparece em <strong>Clientes › Não pediram</strong> mesmo com isto
-                desligado. Ligar aqui faz o ERPOS <strong>sugerir o voucher</strong> já preenchido nessa lista — o envio
-                continua sendo um clique seu, nada é mandado automaticamente para o cliente.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-zinc-600 mb-1.5">Esperar antes de considerar abandono</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={5}
-                    max={1440}
-                    value={recupEsperaMin}
-                    onChange={function (e) { setRecupEsperaMin(e.target.value); }}
-                    className="w-24 px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                  />
-                  <span className="text-xs text-zinc-500">minutos sem atividade</span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-zinc-600 mb-1.5">Validade do voucher</label>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={1}
-                    max={90}
-                    value={recupValidadeDias}
-                    onChange={function (e) { setRecupValidadeDias(e.target.value); }}
-                    className="w-24 px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                  />
-                  <span className="text-xs text-zinc-500">dias</span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-zinc-600 mb-1.5">Tipo de desconto</label>
-                <select
-                  value={recupTipo}
-                  onChange={function (e) { setRecupTipo(e.target.value === 'valor' ? 'valor' : 'percentual'); }}
-                  className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 bg-white"
-                >
-                  <option value="percentual">Percentual (%)</option>
-                  <option value="valor">Valor fixo (R$)</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-zinc-600 mb-1.5">
-                  {recupTipo === 'percentual' ? 'Desconto (%)' : 'Desconto (R$)'}
-                </label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={recupValor}
-                  onChange={function (e) { setRecupValor(e.target.value); }}
-                  className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-zinc-600 mb-1.5">Mensagem sugerida (WhatsApp)</label>
-              <textarea
-                rows={2}
-                value={recupMensagem}
-                onChange={function (e) { setRecupMensagem(e.target.value); }}
-                placeholder="Vi que você montou um pedido e não finalizou! Separei um cupom pra você 😊"
-                className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
-              />
-            </div>
-          </div>
-
-          {/* Horário de funcionamento do delivery */}
-          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
-                <i className="ri-time-line text-zinc-600 text-sm" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-800">Horário de funcionamento do delivery</h3>
-                <p className="text-xs text-zinc-500">Programe quando o delivery abre e fecha sozinho. Mesmo no horário, só abre se houver uma sessão de caixa aberta.</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-4">
-              <button
-                type="button"
-                onClick={function () { setHorarioAtivo(function (v) { return !v; }); }}
-                className={'relative w-12 h-7 rounded-full transition-colors cursor-pointer flex-shrink-0 ' +
-                  (horarioAtivo ? 'bg-green-500' : 'bg-zinc-200')
-                }
-              >
-                <div className={'absolute top-0.5 w-6 h-6 bg-white rounded-full transition-transform shadow ' +
-                  (horarioAtivo ? 'translate-x-[22px]' : 'translate-x-0.5')
-                } />
-              </button>
-              <span className={'text-sm font-semibold ' + (horarioAtivo ? 'text-green-700' : 'text-zinc-400')}>
-                {horarioAtivo ? 'Agendamento ativado' : 'Agendamento desativado'}
-              </span>
-            </div>
-
-            {horarioAtivo ? (
-              <div className="space-y-2">
-                {['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'].map(function (label, idx) {
-                  const d = horarios[idx];
-                  return (
-                    <div key={idx} className="flex items-center gap-3 px-3 py-2 rounded-xl border border-zinc-100 bg-zinc-50">
-                      <button
-                        type="button"
-                        onClick={function () { setDiaHorario(idx, { enabled: !d.enabled }); }}
-                        className={'relative w-10 h-6 rounded-full transition-colors cursor-pointer flex-shrink-0 ' +
-                          (d.enabled ? 'bg-green-500' : 'bg-zinc-200')
-                        }
-                      >
-                        <div className={'absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow ' +
-                          (d.enabled ? 'translate-x-[18px]' : 'translate-x-0.5')
-                        } />
-                      </button>
-                      <span className={'text-sm font-semibold w-20 flex-shrink-0 ' + (d.enabled ? 'text-zinc-800' : 'text-zinc-400')}>{label}</span>
-                      {d.enabled ? (
-                        <div className="flex items-center gap-2 flex-1">
-                          <input
-                            type="time"
-                            value={d.open}
-                            onChange={function (e) { setDiaHorario(idx, { open: e.target.value }); }}
-                            className="px-2 py-1.5 rounded-lg border border-zinc-200 text-sm text-zinc-800 bg-white focus:outline-none focus:border-amber-400"
-                          />
-                          <span className="text-zinc-400 text-xs">até</span>
-                          <input
-                            type="time"
-                            value={d.close}
-                            onChange={function (e) { setDiaHorario(idx, { close: e.target.value }); }}
-                            className="px-2 py-1.5 rounded-lg border border-zinc-200 text-sm text-zinc-800 bg-white focus:outline-none focus:border-amber-400"
-                          />
-                        </div>
-                      ) : (
-                        <span className="text-xs text-zinc-400 flex-1">Fechado neste dia</span>
-                      )}
-                    </div>
-                  );
-                })}
-                <div className="flex items-start gap-2 px-3 py-2 bg-amber-50 rounded-lg border border-amber-100">
-                  <i className="ri-information-line text-amber-500 text-sm mt-0.5" />
-                  <p className="text-[10px] text-amber-700">
-                    Horário que passa da meia-noite é suportado (ex.: 19:00 até 02:00). Para fechar o delivery por um tempo fora do programado, use o botão de delivery no PDV (abrir / fechar / pausar por X horas).
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 px-3 py-2 bg-zinc-50 rounded-lg border border-zinc-100">
-                <i className="ri-information-line text-zinc-400 text-sm" />
-                <span className="text-xs text-zinc-400">Sem agendamento: o delivery abre e fecha apenas pelo botão no PDV.</span>
-              </div>
-            )}
-          </div>
-
-          {/* Avisar o motoboy — categorias/itens que disparam alerta */}
-          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
-                <i className="ri-error-warning-line text-zinc-600 text-sm" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-800">Avisar o motoboy</h3>
-                <p className="text-xs text-zinc-500">Quando o pedido tiver estas categorias ou itens, a mensagem do motoboy mostra um alerta (ex.: &quot;tem bebida&quot;)</p>
-              </div>
-            </div>
-
-            {/* Categorias */}
-            <div>
-              <span className="block text-xs font-semibold text-zinc-500 mb-2">Categorias</span>
-              <div className="flex flex-wrap gap-2">
-                {categorias.length === 0 ? (
-                  <span className="text-xs text-zinc-400">Nenhuma categoria no cardápio.</span>
-                ) : null}
-                {categorias.map(function (c) {
-                  const sel = alertCategorias.some(function (x) { return x.id === c.id; });
-                  return (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={function () {
-                        setAlertCategorias(function (prev) {
-                          return sel ? prev.filter(function (x) { return x.id !== c.id; }) : prev.concat([{ id: c.id, nome: c.nome }]);
-                        });
-                      }}
-                      className={'px-3 py-1.5 rounded-full text-xs font-bold border cursor-pointer transition-colors ' +
-                        (sel ? 'bg-amber-500 text-white border-amber-500' : 'bg-zinc-50 text-zinc-500 border-zinc-200 hover:border-amber-300')}
-                    >
-                      {sel ? '✓ ' : ''}{c.nome}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Itens específicos */}
-            <div>
-              <span className="block text-xs font-semibold text-zinc-500 mb-2">Itens específicos</span>
-              {alertItens.length > 0 ? (
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {alertItens.map(function (it) {
-                    return (
-                      <span key={it.id} className="inline-flex items-center gap-1 px-2.5 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-full text-xs font-bold">
-                        {it.nome}
-                        <button
-                          type="button"
-                          onClick={function () { setAlertItens(function (prev) { return prev.filter(function (x) { return x.id !== it.id; }); }); }}
-                          className="text-amber-500 hover:text-amber-700 cursor-pointer"
-                        >
-                          <i className="ri-close-line" />
-                        </button>
-                      </span>
-                    );
-                  })}
-                </div>
-              ) : null}
-              <input
-                type="text"
-                value={itemBusca}
-                onChange={function (e) { setItemBusca(e.target.value); }}
-                placeholder="Buscar item…"
-                className="w-full px-3 py-2 rounded-xl border border-zinc-200 focus:border-amber-400 outline-none text-sm mb-2"
-              />
-              <div className="max-h-56 overflow-y-auto border border-zinc-100 rounded-xl divide-y divide-zinc-50">
-                {(function () {
-                  const busca = itemBusca.trim().toLowerCase();
-                  const lista = itens.filter(function (i) { return !busca || i.nome.toLowerCase().includes(busca); });
-                  if (lista.length === 0) {
-                    return <p className="px-3 py-3 text-xs text-zinc-400">Nenhum item cadastrado.</p>;
-                  }
-                  return lista.map(function (i) {
-                    const sel = alertItens.some(function (x) { return x.id === i.id; });
-                    const catNome = categorias.find(function (c) { return c.id === i.categoriaId; })?.nome;
-                    return (
-                      <button
-                        key={i.id}
-                        type="button"
-                        onClick={function () {
-                          setAlertItens(function (prev) {
-                            return sel ? prev.filter(function (x) { return x.id !== i.id; }) : prev.concat([{ id: i.id, nome: i.nome }]);
-                          });
-                        }}
-                        className={'w-full flex items-center gap-2 px-3 py-2 text-left cursor-pointer transition-colors ' + (sel ? 'bg-amber-50' : 'hover:bg-zinc-50')}
-                      >
-                        <span className={'w-4 h-4 flex items-center justify-center rounded border shrink-0 ' + (sel ? 'bg-amber-500 border-amber-500 text-white' : 'border-zinc-300')}>
-                          {sel ? <i className="ri-check-line text-[10px]" /> : null}
-                        </span>
-                        <span className="flex-1 text-sm text-zinc-700 truncate">{i.nome}</span>
-                        {catNome ? <span className="text-[10px] text-zinc-400 shrink-0">{catNome}</span> : null}
-                      </button>
-                    );
-                  });
-                })()}
-              </div>
-            </div>
-          </div>
-
-          {/* Mensagens pro cliente (WhatsApp) por fase */}
-          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-3">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
-                <i className="ri-whatsapp-line text-zinc-600 text-sm" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-800">Mensagens pro cliente (WhatsApp)</h3>
-                <p className="text-xs text-zinc-500">Ao clicar no WhatsApp do cliente no gestor, você escolhe entre as mensagens da fase. Variáveis: <code className="text-[10px]">{'{nome}'}</code> <code className="text-[10px]">{'{numero}'}</code> <code className="text-[10px]">{'{total}'}</code> <code className="text-[10px]">{'{taxa}'}</code>.</p>
-              </div>
-            </div>
-            {FASES_MSG.map(function (f) {
-              const lista = whatsappMsgs[f.key] ?? [];
-              return (
-                <div key={f.key} className="border border-zinc-100 rounded-xl p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs font-bold text-zinc-700">{f.label}</span>
-                    <button type="button" onClick={function () { addMsgFase(f.key); }} className="text-[11px] font-bold text-amber-600 hover:text-amber-700 cursor-pointer whitespace-nowrap">
-                      <i className="ri-add-line" /> Adicionar mensagem
-                    </button>
-                  </div>
-                  {lista.length === 0 ? (
-                    <p className="text-[11px] text-zinc-400">Sem mensagem (usa a padrão do sistema).</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {lista.map(function (msg, idx) {
-                        return (
-                          <div key={idx} className="flex items-start gap-2">
-                            <textarea
-                              value={msg}
-                              onChange={function (e) { setMsgFase(f.key, idx, e.target.value); }}
-                              rows={2}
-                              placeholder="Ex.: Olá {nome}! Seu pedido #{numero} está a caminho 🏍️"
-                              className="flex-1 px-3 py-2 rounded-lg border border-zinc-200 focus:border-amber-400 outline-none text-sm resize-none"
-                            />
-                            <button type="button" onClick={function () { removeMsgFase(f.key, idx); }} className="w-7 h-7 flex items-center justify-center text-zinc-400 hover:text-red-500 rounded-lg cursor-pointer shrink-0">
-                              <i className="ri-delete-bin-line text-sm" />
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
               );
             })}
           </div>
-
-          {/* Formas de Pagamento no Delivery */}
-          <div className="bg-white rounded-2xl border border-zinc-100 p-5 space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 flex items-center justify-center bg-zinc-100 rounded-lg">
-                <i className="ri-wallet-3-line text-zinc-600 text-sm" />
-              </div>
-              <div>
-                <h3 className="text-sm font-bold text-zinc-800">Formas de pagamento no delivery</h3>
-                <p className="text-xs text-zinc-500">Escolha como quer receber — o cliente escolhe antes de fechar o pedido</p>
+          {grupoAtivo.abas.length > 1 ? (
+            <div className="py-2 md:py-2.5 -mx-4 md:mx-0 px-4 md:px-0 overflow-x-auto scrollbar-hide">
+              <div className="flex bg-zinc-100 p-1 rounded-xl w-max">
+                {grupoAtivo.abas.map((a) => {
+                  const selo = seloAba(a);
+                  return (
+                    <button key={a} type="button" onClick={() => irPara(a)}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                        aba === a ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
+                      {ABAS[a].label}
+                      {selo && (selo.n
+                        ? <span title={selo.dica} className={`text-[9px] font-black px-1.5 py-0.5 rounded-full text-white ${selo.cor === 'red' ? 'bg-red-500' : 'bg-amber-500'}`}>{selo.n}</span>
+                        : <span title={selo.dica} className={`w-1.5 h-1.5 rounded-full ${selo.cor === 'red' ? 'bg-red-500' : 'bg-amber-500'}`} />)}
+                    </button>
+                  );
+                })}
               </div>
             </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {METODOS_PREDEFINIDOS.map(function (metodo) {
-                const ativo = FORMAS_PELO_APP.indexOf(metodo.key) >= 0
-                  ? formasPagamento[metodo.key] !== false
-                  : formasPagamento[metodo.key] === true;
-                const temAlgumAtivo = Object.values(formasPagamento).some(function (v) { return v === true; });
-
-                function toggle() {
-                  // Se for o último ativo e está tentando desativar, impede
-                  if (ativo && temAlgumAtivo) {
-                    const outrosAtivos = Object.entries(formasPagamento).filter(function (entry) {
-                      return entry[0] !== metodo.key && entry[1] === true;
-                    });
-                    if (outrosAtivos.length === 0) return; // não deixa desativar todos
-                  }
-                  setFormasPagamento(function (prev) {
-                    const next = { ...prev };
-                    next[metodo.key] = !ativo;
-                    return next;
-                  });
-                }
-
-                return (
-                  <button
-                    key={metodo.key}
-                    type="button"
-                    onClick={toggle}
-                    className={'flex items-center gap-3 px-4 py-3 rounded-xl border cursor-pointer transition-all duration-200 ' +
-                      (ativo
-                        ? 'bg-amber-50 border-amber-200 text-zinc-800'
-                        : 'bg-zinc-50 border-zinc-100 text-zinc-400 hover:border-zinc-200 hover:text-zinc-600')
-                    }
-                  >
-                    <div className="w-8 h-8 flex items-center justify-center rounded-lg shrink-0">
-                      <i className={metodo.icon + ' text-lg ' + (ativo ? 'text-amber-600' : 'text-zinc-300')} />
-                    </div>
-                    <span className={'text-sm font-semibold flex-1 text-left ' + (ativo ? 'text-zinc-800' : 'text-zinc-400')}>
-                      {metodo.label}
-                    </span>
-                    <div className={'w-5 h-5 rounded border-2 flex items-center justify-center transition-colors shrink-0 ' +
-                      (ativo ? 'bg-amber-500 border-amber-500' : 'border-zinc-200')
-                    }>
-                      {ativo ? <i className="ri-check-line text-white text-[10px]" /> : null}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {!Object.values(formasPagamento).some(function (v) { return v === true; }) ? (
-              <div className="flex items-center gap-2 px-3 py-2 bg-zinc-50 rounded-lg border border-zinc-100">
-                <i className="ri-information-line text-zinc-400 text-sm" />
-                <span className="text-xs text-zinc-400">Selecione ao menos uma forma de pagamento</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 rounded-lg border border-amber-100">
-                <i className="ri-information-line text-amber-500 text-sm" />
-                <span className="text-xs text-amber-700">
-                  O cliente verá estas opções antes de finalizar o pedido. O motoboy saberá como se preparar!
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* Bairros removidos da config — agora o bairro é texto livre que o cliente digita
-              no app de delivery (a taxa vem da distância/pin). */}
-
-          {/* Botão salvar */}
-          <div className="pb-8">
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={salvando}
-              className="w-full bg-gradient-to-br from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:opacity-60 disabled:hover:from-amber-500 disabled:hover:to-orange-500 text-white font-bold py-3 rounded-xl cursor-pointer transition-all whitespace-nowrap text-sm flex items-center justify-center gap-2"
-            >
-              {salvando ? (
-                <>
-                  <i className="ri-loader-4-line animate-spin" />
-                  Salvando...
-                </>
-              ) : (
-                <>
-                  <i className="ri-save-line" />
-                  Salvar configurações
-                </>
-              )}
-            </button>
-          </div>
+          ) : <div className="h-2" />}
         </div>
-        )}
+
+        {/* Conteúdo + barra de salvar */}
+        <div className="relative flex-1 min-h-0" style={{ background: '#FAF7F2' }}>
+          <div className="absolute inset-0 overflow-y-auto">
+            {!tenantId ? (
+              <div className="p-6 max-w-lg mx-auto">
+                <div className="bg-white border border-zinc-200 rounded-2xl px-4 py-3 text-sm text-zinc-600">Escolha uma loja para ver o Delivery.</div>
+              </div>
+            ) : carregando ? (
+              <div className="flex items-center justify-center py-16 text-sm text-zinc-500 gap-2"><i className="ri-loader-4-line animate-spin" />Carregando…</div>
+            ) : erroCarga ? (
+              <div className="p-6 max-w-lg mx-auto">
+                <div className="bg-red-50 border border-red-200 rounded-2xl px-4 py-3 text-sm text-red-700">
+                  Não consegui abrir a configuração do delivery: {erroCarga}
+                  <div className="mt-2"><button type="button" className={btn('out', 'sm')} onClick={() => { setCarregando(true); void carregar(); }}>Tentar de novo</button></div>
+                </div>
+              </div>
+            ) : <Comp />}
+          </div>
+
+          {(mudancas > 0 || salvouAgora) && (
+            <div className="absolute left-3 right-3 bottom-3 md:left-1/2 md:right-auto md:-translate-x-1/2 md:w-[560px] z-30">
+              <div className={`flex items-center gap-2 rounded-2xl pl-4 pr-2 py-2 shadow-xl text-white ${salvouAgora && !mudancas ? 'bg-emerald-700' : 'bg-zinc-900'}`}>
+                {salvouAgora && !mudancas ? (
+                  <p className="flex-1 text-[13px] font-bold py-2"><i className="ri-check-line mr-1" />Salvo. Já vale para o cliente.</p>
+                ) : (
+                  <>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] font-bold leading-tight">{mudancas} {mudancas === 1 ? 'mudança ainda não salva' : 'mudanças ainda não salvas'}</p>
+                      <p className="text-[11px] text-zinc-400 leading-tight hidden sm:block">Se sair da tela sem salvar, o app pergunta antes</p>
+                    </div>
+                    <button type="button" onClick={desfazer} disabled={salvando} className="h-9 px-3 rounded-xl text-[12.5px] font-bold text-amber-300 hover:bg-white/10 cursor-pointer disabled:opacity-50">Desfazer</button>
+                    <button type="button" onClick={salvar} disabled={salvando} className={btn('p', 'sm')}>
+                      {salvando ? <><i className="ri-loader-4-line animate-spin" />Salvando…</> : 'Salvar'}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+    </DeliveryTelaContext.Provider>
   );
 }

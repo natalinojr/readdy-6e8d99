@@ -25,6 +25,7 @@ import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import { graph, waConfig, waOwnNumber, waSendText, type WaConfig } from '../_shared/wa.ts';
 import { assinarWebhook, confirmarCodigo, criarNumero, desregistrar, esConfig, nomeValido, numerosDaConta, pedirCodigo, registrar, separarNumero, situacao, trocarCodigo } from './numero.ts';
 import { registrarUsoIa } from '../_shared/ai-usage.ts';
+import { proximaAbertura as proximaAberturaHorario, resumoHorario } from '../_shared/horario-delivery.ts';
 import { acharItem, arrumarLinks, brl, conferir, semBastidores, DIAS, disseQueChamouEquipe, idiomaDe, linkQueFalta, menuItems, type MenuItem, norm, precoTxt, spNow, temTermo } from './travas.ts';
 
 const corsHeaders = {
@@ -135,32 +136,17 @@ const MOTIVO_FECHADO: Record<string, string> = {
 };
 
 function horarios(dc: Row): string {
-  const s = dc?.delivery_schedule;
-  if (!s?.enabled || !s.days) return 'Horário do delivery: NÃO cadastrado. Nunca diga dia ou hora em que abre/fecha; se perguntarem, diga que não tem essa informação aqui e chame chamar_atendente.';
-  const linhas: string[] = [];
-  for (let d = 0; d < 7; d++) {
-    const x = s.days[String(d)];
-    linhas.push(`${DIAS[d]}: ${x?.enabled ? `${x.open}–${x.close}` : 'fechado'}`);
-  }
-  return `Horário do delivery: ${linhas.join('; ')}.`;
+  // Regra única do horário (vários horários no dia + datas especiais): _shared/horario-delivery.ts.
+  const r = resumoHorario(dc?.delivery_schedule, new Date());
+  if (!r) return 'Horário do delivery: NÃO cadastrado. Nunca diga dia ou hora em que abre/fecha; se perguntarem, diga que não tem essa informação aqui e chame chamar_atendente.';
+  return `Horário do delivery (entre um horário e outro do mesmo dia fica fechado): ${r}.`;
 }
 
 // Próxima abertura pela agenda (a IA erra conta de dia da semana): "hoje às 18:00", "amanhã (sábado) às 18:00".
 function proximaAbertura(dc: Row): string | null {
-  const s = dc?.delivery_schedule;
-  if (!s?.enabled || !s.days) return null;
-  const sp = spNow();
-  const [h, mi] = sp.hhmm.split(':').map(Number);
-  const agora = h * 60 + mi;
-  for (let k = 0; k < 7; k++) {
-    const d = (sp.dow + k) % 7;
-    const x = s.days[String(d)];
-    if (!x?.enabled || !x.open) continue;
-    const [oh, om] = String(x.open).split(':').map(Number);
-    if (k === 0 && oh * 60 + om <= agora) continue;
-    return `${k === 0 ? 'hoje' : k === 1 ? `amanhã (${DIAS[d]})` : DIAS[d]} às ${x.open}`;
-  }
-  return null;
+  const p = proximaAberturaHorario(dc?.delivery_schedule, new Date());
+  if (!p) return null;
+  return `${p.emDias === 0 ? 'hoje' : p.emDias === 1 ? `amanhã (${DIAS[p.dow]})` : `${DIAS[p.dow]} (${p.ymd.slice(8, 10)}/${p.ymd.slice(5, 7)})`} às ${p.hora}`;
 }
 
 // Prazo: só o que a loja configurou (faixas por distância com tempo máximo). Sem isso, o link mostra.
@@ -168,6 +154,14 @@ function tempoEntrega(dc: Row): string {
   const t = Array.isArray(dc?.delivery_fee_tiers) ? dc.delivery_fee_tiers.map((x: Row) => Number(x.tempo_max_min)).filter((n: number) => n > 0) : [];
   return t.length ? `Tempo de entrega: até ${Math.min(...t)}–${Math.max(...t)} min conforme a distância (o link mostra a previsão).`
     : 'Tempo de entrega: não informado — diga que a previsão aparece no link ao fechar o pedido; não invente minutos.';
+}
+
+// Entrega grátis acima de um valor (Delivery › Pedido › Mínimo e retirada; começa desligada).
+function freteGratisTxt(dc: Row): string {
+  const fg = dc?.frete_gratis;
+  if (!fg || fg.ativo !== true || !(Number(fg.acima_de) > 0)) return '';
+  const km = Number(fg.ate_km) || 0;
+  return `Entrega grátis em pedido a partir de ${brl(Number(fg.acima_de))} (soma dos itens, sem a taxa)${km > 0 ? `, até ${km} km da loja` : ''}. Pode contar isso ao cliente.`;
 }
 
 export function regrasPadrao(bot: Row): string {
@@ -184,7 +178,7 @@ export function regrasPadrao(bot: Row): string {
 - Taxa: use a lista acima (entenda erros de digitação do bairro). Bairro fora da lista: não entregamos lá, sem exceção e sem prometer consultar; ofereça retirada no balcão (com o endereço, se houver).
 - Responda primeiro o que a pessoa perguntou (prazo, taxa, pagamento) e depois mande o link.
 ${bot.upsell ? '- VENDA (obrigatório): toda vez que mandar o link para um prato escolhido, na mesma mensagem sugira UM complemento concreto do cardápio (bebida, batata/porção, guacamole ou sobremesa), com nome e preço vindos de buscar_cardapio, ou uma promoção de hoje. Ex.: "Quer uma Coca-cola original (R$ 8,00) pra acompanhar? É só adicionar no link." Uma sugestão só; se a pessoa recusar, não insista.' : ''}
-${bot.voucher_code ? `- Cupom ${bot.voucher_code}: ofereça SÓ se a pessoa hesitar por preço ou disser que vai deixar para depois. Aí chame link_do_pedido com com_cupom=true (o link já aplica o cupom). Não ofereça de cara.` : '- Não existe cupom nem desconto: não prometa desconto, brinde ou frete grátis.'}
+${bot.voucher_code ? `- Cupom ${bot.voucher_code}: ofereça SÓ se a pessoa hesitar por preço ou disser que vai deixar para depois. Aí chame link_do_pedido com com_cupom=true (o link já aplica o cupom). Não ofereça de cara.` : '- Não existe cupom nem desconto: não prometa desconto ou brinde. Entrega grátis, só se estiver escrita nas informações da loja acima.'}
 - "Cadê meu pedido?": chame meus_pedidos e diga o status e a previsão que vierem. Atrasado, errado, faltando item ou não encontrado: chame chamar_atendente.
 - Chame chamar_atendente (e diga que alguém da equipe já responde por aqui) em: reclamação, problema com pedido, troca/estorno, comprovante de pagamento, pedido grande ou encomenda para evento, alergia grave, pergunta sobre a loja que você não sabe, ou quando pedirem uma pessoa. Não prometa prazo de resposta nem o que a equipe vai fazer (reembolso, desconto). Se a pessoa insistir depois, diga que a equipe já foi avisada; se ela trouxer informação nova (ameaça cancelar, novo problema), chame chamar_atendente de novo com essa informação.
 - Reclamação, atraso ou cliente bravo: nessa resposta não mande link nem ofereça comida — só acolha, diga o que meus_pedidos mostrou (se for o caso) e que a equipe já foi avisada.
@@ -229,6 +223,7 @@ ${horarios(dc)}
 ${taxa}
 ${dc.pedido_minimo_ativo ? `Pedido mínimo: ${brl(dc.pedido_minimo_valor)}.` : 'Pedido mínimo: não há (pode pedir um item só).'}
 ${tempoEntrega(dc)}
+${freteGratisTxt(dc)}
 Retirada no balcão: ${dc.retirada_ativo === false ? 'não' : 'sim, sem taxa'}.
 ${destaques ? `Destaques da casa:\n${destaques}` : ''}
 ${bot.extra_info ? `Informações da loja (pode contar):\n${bot.extra_info}` : ''}
@@ -239,6 +234,7 @@ ${cardapio || '(cardápio vazio)'}
 
 ${regras ?? regrasPadrao(bot)}`;
   const volatil = `AGORA: ${DIAS[sp.dow]}, ${sp.iso.split('-').reverse().join('/')} ${sp.hhmm}. Delivery ${aberto ? 'ABERTO agora' : `FECHADO agora (${MOTIVO_FECHADO[menu.delivery_closed_reason] ?? 'fechado'}). Retirada no balcão também não funciona agora.${proximaAbertura(dc) ? ` Próxima abertura: ${proximaAbertura(dc)}.` : ''}`}
+${Number(menu.prazo_extra_min) > 0 ? `HOJE O PRAZO ESTÁ MAIOR: a loja está com muito movimento; some ${Number(menu.prazo_extra_min)} min ao tempo de entrega informado acima (o link já mostra a previsão certa).` : ''}
 ${promos ? `Promoções de HOJE:\n${promos}` : 'Promoções de hoje: nenhuma.'}
 ${esgotados.length ? `INDISPONÍVEIS agora (não ofereça): ${esgotados.slice(0, 40).join(', ')}.` : ''}${idioma ? `\n\nIMPORTANTE: o cliente escreve em ${idioma === 'en' ? 'INGLÊS' : 'ESPANHOL'}. Responda TODA a mensagem em ${idioma === 'en' ? 'inglês' : 'espanhol'} (nomes dos pratos podem ficar como estão).` : ''}`;
   return [estavel, volatil];

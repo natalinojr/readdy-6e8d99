@@ -452,8 +452,7 @@ export function EntrarNoEstoque({ caso, acoes }: { caso: CasoTrilha; acoes: Acoe
   const itens = lista ?? [];
   const marcados = itens.filter((r) => sel.has(r.purchase_item_id));
   const todos = itens.length > 0 && marcados.length === itens.length;
-  // Contado no inventário depois do recebimento: a contagem já acertou, o banco recusa a entrada
-  const temContado = marcados.some((r) => r.inventario_depois);
+  // Contado no inventário depois do recebimento: entra só como registro na movimentação (2026-10-05)
   const toggle = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   const aplicar = async (modo: 'entrar' | 'ignorar') => {
@@ -485,7 +484,7 @@ export function EntrarNoEstoque({ caso, acoes }: { caso: CasoTrilha; acoes: Acoe
     <Painel titulo="Escolher se entra no estoque" cor="red">
       <p className="text-[11px] text-zinc-500">
         Estes itens já estão ligados a um insumo, mas o recebimento foi confirmado antes do vínculo e o estoque não mudou.
-        Marque os que devem entrar agora (na data do recebimento). Se a mercadoria já foi usada ou uma contagem já acertou o estoque, marque e escolha <b>Não entram</b>.
+        Marque os que devem entrar agora (na data do recebimento). Os que tiveram contagem depois ficam só registrados na movimentação, sem mudar o saldo.
       </p>
       {lista === null ? (
         <p className="text-xs text-zinc-400">Carregando…</p>
@@ -515,7 +514,7 @@ export function EntrarNoEstoque({ caso, acoes }: { caso: CasoTrilha; acoes: Acoe
                   )}
                   {r.inventario_depois && (
                     <p className="text-[11px] text-orange-700 mt-0.5">
-                      <i className="ri-error-warning-line" /> Contado no inventário depois{r.inventario_em ? ` (${diaBR(r.inventario_em)})` : ''}: a contagem já pôs no estoque. Só dá para marcar <b>Não entram</b>.
+                      <i className="ri-information-line" /> Contado no inventário depois{r.inventario_em ? ` (${diaBR(r.inventario_em)})` : ''}: a contagem já pôs no estoque. Entra só como registro na movimentação.
                     </p>
                   )}
                 </div>
@@ -523,13 +522,11 @@ export function EntrarNoEstoque({ caso, acoes }: { caso: CasoTrilha; acoes: Acoe
             ))}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button onClick={() => void aplicar('entrar')} disabled={ocupado || marcados.length === 0 || temContado} className={BTN_OK}
-              title={temContado ? 'Tem item marcado que já foi contado no inventário: marque-o como "Não entram"' : undefined}>
+            <button onClick={() => void aplicar('entrar')} disabled={ocupado || marcados.length === 0} className={BTN_OK}>
               {ocupado ? 'Salvando…' : `Dar entrada no estoque${marcados.length ? ` (${marcados.length})` : ''}`}
             </button>
             <button onClick={() => void aplicar('ignorar')} disabled={ocupado || marcados.length === 0} className={BTN_LEVE}>Não entram</button>
           </div>
-          {temContado && <p className="text-[11px] text-orange-700">Tem item marcado que já foi contado no inventário: desmarque-o para dar entrada, ou use <b>Não entram</b>.</p>}
         </>
       )}
       <Erro msg={erro} />

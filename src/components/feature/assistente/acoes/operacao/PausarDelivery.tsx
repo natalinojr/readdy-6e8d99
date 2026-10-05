@@ -69,13 +69,14 @@ export default function PausarDelivery({ onFechar, irPara }: AcaoProps) {
     const resumo: Record<DeliveryOp, string> = {
       pause: `Pausar o delivery por ${p.rotulo.replace('Pausar ', '')}? Volta sozinho depois.`,
       close: state?.schedule_enabled && state?.within_schedule
-        ? 'Fechar o delivery? Dentro do horário programado isso pausa até o fim da janela de hoje.'
+        ? 'Fechar o delivery? Dentro do horário programado isso pausa até o fim do horário em curso (ex.: até acabar o almoço).'
         : 'Fechar o delivery? Fica fechado até alguém abrir.',
       open: state?.schedule_enabled && state?.reason === 'fora_horario'
         ? 'Abrir o delivery agora, fora do horário programado? Fica aberto até alguém fechar.'
         : 'Abrir o delivery agora?',
       resume: 'Cancelar a pausa e reabrir o delivery?',
       force_off: '',
+      prazo_extra: '',
     };
     bot(resumo[p.op]);
     setPasso('confirmar');

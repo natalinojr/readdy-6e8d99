@@ -4,6 +4,8 @@ import { deductStockForSkipKdsItems, runStockInBackground } from "../_shared/sto
 import { descontoClubeServidor, idsValidos, sessaoDoClube, vincularClube } from "../_shared/clube-servidor.ts";
 import { activeLocales, normalizeLocale, loadTranslations, decorate, decorateHighlights, translationsPayload } from "../_shared/menu-i18n.ts";
 import { promoPrecosDeHoje } from "../_shared/promo-item.ts";
+import { dentroDoHorario, minutosAteFechar, normalizarHorarioDelivery, type HorarioDelivery } from "../_shared/horario-delivery.ts";
+import { temPermissao } from "../_shared/permissao-servidor.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -65,72 +67,32 @@ const PLATAFORMAS_EXTERNAS = new Set(["ifood", "rappi", "uber_eats", "99food"]);
 //  - delivery_manual_open     -> override pra abrir FORA do horario / quando nao ha agenda
 // Regra: dentro do horario + sessao aberta abre sozinho ("forca abertura"); fechar
 // dentro do horario vira pausa ate o fim da janela (ver set_delivery_state op 'close').
-type DeliveryDaySchedule = { enabled?: boolean; open?: string; close?: string };
-type DeliverySchedule = { enabled?: boolean; days?: Record<string, DeliveryDaySchedule> };
+// Horario (varios horarios no dia + datas especiais, 2026-10-04): regra unica em _shared/horario-delivery.ts.
+type DeliverySchedule = HorarioDelivery;
+const isWithinSchedule = (schedule: DeliverySchedule | null | undefined, now: Date) => dentroDoHorario(schedule, now);
+const minutesUntilWindowClose = (schedule: DeliverySchedule | null | undefined, now: Date) => minutosAteFechar(schedule, now);
 
-function parseHHMM(s: unknown): number | null {
-  if (typeof s !== "string") return null;
-  const m = s.match(/^(\d{1,2}):(\d{2})$/);
-  if (!m) return null;
-  const h = Number(m[1]); const min = Number(m[2]);
-  if (h < 0 || h > 23 || min < 0 || min > 59) return null;
-  return h * 60 + min;
+// "Dia corrido" (2026-10-04): minutos a mais no prazo prometido, so enquanto a mesma sessao de caixa
+// estiver aberta (fechou o caixa = volta ao normal sozinho). delivery_config.prazo_extra = { min, session_id }.
+function prazoExtraMin(dc: Record<string, any> | null | undefined, openSessionId: string | null | undefined): number {
+  const pe = dc?.prazo_extra;
+  if (!pe || typeof pe !== "object" || !openSessionId || pe.session_id !== openSessionId) return 0;
+  const m = Math.round(Number(pe.min) || 0);
+  return m > 0 && m <= 120 ? m : 0;
 }
 
-// Dia-da-semana (0=Dom..6=Sab) e minutos desde a meia-noite no fuso da loja (SP).
-function spNowParts(now: Date): { dow: number; minutes: number } {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/Sao_Paulo", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false,
-  }).formatToParts(now);
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
-  const wdMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  const dow = wdMap[get("weekday")] ?? 0;
-  let hour = Number(get("hour")); if (hour === 24) hour = 0; // hour12:false pode devolver "24"
-  const minute = Number(get("minute"));
-  return { dow, minutes: hour * 60 + minute };
-}
-
-// A janela do dia contem o instante? Suporta janela que cruza a meia-noite (close < open):
-// nesse caso o dia cobre [open, 24:00); a parte [00:00, close) entra pelo dia anterior.
-function dayWindowContains(day: DeliveryDaySchedule | undefined, minutes: number): boolean {
-  if (!day || !day.enabled) return false;
-  const o = parseHHMM(day.open); const c = parseHHMM(day.close);
-  if (o == null || c == null || o === c) return false;
-  if (c > o) return minutes >= o && minutes < c;
-  return minutes >= o; // cruza meia-noite
-}
-
-function isWithinSchedule(schedule: DeliverySchedule | null | undefined, now: Date): boolean {
-  if (!schedule || !schedule.enabled || !schedule.days) return false;
-  const { dow, minutes } = spNowParts(now);
-  if (dayWindowContains(schedule.days[String(dow)], minutes)) return true;
-  // Janela do dia anterior que invade a madrugada de hoje.
-  const prev = schedule.days[String((dow + 6) % 7)];
-  if (prev && prev.enabled) {
-    const o = parseHHMM(prev.open); const c = parseHHMM(prev.close);
-    if (o != null && c != null && c < o && minutes < c) return true;
-  }
-  return false;
-}
-
-// Minutos restantes ate o fim da janela ativa agora (null se nao ha janela ativa).
-function minutesUntilWindowClose(schedule: DeliverySchedule | null | undefined, now: Date): number | null {
-  if (!schedule || !schedule.days) return null;
-  const { dow, minutes } = spNowParts(now);
-  const today = schedule.days[String(dow)];
-  if (today && today.enabled) {
-    const o = parseHHMM(today.open); const c = parseHHMM(today.close);
-    if (o != null && c != null) {
-      if (c > o && minutes >= o && minutes < c) return c - minutes;
-      if (c < o && minutes >= o) return (1440 - minutes) + c; // fecha so na madrugada seguinte
-    }
-  }
-  const prev = schedule.days[String((dow + 6) % 7)];
-  if (prev && prev.enabled) {
-    const o = parseHHMM(prev.open); const c = parseHHMM(prev.close);
-    if (o != null && c != null && c < o && minutes < c) return c - minutes;
-  }
-  return null;
+// Entrega gratis acima de um valor (2026-10-04, comeca desligada). Base = soma dos itens (sem a taxa,
+// antes de cupom), a mesma do pedido minimo. ate_km opcional (0/null = qualquer distancia da area).
+// `km` aqui e a ESTIMATIVA do app (linha reta x ROAD_FACTOR), nao a rota do ORS: o cliente viu "Gratis" por
+// essa conta, entao o limite de km precisa usar a mesma (senao a tela diz gratis e o servidor cobra).
+function freteGratis(dc: Record<string, any> | null | undefined, subtotal: number, km: number | null): boolean {
+  const fg = dc?.frete_gratis;
+  if (!fg || typeof fg !== "object" || fg.ativo !== true) return false;
+  const acima = Number(fg.acima_de) || 0;
+  if (acima <= 0 || subtotal + 0.005 < acima) return false;
+  const ateKm = Number(fg.ate_km) || 0;
+  if (ateKm > 0 && (km == null || km > ateKm)) return false;
+  return true;
 }
 
 function computeDeliveryOpen(dc: Record<string, any> | null | undefined, hasSession: boolean, now: Date): { open: boolean; reason: string } {
@@ -581,8 +543,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       }));
 
       // Estado de abertura do delivery (sessao + pausa + agenda + manual) p/ o cliente.
-      const { data: openSessForCfg } = await admin.from("sessions").select("id").eq("tenant_id", tenantId).eq("status", "open").limit(1).maybeSingle();
+      const { data: openSessForCfg } = await admin.from("sessions").select("id").eq("tenant_id", tenantId).eq("status", "open").order("opened_at", { ascending: false }).limit(1).maybeSingle();
       const deliveryStateCfg = computeDeliveryOpen(settingsData.delivery_config as Record<string, any> | null, !!openSessForCfg, new Date());
+      const prazoExtraCfg = prazoExtraMin(settingsData.delivery_config as Record<string, any> | null, openSessForCfg?.id);
 
       // Idioma do cliente: acrescenta `*_i18n` sem tocar no texto em portugues.
       // O pedido segue saindo em PT (ver comentario em _shared/menu-i18n.ts).
@@ -590,7 +553,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const dlvLocale = normalizeLocale(body.locale, dlvLocales);
       const dlvTrans = dlvLocale ? await loadTranslations(admin, tenantId, dlvLocale) : new Map();
 
-      return new Response(JSON.stringify({ _v: "v15", tenant: tenantResult.data, city: settingsData.delivery_city, delivery_config: settingsData.delivery_config ?? {}, delivery_open_now: deliveryStateCfg.open, delivery_closed_reason: deliveryStateCfg.open ? null : deliveryStateCfg.reason, neighborhoods, categories: decorate(catResult.data ?? [], "category", dlvTrans), items: decorate(items, "item", dlvTrans), option_groups: decorate(ogResult.data ?? [], "option_group", dlvTrans), options: decorate(options, "option", dlvTrans), observations: decorate(obsResult.data ?? [], "preset_obs", dlvTrans, "text", "text_desc"), out_of_stock_ids: outOfStockIds, opcoes_indisponiveis_ids: opcoesIndisponiveisIds, production_parts: Object.fromEntries(productionPartsMap), highlights: decorateHighlights(highlights, dlvTrans), promotions, locales: dlvLocales, locale: dlvLocale ?? "pt-BR" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ _v: "v15", tenant: tenantResult.data, city: settingsData.delivery_city, delivery_config: settingsData.delivery_config ?? {}, delivery_open_now: deliveryStateCfg.open, delivery_closed_reason: deliveryStateCfg.open ? null : deliveryStateCfg.reason, prazo_extra_min: prazoExtraCfg, neighborhoods, categories: decorate(catResult.data ?? [], "category", dlvTrans), items: decorate(items, "item", dlvTrans), option_groups: decorate(ogResult.data ?? [], "option_group", dlvTrans), options: decorate(options, "option", dlvTrans), observations: decorate(obsResult.data ?? [], "preset_obs", dlvTrans, "text", "text_desc"), out_of_stock_ids: outOfStockIds, opcoes_indisponiveis_ids: opcoesIndisponiveisIds, production_parts: Object.fromEntries(productionPartsMap), highlights: decorateHighlights(highlights, dlvTrans), promotions, locales: dlvLocales, locale: dlvLocale ?? "pt-BR" }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "lookup_customer") {
@@ -831,8 +794,10 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         .limit(1)
         .maybeSingle();
       if (memErr) throw memErr;
-      if (!membership || membership.role !== "admin") {
-        return jsonErr("Sem permissão de admin para esta loja.", 403);
+      // Quem tem "Delivery (configuracao)" (o Supervisor tem por padrao) salva — antes so o dono, e a tela
+      // aparecia para o Supervisor mas o Salvar dava erro (2026-10-04).
+      if (!membership || !(await temPermissao(admin, tenant_id, userId, membership.role, "gestao_delivery"))) {
+        return jsonErr("Você não tem permissão para mudar o delivery desta loja.", 403);
       }
 
       // Merge: preserva chaves de runtime que esta tela nao conhece (delivery_manual_open,
@@ -843,7 +808,37 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         .eq("tenant_id", tenant_id)
         .maybeSingle();
       const existingDc = (existingSettings?.delivery_config as Record<string, unknown> | null) ?? {};
-      const mergedDc = { ...existingDc, ...((delivery_config as Record<string, unknown> | null) ?? {}) };
+      const mergedDc: Record<string, unknown> = { ...existingDc, ...((delivery_config as Record<string, unknown> | null) ?? {}) };
+      // Estado do botao (abrir/pausar/dia corrido) nunca vem da tela de configuracao; o cupom do carrinho
+      // abandonado so muda por save_cart_recovery (Clientes & Marketing, permissao de Vouchers).
+      for (const k of ["delivery_manual_open", "delivery_paused_until", "prazo_extra", "cart_recovery"]) {
+        if (k in existingDc) mergedDc[k] = existingDc[k]; else delete mergedDc[k];
+      }
+      if (mergedDc.delivery_schedule != null) {
+        const novo = mergedDc.delivery_schedule as Record<string, any>;
+        const antigo = (existingDc.delivery_schedule && typeof existingDc.delivery_schedule === "object") ? existingDc.delivery_schedule as Record<string, any> : null;
+        // Tela antiga (um horario por dia, sem datas especiais) ainda aberta num aparelho: nao apaga o que ela
+        // nao conhece. Sem `exceptions` no corpo = mantem as salvas; dia sem `intervals` com o mesmo abre/fecha
+        // espelhado = mantem os varios horarios salvos daquele dia.
+        if (antigo) {
+          if (!("exceptions" in novo) && Array.isArray(antigo.exceptions)) novo.exceptions = antigo.exceptions;
+          const diasNovos = (novo.days && typeof novo.days === "object") ? novo.days as Record<string, any> : null;
+          const diasAntigos = (antigo.days && typeof antigo.days === "object") ? antigo.days as Record<string, any> : {};
+          if (diasNovos) {
+            for (const d of Object.keys(diasNovos)) {
+              const n = diasNovos[d]; const a = diasAntigos[d];
+              if (n && a && !Array.isArray(n.intervals) && Array.isArray(a.intervals) && a.intervals.length > 1
+                  && n.open === a.open && n.close === a.close && n.enabled === a.enabled) {
+                n.intervals = a.intervals;
+              }
+            }
+          }
+        }
+        // Datas especiais que ja passaram ha mais de uma semana saem (o limite de 60 nao pode empurrar as futuras).
+        const corte = new Date(Date.now() - 8 * 86400000).toISOString().slice(0, 10);
+        if (Array.isArray(novo.exceptions)) novo.exceptions = novo.exceptions.filter((e: any) => e && typeof e.date === "string" && e.date >= corte);
+        mergedDc.delivery_schedule = normalizarHorarioDelivery(novo);
+      }
 
       const updatePayload: Record<string, unknown> = { delivery_config: mergedDc };
       if (typeof delivery_city === "string") updatePayload.delivery_city = delivery_city;
@@ -882,7 +877,38 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // ── Gestao de motoboys (entregadores) — admin da loja ──────────────────────
+    // ── Cupom sugerido para quem montou a sacola e nao pediu (Clientes & Marketing › Funil › Nao pediram).
+    // Grava SO delivery_config.cart_recovery. Quem pode: quem emite cupom (gestao_vouchers). 2026-10-04.
+    if (action === "save_cart_recovery") {
+      const authHeader = req.headers.get("Authorization") || "";
+      const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+      if (!token) return jsonErr("Não autenticado", 401);
+      const { data: userData, error: userErr } = await admin.auth.getUser(token);
+      if (userErr || !userData?.user) return jsonErr("Sessão inválida", 401);
+      const { tenant_id } = body;
+      if (!tenant_id) return jsonErr("tenant_id obrigatorio", 400);
+      const { data: membership } = await admin.from("user_tenants").select("role").eq("user_id", userData.user.id).eq("tenant_id", tenant_id).limit(1).maybeSingle();
+      if (!membership || !(await temPermissao(admin, tenant_id, userData.user.id, membership.role, "gestao_vouchers"))) {
+        return jsonErr("Quem muda o cupom sugerido é quem pode emitir cupom (Vouchers).", 403);
+      }
+      const cr = (body.cart_recovery ?? {}) as Record<string, unknown>;
+      const limpo = {
+        enabled: cr.enabled === true,
+        delay_min: Math.min(1440, Math.max(5, Math.round(Number(cr.delay_min) || 30))),
+        voucher_type: cr.voucher_type === "valor" ? "valor" : "percentual",
+        voucher_value: Math.max(0, Math.round((Number(String(cr.voucher_value ?? 0).replace(",", ".")) || 0) * 100) / 100),
+        validade_dias: Math.min(90, Math.max(1, Math.round(Number(cr.validade_dias) || 7))),
+        mensagem: String(cr.mensagem ?? "").trim().slice(0, 500),
+      };
+      if (limpo.voucher_type === "percentual" && limpo.voucher_value > 100) return jsonErr("Desconto acima de 100%.", 400);
+      const { data: ss } = await admin.from("system_settings").select("delivery_config").eq("tenant_id", tenant_id).maybeSingle();
+      const dcAtual = (ss?.delivery_config as Record<string, unknown> | null) ?? {};
+      const { error: updErr } = await admin.from("system_settings").update({ delivery_config: { ...dcAtual, cart_recovery: limpo } }).eq("tenant_id", tenant_id);
+      if (updErr) throw updErr;
+      return new Response(JSON.stringify({ _v: "v14", ok: true, cart_recovery: limpo }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ── Gestao de motoboys (entregadores) — quem tem "Delivery (configuracao)" ──
     if (action === "list_drivers" || action === "set_driver_active" || action === "delete_driver" || action === "gerar_codigo_motoboy") {
       const authHeader = req.headers.get("Authorization") || "";
       const token = authHeader.replace(/^Bearer\s+/i, "").trim();
@@ -893,13 +919,23 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const { tenant_id } = body;
       if (!tenant_id) return jsonErr("tenant_id obrigatorio", 400);
       const { data: membership } = await admin.from("user_tenants").select("role").eq("user_id", userData.user.id).eq("tenant_id", tenant_id).limit(1).maybeSingle();
-      if (!membership || membership.role !== "admin") return jsonErr("Sem permissão de admin para esta loja.", 403);
+      if (!membership || !(await temPermissao(admin, tenant_id, userData.user.id, membership.role, "gestao_delivery"))) {
+        return jsonErr("Você não tem permissão para mexer nos entregadores desta loja.", 403);
+      }
 
       if (action === "list_drivers") {
         const { data: drivers } = await admin.from("delivery_drivers")
           .select("id, name, phone, is_active, created_at, last_login_at")
           .eq("tenant_id", tenant_id).order("created_at", { ascending: false });
-        return new Response(JSON.stringify({ _v: "v14", ok: true, drivers: drivers ?? [] }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        // Entregas de cada um nos ultimos 30 dias (tela Delivery › Entregadores).
+        const desde30 = new Date(Date.now() - 30 * 86400000).toISOString();
+        const { data: entregues } = await admin.from("orders").select("motoboy_driver_id")
+          .eq("tenant_id", tenant_id).eq("origin_type", "delivery").eq("status", "delivered")
+          .not("motoboy_driver_id", "is", null).gte("created_at", desde30).limit(5000);
+        const porDriver = new Map<string, number>();
+        for (const o of (entregues ?? []) as Array<{ motoboy_driver_id: string }>) porDriver.set(o.motoboy_driver_id, (porDriver.get(o.motoboy_driver_id) ?? 0) + 1);
+        const lista = (drivers ?? []).map((d: Record<string, unknown>) => ({ ...d, entregas_30d: porDriver.get(d.id as string) ?? 0 }));
+        return new Response(JSON.stringify({ _v: "v14", ok: true, drivers: lista }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
       if (action === "gerar_codigo_motoboy") {
@@ -1223,7 +1259,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const { data: settingsRow } = await admin.from("system_settings").select("delivery_config").eq("tenant_id", tenant_id).maybeSingle();
       const dc = (settingsRow?.delivery_config as Record<string, any> | null) ?? {};
       const schedule = dc.delivery_schedule as DeliverySchedule | undefined;
-      const { data: openSess } = await admin.from("sessions").select("id").eq("tenant_id", tenant_id).eq("status", "open").limit(1).maybeSingle();
+      const { data: openSess } = await admin.from("sessions").select("id").eq("tenant_id", tenant_id).eq("status", "open").order("opened_at", { ascending: false }).limit(1).maybeSingle();
       const hasSession = !!openSess;
       const now = new Date();
 
@@ -1255,8 +1291,18 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         } else if (op === "force_off") {
           // Chamado ao FECHAR a sessao: desliga o delivery e limpa overrides.
           manualOpen = false; pausedUntil = null;
+        } else if (op === "prazo_extra") {
+          // Dia corrido: +N min no prazo prometido ate o caixa fechar (0 = normal).
+          const extra = Math.round(Number(body.minutes) || 0);
+          if (extra < 0 || extra > 120) return jsonErr("minutes invalido (0 a 120)", 400);
+          if (extra > 0 && !openSess) return jsonErr("Abra o caixa antes.", 409);
+          const dcExtra = { ...dc, prazo_extra: extra > 0 ? { min: extra, session_id: openSess!.id, at: now.toISOString() } : null };
+          const { error: exErr } = await admin.from("system_settings").update({ delivery_config: dcExtra }).eq("tenant_id", tenant_id);
+          if (exErr) throw exErr;
+          const stx = computeDeliveryOpen(dcExtra, hasSession, now);
+          return new Response(JSON.stringify({ _v: "v14", ok: true, open_now: stx.open, reason: stx.reason, manual_open: manualOpen, paused_until: pausedUntil, schedule_enabled: !!(schedule && schedule.enabled), has_session: hasSession, prazo_extra_min: prazoExtraMin(dcExtra, openSess?.id) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         } else {
-          return jsonErr("op invalido (open|close|pause|resume|force_off)", 400);
+          return jsonErr("op invalido (open|close|pause|resume|force_off|prazo_extra)", 400);
         }
 
         const mergedDc = { ...dc, delivery_manual_open: manualOpen, delivery_paused_until: pausedUntil };
@@ -1268,7 +1314,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
       // get_delivery_state
       const st = computeDeliveryOpen(dc, hasSession, now);
-      return new Response(JSON.stringify({ _v: "v14", open_now: st.open, reason: st.reason, manual_open: dc.delivery_manual_open === true, paused_until: (typeof dc.delivery_paused_until === "string" ? dc.delivery_paused_until : null), schedule: schedule ?? null, schedule_enabled: !!(schedule && schedule.enabled), within_schedule: isWithinSchedule(schedule, now), has_session: hasSession }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ _v: "v14", open_now: st.open, reason: st.reason, manual_open: dc.delivery_manual_open === true, paused_until: (typeof dc.delivery_paused_until === "string" ? dc.delivery_paused_until : null), schedule: schedule ?? null, schedule_enabled: !!(schedule && schedule.enabled), within_schedule: isWithinSchedule(schedule, now), has_session: hasSession, prazo_extra_min: prazoExtraMin(dc, openSess?.id), minutos_ate_fechar: minutesUntilWindowClose(schedule, now) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     if (action === "get_customer_orders") {
@@ -1566,12 +1612,20 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         const km = ors != null ? ors.km : haversineKm(storeLocQ.lat, storeLocQ.lng, qLat as number, qLng as number) * ROAD_FACTOR;
         const routeMin = Math.round(ors != null ? ors.durationMin : (km / MOTO_KMH) * 60);
         const quote = quoteFromTiers(km, tiersQ);
+        const { data: sessQ } = await admin.from("sessions").select("id").eq("tenant_id", tenant_id).eq("status", "open").order("opened_at", { ascending: false }).limit(1).maybeSingle();
+        const extraQ = prazoExtraMin(dcQ, sessQ?.id);
+        const subtotalQ = Number(body.subtotal);
+        const kmEstimadoQ = haversineKm(storeLocQ.lat, storeLocQ.lng, qLat as number, qLng as number) * ROAD_FACTOR;
+        const gratisQ = Number.isFinite(subtotalQ) && subtotalQ > 0 && freteGratis(dcQ, subtotalQ, kmEstimadoQ);
         return new Response(JSON.stringify({
           _v: "v14", ok: true, mode: "distancia",
-          fee: quote?.dentroArea ? quote.taxa : 0,
+          fee: quote?.dentroArea && !gratisQ ? quote.taxa : 0,
+          fee_faixa: quote?.dentroArea ? quote.taxa : 0,
+          frete_gratis: !!gratisQ,
           km: Math.round(km * 100) / 100,
           route_min: routeMin,
-          tempo_max_min: quote?.tempoMax ?? null,
+          tempo_max_min: quote?.tempoMax != null ? quote.tempoMax + extraQ : null,
+          prazo_extra_min: extraQ,
           dentro_area: !!quote?.dentroArea,
         }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
@@ -1909,6 +1963,13 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
       // Config de entrega por distancia (Fase 1): localizacao da loja + faixas
       const deliveryConfig = (settingsRes.data?.delivery_config ?? {}) as Record<string, any>;
+      // Pedido minimo (so entrega; retirada nao tem minimo). Antes so o app do cliente conferia (2026-10-04).
+      if (!isRetirada && deliveryConfig.pedido_minimo_ativo === true) {
+        const minimo = Number(deliveryConfig.pedido_minimo_valor) || 0;
+        if (minimo > 0 && serverSubtotal + 0.005 < minimo) {
+          return new Response(JSON.stringify({ _v: "v14", error: "O pedido mínimo para entrega é de " + fmtPrice(minimo) + ".", code: "pedido_minimo" }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+      }
       const storeLoc = deliveryConfig.store_location;
       const tiersRaw = Array.isArray(deliveryConfig.delivery_fee_tiers) ? deliveryConfig.delivery_fee_tiers : [];
       const tiers: FaixaEntrega[] = tiersRaw
@@ -1921,6 +1982,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const hasPin = pinLat != null && !Number.isNaN(pinLat) && pinLng != null && !Number.isNaN(pinLng);
 
       let serverDeliveryFee = 0;
+      // Taxa da faixa antes da entrega gratis (vai para orders.delivery_fee_faixa: base do acerto "% da taxa").
+      let taxaFaixa: number | null = null;
       let routeKm: number | null = null;
       let routeTempoMax: number | null = null;
       // Tempo de rota (min) loja->cliente — a base do horario limite de preparo no Gestor.
@@ -1943,7 +2006,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
             message: "Endereço fora da área de entrega desta loja.",
           }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
-        serverDeliveryFee = quote.taxa;
+        const kmEstimado = haversineKm(storeLoc.lat, storeLoc.lng, pinLat as number, pinLng as number) * ROAD_FACTOR;
+        taxaFaixa = quote.taxa;
+        serverDeliveryFee = freteGratis(deliveryConfig, serverSubtotal, kmEstimado) ? 0 : quote.taxa;
         routeTempoMax = quote.tempoMax;
       } else if (hasDistanceConfig) {
         // Loja no modo distancia (mesma decisao da tela: store_location + faixas): entrega sem pin
@@ -2065,6 +2130,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         return new Response(JSON.stringify({ _v: "v14", error: gateMsg }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
       const sessionId = caixaSession!.id;
+      // Dia corrido: prazo prometido maior enquanto este caixa estiver aberto.
+      const extraPrazo = prazoExtraMin(dcRowForGate?.delivery_config as Record<string, any> | null, sessionId);
+      if (extraPrazo > 0 && routeTempoMax != null) routeTempoMax += extraPrazo;
 
       const { data: numData, error: numErr } = await admin.rpc("fn_next_tenant_order_number", { p_tenant_id: tenant_id });
       if (numErr) throw numErr;
@@ -2137,7 +2205,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
             id: orderId,
             number: existingOrder?.number || orderNumber,
             total: existingOrder?.total_amount || serverTotal,
-            delivery_fee: existingOrder?.delivery_fee || serverDeliveryFee,
+            delivery_fee: existingOrder?.delivery_fee ?? serverDeliveryFee,
             customer_id: realCustomerId,
             payment_method,
             order_type: order_type || "entrega",
@@ -2151,6 +2219,12 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       // Grava a origem do pedido (utm_source do link, ex.: campanha do Instagram) p/ relatorio.
       if (deliverySource) {
         try { await admin.from("orders").update({ delivery_source: deliverySource }).eq("id", orderId); } catch { /* nao bloqueia o pedido */ }
+      }
+
+      // Entrega gratis: guarda a taxa da faixa (o gatilho do acerto usa coalesce(delivery_fee_faixa, delivery_fee)).
+      if (!isRetirada && taxaFaixa != null && taxaFaixa > 0 && serverDeliveryFee === 0) {
+        const { error: ffErr } = await admin.from("orders").update({ delivery_fee_faixa: taxaFaixa }).eq("id", orderId);
+        if (ffErr) console.error("[delivery-write] delivery_fee_faixa nao gravou:", orderId, ffErr.message);
       }
 
       // Grava o pin do cliente + distancia da rota (delivery por distancia / link do motoboy na Fase 4)

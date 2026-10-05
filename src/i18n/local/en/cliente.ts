@@ -172,6 +172,8 @@ export default {
   'cliente.minimo': "Minimum",
   'cliente.ateMin': "up to {{n}} min",
   'cliente.gratis': "Free",
+  'cliente.gratisAcimaDe': "Free delivery over",
+  'cliente.faltaEntregaGratis': "{{v}} more for free delivery",
   'cliente.fechadoAgora': "Closed now",
   'cliente.fechadoAbrimos': "Closed now · we open at {{h}}",
   'cliente.montarSacola': "You can pick your items. Your bag is saved and you send it when we open.",

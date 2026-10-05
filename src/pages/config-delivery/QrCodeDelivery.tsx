@@ -8,6 +8,9 @@ interface Props {
   url: string;
   /** Nome base do arquivo baixado (sem extensão). */
   nomeArquivo?: string;
+  /** Título ao lado do QR (o mesmo componente serve para o link do delivery, de um prato e do WhatsApp). */
+  titulo?: string;
+  texto?: string;
 }
 
 /**
@@ -15,7 +18,7 @@ interface Props {
  * resolução, p/ imprimir/postar) e SVG (vetorial). Usa `react-qr-code` (SVG no DOM)
  * e serializa esse SVG na hora do download — sem dependência nova.
  */
-export default function QrCodeDelivery({ url, nomeArquivo = 'qrcode-delivery' }: Props) {
+export default function QrCodeDelivery({ url, nomeArquivo = 'qrcode-delivery', titulo = 'QR Code', texto = 'Baixe e use onde quiser: vitrine, embalagem, panfleto, Instagram.' }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
 
   const getSvg = (): SVGSVGElement | null => wrapRef.current?.querySelector('svg') ?? null;
@@ -68,15 +71,13 @@ export default function QrCodeDelivery({ url, nomeArquivo = 'qrcode-delivery' }:
   };
 
   return (
-    <div className="flex items-center gap-4 mt-3 bg-white rounded-xl border border-amber-200 p-4">
-      <div ref={wrapRef} className="bg-white p-2 rounded-lg border border-zinc-100 flex-shrink-0">
-        <QRCode value={url} size={120} />
+    <div className="flex items-center gap-3.5 mt-3">
+      <div ref={wrapRef} className="bg-white p-2 rounded-xl border border-zinc-200 flex-shrink-0">
+        <QRCode value={url} size={104} />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-bold text-zinc-800">QR Code do delivery</p>
-        <p className="text-xs text-zinc-500 mt-0.5 mb-2.5">
-          Baixe e use onde quiser — vitrine, embalagem, panfleto, Instagram. Aponta para o link da loja.
-        </p>
+        <p className="text-sm font-bold text-zinc-800">{titulo}</p>
+        <p className="text-xs text-zinc-500 mt-0.5 mb-2.5">{texto}</p>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={baixarPNG}
             className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold rounded-lg cursor-pointer flex items-center gap-1 transition-colors">

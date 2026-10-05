@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { usePDV } from '../../../../contexts/PDVContext';
 import { invokeWithAuth } from '@/lib/supabase';
 import { formatCurrency } from '@/lib/formatters';
 import MapaPin from '@/components/feature/MapaPin';
@@ -172,6 +173,8 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
   }, [q, buscar]);
 
   // ── Cotação da taxa ──
+  // O subtotal vai junto para a entrega grátis acima de um valor valer também no caixa (mesma regra do link).
+  const { subtotal: subtotalCarrinho } = usePDV();
   const cotar = useCallback(async (addr: Endereco | null) => {
     if (!addr) { setQuote(null); return; }
     setCotando(true);
@@ -181,13 +184,14 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
         tenant_id: tenantId,
         lat: addr.lat, lng: addr.lng,
         neighborhood_id: addr.neighborhood_id,
+        subtotal: subtotalCarrinho,
       },
     });
     setCotando(false);
     if (!data) { setQuote(null); return; }
     setQuote(data);
     setTaxaManual(data.dentro_area ? String(data.fee.toFixed(2)) : '');
-  }, [tenantId]);
+  }, [tenantId, subtotalCarrinho]);
 
   const selecionarEndereco = useCallback((addr: Endereco) => {
     setEndereco(addr);
