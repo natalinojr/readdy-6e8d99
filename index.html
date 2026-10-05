@@ -50,5 +50,36 @@
     /></noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Rede de segurança (2026-10-05): se a tela abriu SEM o CSS (cópia velha do app guardada no
+      // aparelho apontando para um arquivo de estilo que já não existe), limpa a cópia do app e
+      // recarrega UMA vez. Sonda: a classe 'hidden' do Tailwind tem que esconder o elemento.
+      (function () {
+        function cssOk() {
+          var d = document.createElement('div');
+          d.className = 'hidden';
+          document.body.appendChild(d);
+          var ok = getComputedStyle(d).display === 'none';
+          d.parentNode.removeChild(d);
+          return ok;
+        }
+        window.addEventListener('load', function () {
+          setTimeout(function () {
+            if (cssOk()) return;
+            try {
+              var k = 'erpos-css-recarga', t = Number(sessionStorage.getItem(k) || 0);
+              if (Date.now() - t < 60000) return;
+              sessionStorage.setItem(k, String(Date.now()));
+            } catch (e) {}
+            var vai = function () { location.reload(); };
+            if (window.caches && caches.keys) {
+              caches.keys().then(function (nomes) {
+                return Promise.all(nomes.filter(function (n) { return n.indexOf('erpos-shell') === 0; }).map(function (n) { return caches.delete(n); }));
+              }).then(vai, vai);
+            } else vai();
+          }, 2500);
+        });
+      })();
+    </script>
   </body>
 </html>
