@@ -38,7 +38,7 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ error: 'Usuario nao pertence ao tenant informado' }), { status: 403, headers: corsHeaders });
     }
 
-    const { purchase_id, delivery_notes, received_items, received_at } = payload;
+    const { purchase_id, delivery_notes, received_items, received_at, received_time } = payload;
     if (!purchase_id) return new Response(JSON.stringify({ error: 'purchase_id required' }), { status: 400, headers: corsHeaders });
 
     const { data: purchase, error: purchaseErr } = await supabase
@@ -80,10 +80,16 @@ Deno.serve(async (req) => {
     // Data em que a mercadoria chegou, escolhida pelo usuário (AAAA-MM-DD). Sem data = agora.
     // Gravada ao meio-dia de Brasília para não trocar de dia por causa do fuso.
     const hojeBR = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 10);
-    const lerData = (v: unknown): string | Response => {
+    const lerData = (v: unknown, hora?: unknown): string | Response => {
       const d = String(v).slice(0, 10);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return new Response(JSON.stringify({ error: 'Data do recebimento inválida' }), { status: 400, headers: corsHeaders });
       if (d > hojeBR) return new Response(JSON.stringify({ error: 'A data do recebimento não pode ser no futuro' }), { status: 400, headers: corsHeaders });
+      // Hora informada (HH:MM de Brasília): vale a hora real em que a mercadoria chegou, para comparar com a contagem
+      if (/^([01]\d|2[0-3]):[0-5]\d$/.test(String(hora ?? ''))) {
+        const t = new Date(`${d}T${String(hora)}:00-03:00`);
+        if (t.getTime() > Date.now()) return new Response(JSON.stringify({ error: 'A hora do recebimento não pode ser no futuro' }), { status: 400, headers: corsHeaders });
+        return t.toISOString();
+      }
       // Hoje = agora (meio-dia de hoje ficava no futuro de manhã e escondia a contagem feita depois)
       if (d === hojeBR) return new Date().toISOString();
       return new Date(d + 'T12:00:00-03:00').toISOString();
@@ -175,7 +181,7 @@ Deno.serve(async (req) => {
 
     let confirmedAt = new Date().toISOString();
     if (received_at != null && received_at !== '') {
-      const d = lerData(received_at);
+      const d = lerData(received_at, received_time);
       if (d instanceof Response) return d;
       confirmedAt = d;
     }

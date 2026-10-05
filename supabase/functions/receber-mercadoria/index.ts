@@ -314,7 +314,7 @@ function lerItens(raw: unknown): ItemConf[] | null {
 // Mesma descrição que o fiscal-inbound monta ao lançar a nota: "<descrição> (<código>)"
 const descDaNota = (it: any) => [it.descricao, it.codigo ? `(${it.codigo})` : null].filter(Boolean).join(' ').slice(0, 250);
 
-async function receber(ctx: Ctx, purchaseId: string, porItemId: Map<string, ItemConf>, recebidoEm: string, obs: string) {
+async function receber(ctx: Ctx, purchaseId: string, porItemId: Map<string, ItemConf>, recebidoEm: string, obs: string, hora: string | null = null) {
   const { admin, tenantId } = ctx;
   const { data: its } = await admin.from('fin_purchase_items')
     .select('id, description, quantity, total_price, unit_label, ingredient_id, units_per_package').eq('purchase_id', purchaseId).eq('tenant_id', tenantId);
@@ -338,7 +338,7 @@ async function receber(ctx: Ctx, purchaseId: string, porItemId: Map<string, Item
     obs || null,
   ].filter(Boolean).join(' · ');
   const r = await chamarEdge(ctx, 'purchase-confirm-delivery', {
-    tenant_id: tenantId, payload: { purchase_id: purchaseId, delivery_notes: notas, received_at: recebidoEm, received_items },
+    tenant_id: tenantId, payload: { purchase_id: purchaseId, delivery_notes: notas, received_at: recebidoEm, received_time: hora, received_items },
   }, true);
   if (!r.ok) return { ok: false as const, erro: r.erro };
   const semEstoque = ((its ?? []) as any[]).filter((it) => {
@@ -358,6 +358,9 @@ async function sangria(ctx: Ctx, purchaseId: string) {
   if (error) return { ok: false, motivo: error.message };
   return data;
 }
+
+// Hora (HH:MM, Brasília) em que a mercadoria chegou; opcional. Sem ela vale o padrão da data (hoje = agora, dia passado = meio-dia).
+const lerHora = (h: unknown): string | null => (/^([01]\d|2[0-3]):[0-5]\d$/.test(String(h ?? '')) ? String(h) : null);
 
 function validarData(d: unknown): string | null {
   const s = String(d ?? '').slice(0, 10) || hojeBR();
@@ -426,7 +429,7 @@ async function confirmar(ctx: Ctx, body: Record<string, any>) {
       porItemId.set(livres[i].id, c);
       livres.splice(i, 1);
     }
-    const rec = await receber(ctx, purchaseId, porItemId, recebidoEm, obs);
+    const rec = await receber(ctx, purchaseId, porItemId, recebidoEm, obs, lerHora(body.recebido_hora));
     if (!rec.ok) {
       return erro(lancouAgora
         ? `A nota foi lançada, mas o recebimento não confirmou: ${rec.erro}. Ela continua em "Esperando chegar" — tente de novo por lá.`
@@ -442,7 +445,7 @@ async function confirmar(ctx: Ctx, body: Record<string, any>) {
     // Compra lançada por esta tela em dinheiro cujo recebimento falhou antes: garante a sangria
     const sg = String(p.notes ?? '').includes(MARCA_DINHEIRO) && p.payment_status === 'paid' ? await sangria(ctx, purchaseId) : null;
     const porItemId = new Map(itens.map((c) => [c.key, c]));
-    const rec = await receber(ctx, purchaseId, porItemId, recebidoEm, obs);
+    const rec = await receber(ctx, purchaseId, porItemId, recebidoEm, obs, lerHora(body.recebido_hora));
     if (!rec.ok) return erro(`Não confirmou: ${rec.erro}`, 500);
     return json({ ...rec, purchase_id: purchaseId, lancada_agora: false, sangria: sg });
   }
@@ -503,7 +506,7 @@ async function lancar(ctx: Ctx, body: Record<string, any>) {
       const sg = pagamento === 'dinheiro' ? await sangria(ctx, String(ja.id)) : null;
       const pr = reemb ? await pedidoDeReembolso(ctx, String(ja.id), ref, fornecedor, dataCompra, reemb) : null;
       if (ja.delivery_confirmed_at) return json({ ok: true, purchase_id: ja.id, lancada_agora: true, aviso: null, faltas: [], sem_estoque: 0, sangria: sg, reembolso: pr });
-      const rec = await receber(ctx, String(ja.id), new Map(), recebidoEm, '');
+      const rec = await receber(ctx, String(ja.id), new Map(), recebidoEm, '', lerHora(body.recebido_hora));
       if (!rec.ok) return erro(`A compra está lançada, mas o recebimento não confirmou: ${rec.erro}`, 500, { purchase_id: ja.id });
       return json({ ...rec, purchase_id: ja.id, lancada_agora: true, sangria: sg, reembolso: pr });
     }
@@ -615,7 +618,7 @@ async function lancar(ctx: Ctx, body: Record<string, any>) {
       '/financeiro?tab=compras', { purchase_id: purchaseId });
   }
 
-  const rec = await receber(ctx, purchaseId, new Map(), recebidoEm, '');
+  const rec = await receber(ctx, purchaseId, new Map(), recebidoEm, '', lerHora(body.recebido_hora));
   if (!rec.ok) {
     return erro(`A compra foi lançada, mas o recebimento não confirmou: ${rec.erro}. Ela aparece em "Esperando chegar" — confirme por lá.`, 500, { purchase_id: purchaseId });
   }
