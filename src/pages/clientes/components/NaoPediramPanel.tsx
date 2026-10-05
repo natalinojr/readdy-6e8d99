@@ -4,13 +4,18 @@
 //  - "carrinho": montou carrinho e não finalizou -> a maior chance de recuperar;
 //  - "visita": abriu o cardápio e saiu sem colocar nada.
 //
-// O envio é sempre um clique humano (WhatsApp ou voucher). Quando a loja liga
-// "Recuperar carrinho abandonado" em Config. Delivery, o ERPOS passa a sugerir
-// o voucher aqui — nada sai sozinho.
-import { useEffect, useState } from 'react';
+// O envio é sempre um clique humano (WhatsApp ou voucher). A regra do "Cupom sugerido" mora aqui, junto
+// da lista (antes ficava em Delivery › Recuperar carrinho abandonado; o dono tirou de lá em 2026-10-04).
+// Ligada, o botão de cada cliente cadastrado diz o cupom ("Mandar cupom de 10%") — nada sai sozinho.
+// Quem muda a regra é quem emite cupom (permissão gestao_vouchers); o servidor confere (save_cart_recovery).
+import { useEffect, useRef, useState } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/contexts/ToastContext';
+import { usePermissoes } from '@/hooks/usePermissoes';
+import { btn, CampoNumero, LinhaInterruptor } from '@/pages/config-delivery/ui';
 import type { ClienteCRM } from '@/hooks/useClientes';
+import type { OfertaVoucher } from '../abas/FunilAba';
 
 interface CartItemResumo {
   nome: string;
@@ -42,10 +47,23 @@ interface CartRecoveryCfg {
   mensagem?: string;
 }
 
+/** O que está na tela no cartão "Cupom sugerido" (salvo ou não). */
+interface Rascunho {
+  enabled: boolean;
+  delay_min: number;
+  voucher_type: 'percentual' | 'valor';
+  voucher_value: number;
+  validade_dias: number;
+  mensagem: string;
+}
+
 interface Props {
   onClose: () => void;
-  /** Abre o modal de voucher para um cliente já cadastrado. */
-  onEnviarVoucher: (cliente: ClienteCRM) => void;
+  /**
+   * Abre o modal de voucher para um cliente já cadastrado. `oferta` vem preenchida (a regra do Cupom sugerido)
+   * quando a sugestão está ligada; quem recebe pode usá-la para já abrir o voucher com esse desconto.
+   */
+  onEnviarVoucher: (cliente: ClienteCRM, oferta?: OfertaVoucher) => void;
 }
 
 function fmtMoeda(v: number) {
@@ -95,14 +113,48 @@ function comoCliente(a: Abandono): ClienteCRM {
   };
 }
 
+/** Regra salva no servidor -> o que a tela mostra (o que nunca foi salvo entra com o padrão). */
+function deCfg(c: CartRecoveryCfg): Rascunho {
+  return {
+    enabled: c.enabled === true,
+    delay_min: Number(c.delay_min) || 30,
+    voucher_type: c.voucher_type === 'valor' ? 'valor' : 'percentual',
+    voucher_value: c.voucher_value == null ? 10 : Number(c.voucher_value) || 0,
+    validade_dias: Number(c.validade_dias) || 7,
+    mensagem: c.mensagem ?? '',
+  };
+}
+
+const numeroBr = (n: number) => String(n).replace('.', ',');
+/** "10%" ou "R$ 15,00" */
+const descontoTxt = (tipo: 'percentual' | 'valor', valor: number) => (tipo === 'valor' ? fmtMoeda(valor) : numeroBr(valor) + '%');
+
 export default function NaoPediramPanel(props: Props) {
   const { user } = useAuth();
+  const toast = useToast();
+  const { hasPermissao } = usePermissoes();
+  // Mesmo critério da aba Clientes e do servidor: o dono ou quem tem "emitir voucher".
+  const podeEditar = user?.perfil === 'admin' || hasPermissao('gestao_vouchers');
+
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState('');
   const [abandonos, setAbandonos] = useState<Abandono[]>([]);
-  const [cfg, setCfg] = useState<CartRecoveryCfg>({ enabled: false });
+  const [cfg, setCfg] = useState<CartRecoveryCfg>({ enabled: false }); // como está salvo
+  const [cfgOk, setCfgOk] = useState(false); // só mexe na regra depois de ler a que existe (senão gravaria o padrão por cima)
+  const [rasc, setRasc] = useState<Rascunho>(deCfg({ enabled: false }));
+  const rascIniciado = useRef(false);
+  const [cupomAberto, setCupomAberto] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [recarga, setRecarga] = useState(0);
   const [dias, setDias] = useState(7);
   const [aba, setAba] = useState<'carrinho' | 'visita'>('carrinho');
+
+  // Trocou de loja: a regra da anterior não fica na tela.
+  useEffect(function () {
+    rascIniciado.current = false;
+    setCfgOk(false);
+    setCfg({ enabled: false });
+  }, [user?.tenantId]);
 
   useEffect(function () {
     let vivo = true;
@@ -119,10 +171,56 @@ export default function NaoPediramPanel(props: Props) {
       const data = res.data;
       if (!data || data.error) { setErro(data?.message || data?.error || 'Não foi possível carregar.'); return; }
       setAbandonos(data.abandonos ?? []);
-      setCfg(data.cart_recovery ?? { enabled: false });
+      const regra = data.cart_recovery ?? { enabled: false };
+      setCfg(regra);
+      setCfgOk(true);
+      // O rascunho só nasce da primeira leitura: trocar o período não apaga o que a pessoa está digitando.
+      if (!rascIniciado.current) { setRasc(deCfg(regra)); rascIniciado.current = true; }
     });
     return function () { vivo = false; };
-  }, [user?.tenantId, dias]);
+  }, [user?.tenantId, dias, recarga]);
+
+  const mudou = JSON.stringify(rasc) !== JSON.stringify(deCfg(cfg));
+  const detalhes = cupomAberto || mudou;
+  const semEdicao = !podeEditar || salvando;
+  const mudarRasc = function (patch: Partial<Rascunho>) { setRasc(function (r) { return { ...r, ...patch }; }); };
+
+  async function salvarCupom() {
+    if (!user?.tenantId || salvando || !podeEditar) return;
+    if (rasc.enabled && !(rasc.voucher_value > 0)) {
+      toast.error('Falta o desconto', 'Coloque quanto é o desconto, ou desligue o cupom sugerido.');
+      return;
+    }
+    if (rasc.voucher_type === 'percentual' && rasc.voucher_value > 100) {
+      toast.error('Desconto alto demais', 'O desconto em % não pode passar de 100.');
+      return;
+    }
+    setSalvando(true);
+    const res = await invokeWithAuth<{ ok?: boolean; cart_recovery?: CartRecoveryCfg; error?: string; message?: string }>(
+      'delivery-write',
+      { body: { action: 'save_cart_recovery', tenant_id: user.tenantId, cart_recovery: { ...rasc, mensagem: rasc.mensagem.trim() } } },
+    );
+    setSalvando(false);
+    if (res.error) { toast.error('Não salvou o cupom sugerido', res.error.message); return; }
+    const d = res.data;
+    if (!d || d.error || !d.cart_recovery) {
+      toast.error('Não salvou o cupom sugerido', d?.message || d?.error || 'O servidor não confirmou a mudança.');
+      return;
+    }
+    // O servidor ajusta limites (ex.: espera mínima de 5 min); a tela passa a mostrar o que ficou valendo.
+    setCfg(d.cart_recovery);
+    setRasc(deCfg(d.cart_recovery));
+    toast.success('Cupom sugerido salvo', d.cart_recovery.enabled ? 'Os botões da lista já mostram o cupom.' : 'A lista não sugere mais cupom.');
+    setRecarga(function (n) { return n + 1; }); // a espera (delay_min) muda quem aparece na lista
+  }
+
+  // A regra SALVA (não a que está sendo digitada) é a que vale nos botões e na mensagem.
+  const ofertaSugerida: OfertaVoucher | undefined = cfg.enabled === true && Number(cfg.voucher_value) > 0
+    ? { tipo: cfg.voucher_type === 'valor' ? 'discount_fixed' : 'discount_percent', valor: Number(cfg.voucher_value), validadeDias: Number(cfg.validade_dias) || 7 }
+    : undefined;
+  const rotuloCupom = ofertaSugerida
+    ? 'Mandar cupom de ' + descontoTxt(cfg.voucher_type === 'valor' ? 'valor' : 'percentual', ofertaSugerida.valor)
+    : 'Voucher';
 
   const comCarrinho = abandonos.filter(function (a) { return a.tipo === 'carrinho'; });
   const soVisita = abandonos.filter(function (a) { return a.tipo === 'visita'; });
@@ -146,6 +244,8 @@ export default function NaoPediramPanel(props: Props) {
     const comDDI = numero.length <= 11 ? '55' + numero : numero;
     window.open('https://wa.me/' + comDDI + '?text=' + encodeURIComponent(mensagemSugerida(a)), '_blank');
   }
+
+  const resumoRegra = `Quem saiu há mais de ${rasc.delay_min} min ganha ${descontoTxt(rasc.voucher_type, rasc.voucher_value)} de desconto, que vale por ${rasc.validade_dias} dias.`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={props.onClose}>
@@ -206,33 +306,93 @@ export default function NaoPediramPanel(props: Props) {
           )}
         </div>
 
-        {/* Aviso da configuração */}
-        {!cfg.enabled && (
-          <div className="mx-5 mt-3 flex items-start gap-2 px-3 py-2 bg-zinc-50 border border-zinc-200 rounded-lg">
-            <i className="ri-information-line text-zinc-400 text-sm mt-0.5" />
-            <p className="text-[11px] text-zinc-500">
-              A oferta de voucher está <strong>desligada</strong>. Para ligar: Config. Delivery › Recuperar carrinho
-              abandonado. Mesmo desligada, você pode chamar no WhatsApp ou mandar voucher manualmente aqui.
-            </p>
-          </div>
-        )}
-        {cfg.enabled && (
-          <div className="mx-5 mt-3 flex items-start gap-2 px-3 py-2 bg-green-50 border border-green-100 rounded-lg">
-            <i className="ri-coupon-3-line text-green-500 text-sm mt-0.5" />
-            <p className="text-[11px] text-green-700">
-              Voucher sugerido:{' '}
-              <strong>
-                {cfg.voucher_type === 'valor'
-                  ? fmtMoeda(Number(cfg.voucher_value ?? 0)) + ' de desconto'
-                  : String(cfg.voucher_value ?? 0) + '% de desconto'}
-              </strong>{' '}
-              válido por {cfg.validade_dias ?? 7} dias. O envio continua sendo um clique seu.
-            </p>
-          </div>
-        )}
+        <div className="flex-1 overflow-auto p-5 space-y-4">
+          {/* Cupom sugerido: a regra mora aqui, junto da lista */}
+          {cfgOk && (
+            <div className="border border-amber-200 bg-gradient-to-b from-amber-50/80 to-white rounded-2xl px-4 py-3.5">
+              <div className="flex items-center gap-2 mb-2.5">
+                <span className="w-7 h-7 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center flex-shrink-0"><i className="ri-coupon-3-line" /></span>
+                <h4 className="text-[13px] font-extrabold text-zinc-900">Cupom sugerido</h4>
+              </div>
+              <LinhaInterruptor
+                titulo="Sugerir cupom nesta lista"
+                texto={!rasc.enabled ? 'Desligado: a lista só chama no WhatsApp' : detalhes ? 'Ligado' : resumoRegra}
+                ligado={rasc.enabled}
+                onChange={function (v) { mudarRasc({ enabled: v }); }}
+                disabled={semEdicao}
+              />
 
-        {/* Lista */}
-        <div className="flex-1 overflow-auto p-5">
+              {detalhes ? (
+                <div className="mt-3 pt-3 border-t border-amber-100 space-y-3">
+                  <div className="flex flex-wrap items-center gap-x-1.5 gap-y-2 text-[13px] text-zinc-700">
+                    <span>Quem saiu há mais de</span>
+                    <CampoNumero valor={rasc.delay_min} onChange={function (n) { mudarRasc({ delay_min: Math.round(n) }); }}
+                      sufixo="min" casas={0} largura="w-10" rotulo="Minutos sem voltar" disabled={semEdicao} />
+                    <span>ganha</span>
+                    <CampoNumero valor={rasc.voucher_value}
+                      onChange={function (n) { mudarRasc({ voucher_value: rasc.voucher_type === 'percentual' ? Math.min(100, Math.round(n)) : n }); }}
+                      prefixo={rasc.voucher_type === 'valor' ? 'R$' : undefined} sufixo={rasc.voucher_type === 'percentual' ? '%' : undefined}
+                      casas={rasc.voucher_type === 'valor' ? 2 : 0} largura={rasc.voucher_type === 'valor' ? 'w-16' : 'w-10'} rotulo="Desconto" disabled={semEdicao} />
+                    <span>de desconto, que vale por</span>
+                    <CampoNumero valor={rasc.validade_dias} onChange={function (n) { mudarRasc({ validade_dias: Math.round(n) }); }}
+                      sufixo="dias" casas={0} largura="w-8" rotulo="Dias de validade" disabled={semEdicao} />
+                    <span className="-ml-1">.</span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11.5px] font-bold text-zinc-500 mr-1">Desconto em</span>
+                    {([['percentual', '%'], ['valor', 'R$']] as const).map(function ([tipo, rotulo]) {
+                      const ativo = rasc.voucher_type === tipo;
+                      return (
+                        <button key={tipo} type="button" disabled={semEdicao} aria-pressed={ativo}
+                          onClick={function () { mudarRasc({ voucher_type: tipo, voucher_value: tipo === 'percentual' ? Math.min(100, Math.round(rasc.voucher_value)) : rasc.voucher_value }); }}
+                          className={'h-8 min-w-[44px] px-3 rounded-full border text-[12.5px] font-bold cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ' +
+                            (ativo ? 'bg-zinc-900 border-zinc-900 text-white' : 'bg-white border-zinc-200 text-zinc-700 hover:border-zinc-300')}>
+                          {rotulo}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div>
+                    <label htmlFor="cupom-mensagem" className="block text-xs font-bold text-zinc-600 mb-1">Mensagem que vai junto</label>
+                    <textarea id="cupom-mensagem" rows={3} value={rasc.mensagem} disabled={semEdicao} maxLength={500}
+                      onChange={function (e) { mudarRasc({ mensagem: e.target.value }); }}
+                      placeholder="Ex.: Vi que você montou um pedido e não finalizou! Separei um cupom pra você 😊"
+                      className="w-full px-3 py-2 rounded-xl border border-zinc-200 bg-white text-sm outline-none focus:border-amber-400 disabled:opacity-60" />
+                    <p className="text-[11px] text-zinc-400 mt-1">Em branco, usa uma mensagem padrão. O nome da pessoa entra na frente ("Oi, Mariana!").</p>
+                  </div>
+
+                  {!podeEditar ? (
+                    <p className="text-[11.5px] text-zinc-500 bg-zinc-50 rounded-xl px-3 py-2">Quem muda é quem emite cupom (permissão de Vouchers). Você só pode ver.</p>
+                  ) : (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {mudou ? (
+                        <>
+                          <button type="button" disabled={salvando} onClick={function () { setRasc(deCfg(cfg)); }} className={btn('out', 'sm')}>Desfazer</button>
+                          <button type="button" disabled={salvando} onClick={function () { void salvarCupom(); }} className={btn('p', 'sm')}>
+                            {salvando ? <><i className="ri-loader-4-line animate-spin" />Salvando…</> : 'Salvar'}
+                          </button>
+                        </>
+                      ) : (
+                        <button type="button" onClick={function () { setCupomAberto(false); }} className={btn('ghost', 'sm')}>Fechar</button>
+                      )}
+                      <span className="text-[11px] text-zinc-400">O envio continua sendo um clique seu.</span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-2">
+                  <button type="button" onClick={function () { setCupomAberto(true); }} className={btn('ghost', 'sm')}>
+                    <i className={podeEditar ? 'ri-equalizer-line' : 'ri-eye-line'} />{podeEditar ? 'Ajustar o cupom e a mensagem' : 'Ver a regra'}
+                  </button>
+                  {!podeEditar && <p className="text-[11px] text-zinc-400 mt-1">Quem muda é quem emite cupom (permissão de Vouchers).</p>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Lista */}
           {carregando ? (
             <p className="text-xs text-zinc-400 text-center py-8">Carregando…</p>
           ) : erro ? (
@@ -270,7 +430,7 @@ export default function NaoPediramPanel(props: Props) {
                         </p>
                       )}
                     </div>
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <div className="flex items-center gap-1.5 flex-shrink-0 flex-wrap">
                       {a.phone && (
                         <button
                           onClick={function () { abrirWhatsapp(a); }}
@@ -281,10 +441,10 @@ export default function NaoPediramPanel(props: Props) {
                       )}
                       {a.customer_id && (
                         <button
-                          onClick={function () { props.onEnviarVoucher(comoCliente(a)); }}
+                          onClick={function () { props.onEnviarVoucher(comoCliente(a), ofertaSugerida); }}
                           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700"
                         >
-                          <i className="ri-coupon-3-line" /> Voucher
+                          <i className="ri-coupon-3-line" /> {rotuloCupom}
                         </button>
                       )}
                     </div>

@@ -250,8 +250,11 @@ const DESTAQUES_CATEGORY_ID = '__destaques__';
 
 /** Horário de funcionamento do delivery (Config › Delivery) e pedido mínimo (0 = sem). */
 export interface InfoLoja {
-  horario: { enabled?: boolean; days?: Record<string, { open?: string; close?: string; enabled?: boolean }> } | null;
+  // Formato em supabase/functions/_shared/horario-delivery.ts (vários horários no dia + datas especiais).
+  horario: import('../../../supabase/functions/_shared/horario-delivery').HorarioDelivery | null;
   pedidoMinimo: number;
+  /** Entrega grátis acima de um valor (Delivery › Pedido › Mínimo e retirada). null = desligada. */
+  freteGratis: { acimaDe: number; ateKm: number } | null;
 }
 const PROMOCAO_CATEGORY_ID = '__promocao__';
 
@@ -589,6 +592,9 @@ async function fetchDeliveryConfig(
       setters.setInfoLoja({
         horario: (dc.delivery_schedule && typeof dc.delivery_schedule === 'object') ? dc.delivery_schedule : null,
         pedidoMinimo: dc.pedido_minimo_ativo ? (Number(dc.pedido_minimo_valor) || 0) : 0,
+        freteGratis: (dc.frete_gratis && dc.frete_gratis.ativo === true && Number(dc.frete_gratis.acima_de) > 0)
+          ? { acimaDe: Number(dc.frete_gratis.acima_de), ateKm: Number(dc.frete_gratis.ate_km) || 0 }
+          : null,
       });
     }
 
@@ -603,12 +609,15 @@ async function fetchDeliveryConfig(
       setters.setStoreLocation(null);
     }
     const rawTiers = dc.delivery_fee_tiers;
+    // "Dia corrido": a loja somou minutos ao prazo enquanto o caixa estiver aberto (vem calculado do servidor).
+    const prazoExtra = Math.max(0, Number(data.prazo_extra_min) || 0);
     if (Array.isArray(rawTiers)) {
       setters.setTiers(rawTiers.map(function (t: any) {
+        const tempo = Number(t.tempo_max_min) || 0;
         return {
           ate_km: Number(t.ate_km) || 0,
           taxa: Number(t.taxa) || 0,
-          tempo_max_min: Number(t.tempo_max_min) || 0,
+          tempo_max_min: tempo > 0 ? tempo + prazoExtra : 0,
         };
       }).filter(function (t: FaixaEntrega) { return t.ate_km > 0; }));
     } else {
@@ -838,7 +847,7 @@ export function useDeliveryData(storeSlug?: string) {
   const [deliveryOpenNow, setDeliveryOpenNow] = useState(true);
   const [deliveryClosedReason, setDeliveryClosedReason] = useState<string | null>(null);
   const [storeWhatsapp, setStoreWhatsapp] = useState('');
-  const [infoLoja, setInfoLoja] = useState<InfoLoja>({ horario: null, pedidoMinimo: 0 });
+  const [infoLoja, setInfoLoja] = useState<InfoLoja>({ horario: null, pedidoMinimo: 0, freteGratis: null });
 
   // Entrega por distância (pin do cliente + faixas configuradas pela loja)
   const [storeLocation, setStoreLocation] = useState<StoreLocation | null>(null);
@@ -2270,9 +2279,20 @@ export function useDeliveryData(storeSlug?: string) {
   // Quando ativo, a taxa vem do PIN (não do bairro). Senão, mantém o fluxo legado de bairro.
   const distanceMode = storeLocation != null && tiers.length > 0;
 
-  const deliveryQuote: DeliveryQuote | null = (distanceMode && storeLocation && addressLat != null && addressLng != null)
+  const quoteFaixa: DeliveryQuote | null = (distanceMode && storeLocation && addressLat != null && addressLng != null)
     ? quoteFromTiers(haversineKm(storeLocation.lat, storeLocation.lng, addressLat, addressLng) * ROAD_FACTOR, tiers)
     : null;
+  // Entrega grátis acima de um valor: mesma regra do servidor (delivery-write › freteGratis) — soma dos
+  // itens, sem a taxa e antes do cupom; com limite de km, só até lá.
+  const subtotalItens = cart.reduce(function (s, i) { return s + i.precoTotal * i.quantidade; }, 0);
+  const fg = infoLoja.freteGratis;
+  const ganhaFreteGratis = !!(fg && quoteFaixa && quoteFaixa.dentroArea && subtotalItens + 0.005 >= fg.acimaDe
+    && (!fg.ateKm || quoteFaixa.km <= fg.ateKm));
+  const deliveryQuote: DeliveryQuote | null = ganhaFreteGratis && quoteFaixa ? { ...quoteFaixa, taxa: 0 } : quoteFaixa;
+  // Endereço onde a entrega grátis vale (só no modo distância, dentro da área e do limite de km): é aí que
+  // a sacola pode dizer "faltam R$ X". O servidor não dá entrega grátis no modo bairro.
+  const freteGratisAlcancavel = !!(fg && distanceMode && quoteFaixa && quoteFaixa.dentroArea
+    && (!fg.ateKm || quoteFaixa.km <= fg.ateKm));
 
   // Pedido bloqueado: modo distância + entrega + (sem pin ou além da última faixa)
   const foraDeArea = distanceMode && modoEntrega === 'entrega'
@@ -2394,6 +2414,7 @@ export function useDeliveryData(storeSlug?: string) {
     orderTotal,
     resumoConfirmacao,
     deliveryFee: effectiveDeliveryFee,
+    freteGratisAlcancavel,
     totalItens,
     totalItensProdutos,
     totalValor,

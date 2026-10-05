@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useModuleAccess, type ModuloLivre } from '@/hooks/useModuleAccess';
 import { useAuth } from '../../contexts/AuthContext';
+import { podeSair } from '../../lib/guardaSaida';
 import { useAprovacoes } from '../../contexts/AprovacoesContext';
 import { useAppMode } from '../../contexts/AppModeContext';
 import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
@@ -123,12 +124,14 @@ export default function Sidebar({ gestaoMode = false, isOpen = false, onClose }:
   const { hasPermissao } = usePermissoes();
   const { hasModule } = useModuleAccess();
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    if (!(await podeSair())) return;
     logout();
     navigate('/login');
   };
 
-  const handleVoltar = () => {
+  const handleVoltar = async () => {
+    if (!(await podeSair())) return;
     setMode('modulos');
     navigate('/modulos');
   };

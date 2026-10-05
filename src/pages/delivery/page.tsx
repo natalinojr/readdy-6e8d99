@@ -196,6 +196,7 @@ export default function DeliveryPage() {
   }
   const pedidoMinimo = data.infoLoja.pedidoMinimo;
   if (pedidoMinimo > 0) metasLoja.push({ icone: 'ri-shopping-bag-3-line', rotulo: t('cliente.minimo'), valor: formatCurrency(pedidoMinimo) });
+  if (data.infoLoja.freteGratis && data.distanceMode) metasLoja.push({ icone: 'ri-gift-line', rotulo: t('cliente.gratisAcimaDe'), valor: formatCurrency(data.infoLoja.freteGratis.acimaDe) });
 
   const avisoFechado = !data.deliveryOpenNow ? (
     <div className="mx-5 mt-3.5 px-4 py-3.5 rounded-2xl bg-red-50 text-red-900 flex gap-3 items-start">

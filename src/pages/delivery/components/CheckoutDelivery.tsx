@@ -96,6 +96,9 @@ export default function CheckoutDelivery(props: Props) {
   const total = Math.max(0, subtotal + taxa - voucherDesc - clubeDesc);
   const minimo = data.infoLoja.pedidoMinimo;
   const faltaMinimo = !retirada && minimo > 0 && subtotal < minimo ? minimo - subtotal : 0;
+  // Entrega grátis acima de um valor (a taxa já vem zerada do hook quando ganha): mostra quanto falta.
+  const fg = data.infoLoja.freteGratis;
+  const faltaFreteGratis = !retirada && fg && data.freteGratisAlcancavel && taxa > 0 && subtotal < fg.acimaDe ? fg.acimaDe - subtotal : 0;
 
   const valorDinheiroTxt = (valorDinheiro || '').indexOf(',') >= 0 ? valorDinheiro.replace(/\./g, '').replace(',', '.') : (valorDinheiro || '');
   const valorDinheiroNum = parseFloat(valorDinheiroTxt);
@@ -529,6 +532,7 @@ export default function CheckoutDelivery(props: Props) {
                 <span>{retirada ? 'Retirada' : t('cliente.taxaEntrega')}</span>
                 <span>{!taxaDefinida ? 'escolha o bairro' : retirada || taxa === 0 ? t('cliente.gratis') : formatCurrency(taxa)}</span>
               </div>
+              {faltaFreteGratis > 0 ? <p className="text-xs font-semibold text-emerald-700 pb-1">{t('cliente.faltaEntregaGratis', { v: formatCurrency(faltaFreteGratis) })}</p> : null}
               {voucherDesc > 0 ? <div className="flex justify-between text-sm text-emerald-700 py-1"><span>Cupom</span><span>- {formatCurrency(voucherDesc)}</span></div> : null}
               {clubeDesc > 0 ? <div className="flex justify-between text-sm text-emerald-700 py-1"><span className="truncate">Clube: {data.clubeSel.nomes.join(', ')}</span><span>- {formatCurrency(clubeDesc)}</span></div> : null}
               <div className="flex justify-between text-lg font-extrabold text-stone-900 pt-2"><span>{t('cliente.total')}</span><span>{formatCurrency(total)}</span></div>

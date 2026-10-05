@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useModoTreino } from '../../contexts/ModoTreinoContext';
 import { useSessao } from '../../contexts/SessaoContext';
+import { podeSair } from '../../lib/guardaSaida';
 
 // ─── Modal Criar Nova Loja ────────────────────────────────────────────────────
 function CriarLojaModal({ onClose }: { onClose: () => void }) {
@@ -158,7 +159,8 @@ export default function TopBar({ onMenuToggle }: TopBarProps) {
     hour: '2-digit', minute: '2-digit', second: '2-digit',
   });
 
-  const handleLogout = () => { logout(); navigate('/login'); };
+  const handleLogout = async () => { if (!(await podeSair())) return; logout(); navigate('/login'); };
+  const trocarLoja = async () => { if (!(await podeSair())) return; switchTenant(); };
 
   return (
     <header className="h-14 bg-white border-b border-zinc-100 flex items-center justify-between px-4 md:px-6 flex-shrink-0">
@@ -222,7 +224,7 @@ export default function TopBar({ onMenuToggle }: TopBarProps) {
           <div className="hidden md:flex items-center">
             {canSwitchTenant ? (
               <button
-                onClick={switchTenant}
+                onClick={trocarLoja}
                 title="Trocar de loja"
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-200 bg-zinc-50 hover:border-amber-400 hover:bg-amber-50 transition-colors cursor-pointer"
               >
@@ -311,7 +313,7 @@ export default function TopBar({ onMenuToggle }: TopBarProps) {
               {/* Ações */}
               <div className="py-1">
                 <button
-                  onClick={() => { setShowUserMenu(false); navigate('/perfil'); }}
+                  onClick={async () => { setShowUserMenu(false); if (!(await podeSair())) return; navigate('/perfil'); }}
                   className="w-full text-left px-4 py-2.5 text-sm text-zinc-700 hover:bg-zinc-50 flex items-center gap-2.5 cursor-pointer transition-colors"
                 >
                   <div className="w-4 h-4 flex items-center justify-center">
@@ -322,7 +324,7 @@ export default function TopBar({ onMenuToggle }: TopBarProps) {
 
                 {canSwitchTenant && (
                   <button
-                    onClick={() => { setShowUserMenu(false); switchTenant(); }}
+                    onClick={() => { setShowUserMenu(false); void trocarLoja(); }}
                     className="w-full text-left px-4 py-2.5 text-sm text-zinc-700 hover:bg-zinc-50 flex items-center gap-2.5 cursor-pointer transition-colors"
                   >
                     <div className="w-4 h-4 flex items-center justify-center">

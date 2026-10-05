@@ -37,7 +37,11 @@ const tabs: { id: Tab; label: string; icon: string; shortLabel: string }[] = [
 
 export default function RelatoriosPage() {
   const [periodo, setPeriodo] = useState('Hoje');
-  const [tabEscolhida, setTab] = useState<Tab>('geral');
+  // ?aba=delivery (atalho da tela Delivery › Início) abre direto na aba; aba sem permissão cai na 1ª liberada.
+  const [tabEscolhida, setTab] = useState<Tab>(() => {
+    const pedida = new URLSearchParams(window.location.search).get('aba');
+    return (tabs.some((t) => t.id === pedida) ? pedida : 'geral') as Tab;
+  });
   // Abas liberadas para o papel (Configurações › Permissões; admin vê todas).
   const { hasPermissao } = usePermissoes();
   const abas = tabs.filter((t) => { const k = relKeyDaAba(t.id); return !!k && hasPermissao(k); });
