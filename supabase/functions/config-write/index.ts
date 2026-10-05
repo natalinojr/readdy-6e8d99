@@ -807,7 +807,7 @@ Deno.serve(async (req) => {
     // SYSTEM SETTINGS
     // ═══════════════════════════════════════════════════════════════════════════
     if (action === 'set_recurso') {
-      const CHAVES_RECURSO = ['tv_senhas', 'whatsapp_senha_pronta', 'usuarios_novo', 'caixa_novo', 'cardapio_novo', 'gestor_novo', 'totem_novo', 'tarefas_novo']
+      const CHAVES_RECURSO = ['tv_senhas', 'whatsapp_senha_pronta', 'usuarios_novo', 'caixa_novo', 'cardapio_novo', 'gestor_novo', 'totem_novo', 'tarefas_novo', 'modulos_novo']
       const chave = String(rest.chave ?? '')
       if (!tenant_id || !CHAVES_RECURSO.includes(chave)) {
         return new Response(JSON.stringify({ success: false, error: 'Recurso inválido' }), {

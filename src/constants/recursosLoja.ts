@@ -11,7 +11,8 @@ export type RecursoLoja =
   | 'cardapio_novo'
   | 'gestor_novo'
   | 'totem_novo'
-  | 'tarefas_novo';
+  | 'tarefas_novo'
+  | 'modulos_novo';
 
 export interface RecursoInfo {
   chave: RecursoLoja;
@@ -29,6 +30,7 @@ export const RECURSOS_LOJA: RecursoInfo[] = [
   { chave: 'gestor_novo', nome: 'Gestor de Pedidos: tela nova', descricao: 'Manchete, “Conferi tudo” e régua única de atraso.', pronto: false },
   { chave: 'totem_novo', nome: 'Totem e pagar: tela nova', descricao: 'Logo e cor da loja no totem e na tela de pagar.', pronto: false },
   { chave: 'tarefas_novo', nome: 'Tarefas: tela nova', descricao: 'Minhas por prazo, Feito e Adiar no próprio item.', pronto: false },
+  { chave: 'modulos_novo', nome: 'Módulos: tela nova', descricao: 'O que este aparelho faz, com o estado de cada terminal.', pronto: true },
 ];
 
 export type RecursosLoja = Partial<Record<RecursoLoja, boolean>>;

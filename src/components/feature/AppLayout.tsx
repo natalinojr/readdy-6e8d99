@@ -94,7 +94,9 @@ export default function AppLayout() {
   // módulos livres, em tela cheia com uma barra mínima de voltar/sair.
   if (hasNoTenants && !isFullScreenProtected) {
     if (!NO_TENANT_ROUTES.some((r) => location.pathname.startsWith(r))) {
-      return <Navigate to="/modulos" replace />;
+      // { entrada } = chegou pelo "/" (logo depois de entrar): a página de Módulos nova pode ir direto no
+      // último produto usado. "← Módulos" de dentro de um produto não marca, e cai na escolha.
+      return <Navigate to="/modulos" replace state={location.pathname === '/' ? { entrada: true } : undefined} />;
     }
     // Tarefas tem a própria barra (com "voltar para Módulos") e ocupa a tela toda.
     if (isTerminal) {
