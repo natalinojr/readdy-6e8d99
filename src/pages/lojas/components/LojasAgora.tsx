@@ -55,8 +55,8 @@ export default function LojasAgora() {
   return (
     <section className="mb-8 bg-white/85 backdrop-blur-sm border border-zinc-200 rounded-2xl p-4 md:p-5">
       <div className="flex items-center gap-2 mb-3">
-        <span className="text-sm font-black text-zinc-800">Suas lojas agora</span>
-        <AoVivo />
+        <span className="text-sm font-black text-zinc-800 whitespace-nowrap">Suas lojas agora</span>
+        <AoVivo soPontoNoCelular />
         <span className="flex-1" />
         <button onClick={() => setEscolher(true)} title="Escolher lojas"
           className="w-8 h-8 flex items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 cursor-pointer">
