@@ -38,7 +38,13 @@ export interface EstoqueTelaApi {
   podeConfigurar: boolean;
   /** Pode contar (chave estoque_inventario). */
   podeContar: boolean;
+  /** Itens que a contagem deixou "em dúvida" (insumo → quem marcou, quando, anotação). */
+  duvidas: Map<string, DuvidaContagem>;
+  /** Marca o item em dúvida (true) ou tira (false). Devolve false se o servidor recusou (o erro já foi mostrado). */
+  marcarDuvida: (insumoId: string, duvida: boolean, nota?: string) => Promise<boolean>;
 }
+
+export interface DuvidaContagem { nota: string | null; por: string | null; em: string }
 
 export const EstoqueTelaContext = createContext<EstoqueTelaApi | null>(null);
 
