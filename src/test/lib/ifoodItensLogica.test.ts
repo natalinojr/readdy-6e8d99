@@ -91,7 +91,7 @@ describe('fraseItens', () => {
     expect(r.sub).toBe('Depois do iFood (R$ 35) e da comida (R$ 34). 2 itens dão prejuízo e 9 não têm ficha. A conta ainda está incompleta.');
   });
   it('sem ficha nenhuma e sem acesso ao dinheiro', () => {
-    expect(fraseItens({ de100: null, prejuizo: 0, semFicha: 3, itensVendidos: 10, dinheiro: true }).manchete).toBe('Ligue os itens à ficha para ver quanto sobra');
+    expect(fraseItens({ de100: null, prejuizo: 0, semFicha: 3, itensVendidos: 10, dinheiro: true }).manchete).toBe('Ligue os itens à ficha para ver o lucro bruto');
     expect(fraseItens({ de100: { ifood: 30, comida: 30, sobra: 40 }, prejuizo: 0, semFicha: 0, itensVendidos: 10, dinheiro: false }).manchete).toBe('10 itens vendidos');
     expect(fraseItens({ de100: { ifood: 30, comida: 30, sobra: 40 }, prejuizo: 0, semFicha: 0, itensVendidos: 10, dinheiro: true }).sub).toBe('Depois do iFood (R$ 30) e da comida (R$ 30). Nenhum item dá prejuízo e todos têm ficha.');
   });
