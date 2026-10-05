@@ -84,7 +84,7 @@ function IfoodOntemLinha({ tenantId, verDinheiro }: { tenantId: string; verDinhe
   const sobra = verDinheiro && validos.length > 0 && sobras.every((x): x is number => x != null) ? sobras.reduce((s, x) => s + x, 0) : null;
   const texto = validos.length === 0
     ? 'iFood ontem: nenhum pedido'
-    : `iFood ontem: ${validos.length} ${validos.length === 1 ? 'pedido' : 'pedidos'}, ${brl(vendido)} vendidos${sobra != null ? `, ${sobra >= 0 ? 'sobraram' : 'faltaram'} ${brl(Math.abs(sobra))}` : ''}`;
+    : `iFood ontem: ${validos.length} ${validos.length === 1 ? 'pedido' : 'pedidos'}, ${brl(vendido)} vendidos${sobra != null ? `, ${sobra >= 0 ? 'lucro bruto de' : 'prejuízo de'} ${brl(Math.abs(sobra))}` : ''}`;
   return (
     <button onClick={() => navigate('/ifood')} title="Abrir a área do iFood"
       className="w-full flex items-center gap-2.5 rounded-2xl border border-zinc-200 bg-white px-3.5 py-2.5 text-left hover:border-zinc-300 cursor-pointer">

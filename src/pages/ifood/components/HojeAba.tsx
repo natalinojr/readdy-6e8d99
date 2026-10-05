@@ -12,6 +12,7 @@ import { btn, brl, brlInteiro, CartaoAcao, Faixa, Nota, SecaoTitulo, Vazio } fro
 import { useIfoodDados } from '../lib/useIfoodDados';
 import { nomeLoja, type AbaProps } from '../lib/tipos';
 import LinhaPedido, { LinhaPedidoTabela, situacaoDaArea } from './LinhaPedido';
+import ExplicaLucro from './ExplicaLucro';
 
 // Aba "Hoje" da área iFood (protótipo docs/prototipos/ifood-proposta.html, tela "Hoje"). Abre aqui:
 // uma frase com o dia, a situação de cada loja, "Precisa de você" (cada cartão com o botão que resolve),
@@ -420,8 +421,8 @@ export default function HojeAba({ tenantId, loja, lojas, acesso, dados, irPara, 
           <p className="text-[13.5px] text-zinc-600 mt-1 leading-relaxed">
             {comChega.length > 0 && <>Chegam na loja uns <b>{brlInteiro(chega)}</b>{vendidoComChega > 0 ? ` (${pct((chega / vendidoComChega) * 100)})` : ''}. </>}
             {sobraCompleta
-              ? <>Depois da comida sobram uns <b>{brlInteiro(sobra)}</b>. </>
-              : <>A sobra completa aparece quando todos os itens tiverem ficha. </>}
+              ? <>Depois da comida, lucro bruto de uns <b>{brlInteiro(sobra)}</b> <ExplicaLucro />. </>
+              : <>O lucro bruto aparece quando todos os itens tiverem ficha. </>}
             {andando.length > 0 && <>{andando.length} {plural(andando.length, 'pedido andando', 'pedidos andando')} agora.</>}
           </p>
         )}
@@ -539,7 +540,7 @@ function TabelaHoje({ pedidos, lojas, mostrarLoja, dinheiro, onAbrir }: {
             <th className={th}>Itens</th>
             <th className={th}>Situação</th>
             <th className={`${th} text-right`}>Venda</th>
-            {dinheiro && <th className={`${th} text-right`}>Sobra</th>}
+            {dinheiro && <th className={`${th} text-right`}>Lucro bruto</th>}
           </tr>
         </thead>
         <tbody>

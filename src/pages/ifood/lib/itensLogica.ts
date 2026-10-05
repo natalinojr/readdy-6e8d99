@@ -124,10 +124,10 @@ export function fraseItens(p: {
   if (!p.dinheiro) {
     return { manchete: `${p.itensVendidos.toLocaleString('pt-BR')} itens vendidos`, sub: `${p.semFicha === 0 ? 'Todos têm ficha.' : `${sem[0].toUpperCase()}${sem.slice(1)}.`}` };
   }
-  if (!p.de100) return { manchete: 'Ligue os itens à ficha para ver quanto sobra', sub: `${p.semFicha.toLocaleString('pt-BR')} ${p.semFicha === 1 ? 'item ainda não tem' : 'itens ainda não têm'} ficha.` };
+  if (!p.de100) return { manchete: 'Ligue os itens à ficha para ver o lucro bruto', sub: `${p.semFicha.toLocaleString('pt-BR')} ${p.semFicha === 1 ? 'item ainda não tem' : 'itens ainda não têm'} ficha.` };
   const s = p.de100.sobra;
   return {
-    manchete: s >= 0 ? `De cada R$ 100 em itens, sobram ${R(s)}` : `De cada R$ 100 em itens, você perde ${R(s)}`,
+    manchete: s >= 0 ? `De cada R$ 100 em itens, ficam ${R(s)} de lucro bruto` : `De cada R$ 100 em itens, você perde ${R(s)}`,
     sub: `Depois do iFood (${R(p.de100.ifood)}) e da comida (${R(p.de100.comida)}). ${prej} e ${sem}.${fecho}`,
   };
 }

@@ -9,7 +9,7 @@ import DetalhePedidoIfood from './DetalhePedidoIfood';
 import { rotuloPeriodo } from './PeriodoFolha';
 
 // Aba Pedidos da área iFood (protótipo docs/prototipos/ifood-proposta.html): uma linha por pedido, com o
-// que o cliente pediu, o desconto (loja × iFood), quanto o iFood ficou e quanto sobrou. No computador o
+// que o cliente pediu, o desconto (loja × iFood), quanto o iFood ficou e o lucro bruto. No computador o
 // pedido abre ao lado da lista; no celular abre a folha (a página cuida disso por abrirPedido).
 
 type Filtro = 'todos' | 'andando' | 'prejuizo' | 'descontoLoja' | 'novos' | 'semFicha' | 'cancelados';
@@ -61,7 +61,7 @@ function useTelaGrande(): boolean {
 
 function baixarPlanilha(lista: PedidoArea[], lojas: AbaProps['lojas'], periodo: string, dinheiro: boolean) {
   const cab = ['Nº do iFood', 'Data', 'Hora', 'Loja', 'Cliente', 'Cliente novo?', 'Itens', 'Venda (R$)', 'Desconto da loja (R$)', 'Desconto do iFood (R$)',
-    ...(dinheiro ? ['Comissão e taxas (R$)', 'Chega na loja (R$)', 'Comida (R$)', 'Sobra (R$)', 'Estimado?'] : [])];
+    ...(dinheiro ? ['Comissão e taxas (R$)', 'Chega na loja (R$)', 'Comida (R$)', 'Lucro bruto (R$)', 'Estimado?'] : [])];
   const linhas = lista.map((p) => {
     const d = p.at.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
     const h = p.at.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
@@ -178,7 +178,7 @@ export default function PedidosAba({ tenantId, loja, lojas, periodo, acesso, dad
         <thead>
           <tr className="text-[11px] font-extrabold uppercase tracking-wide text-zinc-400">
             <th className="px-3 py-2">Nº</th><th className="px-3 py-2">Cliente</th><th className="px-3 py-2">Itens</th><th className="px-3 py-2">Situação</th>
-            <th className="px-3 py-2 text-right">Venda</th>{acesso.dinheiro && <th className="px-3 py-2 text-right">Sobra</th>}
+            <th className="px-3 py-2 text-right">Venda</th>{acesso.dinheiro && <th className="px-3 py-2 text-right">Lucro bruto</th>}
           </tr>
         </thead>
         <tbody>
@@ -198,7 +198,7 @@ export default function PedidosAba({ tenantId, loja, lojas, periodo, acesso, dad
             {resumo.n} pedido{resumo.n === 1 ? '' : 's'} {quando(periodo)}{cancelados > 0 ? ` · ${cancelados} cancelado${cancelados === 1 ? '' : 's'}` : ''}
           </h1>
           <p className="text-[13px] text-zinc-500 mt-0.5">
-            Cada pedido com o que o cliente pediu, o desconto (loja × iFood){acesso.dinheiro ? ', quanto o iFood ficou e quanto sobrou' : ''}.
+            Cada pedido com o que o cliente pediu, o desconto (loja × iFood){acesso.dinheiro ? ', quanto o iFood ficou e o lucro bruto' : ''}.
           </p>
         </div>
         {menu}

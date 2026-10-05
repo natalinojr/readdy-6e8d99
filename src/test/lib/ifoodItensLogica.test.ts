@@ -87,7 +87,7 @@ describe('fatorDoPeriodo', () => {
 describe('fraseItens', () => {
   it('frase do protótipo', () => {
     const r = fraseItens({ de100: { ifood: 35, comida: 34, sobra: 31 }, prejuizo: 2, semFicha: 9, itensVendidos: 612, dinheiro: true });
-    expect(r.manchete).toBe('De cada R$ 100 em itens, sobram R$ 31');
+    expect(r.manchete).toBe('De cada R$ 100 em itens, ficam R$ 31 de lucro bruto');
     expect(r.sub).toBe('Depois do iFood (R$ 35) e da comida (R$ 34). 2 itens dão prejuízo e 9 não têm ficha. A conta ainda está incompleta.');
   });
   it('sem ficha nenhuma e sem acesso ao dinheiro', () => {

@@ -40,7 +40,7 @@ export function SeloSobra({ p, mostrarDinheiro }: { p: PedidoArea; mostrarDinhei
   const pct = p.venda > 0.005 ? p.sobra / p.venda : 0;
   const cor = p.sobra < -0.005 ? 'bg-red-50 text-red-600' : pct < 0.15 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700';
   return <span className={`text-[10.5px] font-extrabold rounded-md px-1.5 py-0.5 whitespace-nowrap ${cor}`} title={p.estimado ? 'Estimado: o iFood fecha as taxas no dia seguinte' : undefined}>
-    sobra {p.sobra < 0 ? '−' : ''}{brl(Math.abs(p.sobra))}{p.estimado ? '*' : ''}
+    lucro {p.sobra < 0 ? '−' : ''}{brl(Math.abs(p.sobra))}{p.estimado ? '*' : ''}
   </span>;
 }
 

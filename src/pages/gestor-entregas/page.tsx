@@ -10,6 +10,8 @@ import ProblemaModal from './components/ProblemaModal';
 import LiberarModal from './components/LiberarModal';
 import IfoodEntregaModal from './components/IfoodEntregaModal';
 import IfoodPedidosModal from './components/IfoodPedidosModal';
+import IfoodLojaModal from './components/IfoodLojaModal';
+import { usePermissoes } from '@/hooks/usePermissoes';
 import MapaEntregasGestor, { type PontoGestor } from './components/MapaEntregasGestor';
 
 const FASE_CURTA: Record<ColunaId, string> = {
@@ -18,10 +20,15 @@ const FASE_CURTA: Record<ColunaId, string> = {
 
 export default function GestorEntregasPage() {
   const navigate = useNavigate();
-  const { orders, loading, erro, busy, now, autor, recarregar, setStatus, liberar, fetchDetalhe, addNote, loja, motoboys, montarSaida, tenantId, ifood, ifoodOn, ifoodForaDoQuadro, ifoodPedidos } = useGestorEntregas();
+  const { orders, loading, erro, busy, now, autor, recarregar, setStatus, liberar, fetchDetalhe, addNote, loja, motoboys, montarSaida, tenantId, ifood, ifoodOn, ifoodForaDoQuadro, ifoodPedidos, ifoodLoja } = useGestorEntregas();
   const { user } = useAuth();
   // Configurar o iFood (conexão, iFood Entrega, loja) agora é na área iFood — só quem administra
   const podeConfigurarIfood = user?.perfil === 'admin' || user?.perfil === 'gerente';
+  // "Loja iFood": quem entra na área iFood vai para a aba Loja; quem não entra (caixa, gestor de entregas)
+  // continua com a janela aqui mesmo (dono, 05/10) — ver situação, pausas e avaliações.
+  const { hasPermissao } = usePermissoes();
+  const entraNaAreaIfood = user?.perfil === 'admin' || (['rel_ifood', 'fin_ifood', 'gestao_pedidos', 'gestao_delivery'] as const).some((k) => hasPermissao(k));
+  const [lojaIfoodOpen, setLojaIfoodOpen] = useState(false);
   const [montarOpen, setMontarOpen] = useState(false);
   const [pedidosIfoodOpen, setPedidosIfoodOpen] = useState(false);
   const [ifoodId, setIfoodId] = useState<string | null>(null);
@@ -109,6 +116,12 @@ export default function GestorEntregasPage() {
                 <i className="ri-alert-line text-amber-600 text-sm" />
                 <span className="text-xs font-semibold text-amber-700">{comProblema} c/ problema</span>
               </div>
+            )}
+            {ifoodLoja.merchants.length > 0 && (
+              <button onClick={() => (entraNaAreaIfood ? navigate('/ifood?aba=loja') : setLojaIfoodOpen(true))} title="Loja no iFood: situação, pausas, horários e avaliações"
+                className="inline-flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer">
+                <i className="ri-store-2-fill text-red-600" /> <span className="hidden sm:inline">Loja iFood</span>
+              </button>
             )}
             {ifoodPedidos.on && (
               <button onClick={() => setPedidosIfoodOpen(true)} title="Pedidos do iFood de hoje, com os itens"
@@ -263,6 +276,9 @@ export default function GestorEntregasPage() {
       )}
       {pedidosIfoodOpen && tenantId && (
         <IfoodPedidosModal tenantId={tenantId} operar={ifoodPedidos.operar} funil={ifoodPedidos.funil} onClose={() => setPedidosIfoodOpen(false)} />
+      )}
+      {lojaIfoodOpen && tenantId && (
+        <IfoodLojaModal tenantId={tenantId} merchants={ifoodLoja.merchants} podeEditar={ifoodLoja.podeEditar} onClose={() => setLojaIfoodOpen(false)} />
       )}
 
       {montarOpen && (

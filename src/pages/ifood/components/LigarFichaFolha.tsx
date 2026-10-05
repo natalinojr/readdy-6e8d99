@@ -10,8 +10,8 @@ import { btn, brl, semAcento } from '@/pages/estoque/components/ui/EstoqueUi';
 
 // "Ligar à ficha" (área iFood, 2026-10-05, protótipo ifood-proposta.html › Ligar à ficha). Uma ligação só
 // para custo e estoque: junta o que eram duas telas ("Vincular itens" do Gestor de Entregas e "Compor" do
-// CMV). Item normal → item/combo do cardápio (já tem ficha e preço do balcão). Complemento → também opção.
-// Combo que só existe no iFood → "Montar o custo com insumos" (custo à mão; não baixa estoque).
+// CMV). Item → item ou combo do cardápio principal (já tem ficha e preço do balcão); opção não entra (dono, 05/10).
+// Ficha do iFood montada com itens + insumos (embalagem, sachê, combo só do iFood) → MontarFicha.
 // Nada é sugerido sozinho (regra do dono 09-24): a pessoa escolhe cada par.
 
 export interface ItemFila { nivel: 'item' | 'complemento'; nome: string; grupo: string | null; qtd: number; faturado: number }
@@ -29,7 +29,6 @@ interface Props {
 }
 
 interface Insumo { id: string; name: string; unit: string; unit_price: number | null }
-interface LinhaEdit { ingredient_id: string; quantity: string; unit: string }
 interface InfoAlvo { custo: number | null; preco: number | null }
 
 const KIND: Record<string, string> = { item: 'Cardápio', combo: 'Combo', option: 'Opção' };
@@ -93,7 +92,9 @@ export default function LigarFichaFolha({ tenantId, aberta, fila, indice = 0, tr
     return () => { vivo = false; };
   }, [aberta, alvos, tenantId]);
 
-  const achados = useMemo(() => (alvos && atual ? buscarAlvos(alvos, atual.nivel, busca, 40) : []), [alvos, atual, busca]);
+  // Só o cardápio principal (itens e combos), nunca opção (dono, 05/10).
+  const principais = useMemo(() => (alvos ?? []).filter((a) => a.kind !== 'option'), [alvos]);
+  const achados = useMemo(() => (alvos && atual ? buscarAlvos(principais, atual.nivel, busca, 40) : []), [alvos, principais, atual, busca]);
   // Custo da ficha só dos ~20 primeiros resultados visíveis.
   const chaveVisiveis = achados.slice(0, 20).map(chaveAlvo).join(',');
   useEffect(() => {
@@ -167,7 +168,7 @@ export default function LigarFichaFolha({ tenantId, aberta, fila, indice = 0, tr
               <p className="text-[13px] font-extrabold text-zinc-800">É qual item do seu cardápio?</p>
               <div className="relative">
                 <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
-                <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder={atual.nivel === 'item' ? 'Buscar item ou combo do cardápio' : 'Buscar opção, item ou combo do cardápio'}
+                <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar item ou combo do cardápio"
                   className="w-full h-11 pl-9 pr-3 rounded-xl border border-zinc-200 text-[14px] bg-white focus:outline-none focus:border-amber-400" />
               </div>
               {!alvos ? (
@@ -209,17 +210,17 @@ export default function LigarFichaFolha({ tenantId, aberta, fila, indice = 0, tr
                 <button type="button" disabled={salvando} onClick={() => setModo('montar')}
                   className="w-full text-left px-3 py-2.5 rounded-xl border border-zinc-200 hover:bg-zinc-50 flex items-center gap-2.5 cursor-pointer">
                   <i className="ri-add-line text-lg text-zinc-400" />
-                  <span><b className="block text-[13px] text-zinc-800">Montar o custo com insumos</b><span className="block text-[11.5px] text-zinc-500">Para combo que só existe no iFood.</span></span>
+                  <span><b className="block text-[13px] text-zinc-800">Montar a ficha do iFood (itens + insumos)</b><span className="block text-[11.5px] text-zinc-500">Quando no delivery vai algo a mais: embalagem, sachê, talher, ou combo que só existe no iFood.</span></span>
                 </button>
               </div>
 
               {erro && <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{erro}</p>}
               <p className="text-[11.5px] text-amber-900 bg-amber-50 rounded-xl px-3 py-2 leading-snug">
-                <b>Com a ligação:</b> o custo entra na sobra, o estoque baixa quando o pedido entrar na cozinha do ERPOS e os complementos se ligam do mesmo jeito.
+                <b>Com a ligação:</b> o custo entra no lucro bruto, o estoque baixa quando o pedido entrar na cozinha do ERPOS e os complementos se ligam do mesmo jeito.
               </p>
             </div>
           ) : (
-            <MontarCusto tenantId={tenantId} item={atual} ultimo={ultimo} onVoltar={() => { setModo('escolher'); setErro(null); }}
+            <MontarFicha tenantId={tenantId} item={atual} ultimo={ultimo} itensCardapio={principais} inicial={escolha && escolha !== 'sem_estoque' ? escolha : null} onVoltar={() => { setModo('escolher'); setErro(null); }}
               onSalvou={async () => { await custosIfood(tenantId, true).catch(() => null); onLigou(); avancar(); }} />
           )}
         </div>
@@ -228,13 +229,19 @@ export default function LigarFichaFolha({ tenantId, aberta, fila, indice = 0, tr
   );
 }
 
-// ── Montar o custo com insumos (copiado do EditorComposicao do CMV antigo; grava em fn_ifood_cmv_salvar) ──
+// ── Montar a ficha do iFood: itens do cardápio + insumos (dono, 05/10: no delivery vai embalagem, sachê…) ──
+// Grava em fn_ifood_ficha_salvar (ifood_ficha_linhas). Vale para o custo; a baixa de estoque segue a ligação
+// simples (a função mantém a ligação quando há 1 item com quantidade 1).
 
-function MontarCusto({ tenantId, item, ultimo, onVoltar, onSalvou }: {
-  tenantId: string; item: ItemFila; ultimo: boolean; onVoltar: () => void; onSalvou: () => Promise<void>;
+type LinhaFicha = { kind: 'item'; id: string; nome: string; quantity: string } | { kind: 'insumo'; id: string; nome: string; quantity: string; unit: string };
+
+function MontarFicha({ tenantId, item, ultimo, itensCardapio, inicial, onVoltar, onSalvou }: {
+  tenantId: string; item: ItemFila; ultimo: boolean; itensCardapio: AlvoCardapio[]; inicial: AlvoCardapio | null;
+  onVoltar: () => void; onSalvou: () => Promise<void>;
 }) {
   const [insumos, setInsumos] = useState<Insumo[] | null>(null);
-  const [ls, setLs] = useState<LinhaEdit[]>([]);
+  const [ls, setLs] = useState<LinhaFicha[]>(() => (inicial && inicial.kind === 'item' ? [{ kind: 'item', id: inicial.id, nome: inicial.nome, quantity: '1' }] : []));
+  const [custoItem, setCustoItem] = useState<Map<string, number | null>>(new Map());
   const [busca, setBusca] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -246,42 +253,73 @@ function MontarCusto({ tenantId, item, ultimo, onVoltar, onSalvou }: {
     return () => { vivo = false; };
   }, [tenantId]);
 
+  // Custo da ficha de cada item do cardápio que entrou na lista.
+  const idsItens = ls.filter((l) => l.kind === 'item').map((l) => l.id).join(',');
+  useEffect(() => {
+    const faltam = ls.filter((l) => l.kind === 'item' && !custoItem.has(l.id)).map((l) => l.id);
+    if (!faltam.length) return;
+    let vivo = true;
+    custoFichaItens(tenantId, faltam).then((m) => { if (vivo) setCustoItem((a) => { const novo = new Map(a); for (const [k, v] of m) novo.set(k, v); return novo; }); }).catch(() => null);
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idsItens, tenantId]);
+
   const porId = useMemo(() => new Map((insumos ?? []).map((i) => [i.id, i])), [insumos]);
-  const custoLinha = (l: LinhaEdit) => { const i = porId.get(l.ingredient_id); return i ? custoLinhaFicha(qtdNum(l.quantity), l.unit, i.unit, n(i.unit_price)) : 0; };
-  const custoUnit = ls.reduce((s, l) => s + custoLinha(l), 0);
+  const custoLinha = (l: LinhaFicha): number | null => {
+    const q = qtdNum(l.quantity);
+    if (l.kind === 'item') { const c = custoItem.get(l.id); return c == null ? null : c * q; }
+    const i = porId.get(l.id); return i ? custoLinhaFicha(q, l.unit, i.unit, n(i.unit_price)) : 0;
+  };
+  const custos = ls.map(custoLinha);
+  const semFicha = ls.filter((l, k) => l.kind === 'item' && custoItem.has(l.id) && custos[k] == null);
+  const custoUnit = custos.some((c) => c == null) ? null : custos.reduce<number>((s, c) => s + (c ?? 0), 0);
   const precoMedio = item.qtd > 0 ? item.faturado / item.qtd : 0;
   const q = semAcento(busca);
-  const achados = q.length >= 2 ? (insumos ?? []).filter((i) => semAcento(i.name).includes(q) && !ls.some((l) => l.ingredient_id === i.id)).slice(0, 8) : [];
+  const achadosItens = q.length >= 2 ? itensCardapio.filter((a) => a.kind === 'item' && semAcento(a.nome).includes(q) && !ls.some((l) => l.kind === 'item' && l.id === a.id)).slice(0, 6) : [];
+  const achadosIns = q.length >= 2 ? (insumos ?? []).filter((i) => semAcento(i.name).includes(q) && !ls.some((l) => l.kind === 'insumo' && l.id === i.id)).slice(0, 6) : [];
+  const linhasItem = ls.filter((l) => l.kind === 'item');
+  const umItemSo = linhasItem.length === 1 && qtdNum(linhasItem[0].quantity) === 1;
 
   const salvar = async () => {
-    if (!ls.length) { setErro('Adicione ao menos um insumo.'); return; }
-    if (ls.some((l) => qtdNum(l.quantity) <= 0)) { setErro('Informe a quantidade de todos os insumos (ou remova a linha).'); return; }
+    if (!ls.length) { setErro('Adicione ao menos um item ou insumo.'); return; }
+    if (ls.some((l) => qtdNum(l.quantity) <= 0)) { setErro('Informe a quantidade de todas as linhas (ou tire a linha).'); return; }
     setSalvando(true); setErro(null);
-    // A ligação ao cardápio (se houver) continua: é ela que dá baixa no estoque. O custo à mão vale quando
-    // não há ligação ou quando o item ligado não tem ficha (ifoodCusto.ts).
-    const { error } = await supabase.rpc('fn_ifood_cmv_salvar', {
-      p_tenant: tenantId, p_kind: item.nivel, p_name: item.nome,
-      p_linhas: ls.map((l) => ({ ingredient_id: l.ingredient_id, quantity: qtdNum(l.quantity), unit: l.unit })),
+    const { error } = await supabase.rpc('fn_ifood_ficha_salvar', {
+      p_tenant: tenantId, p_level: item.nivel, p_name: item.nome, p_group: item.grupo,
+      p_linhas: ls.map((l) => (l.kind === 'item'
+        ? { kind: 'item', menu_item_id: l.id, quantity: qtdNum(l.quantity) }
+        : { kind: 'insumo', ingredient_id: l.id, quantity: qtdNum(l.quantity), unit: l.unit })),
     });
     if (error) { setSalvando(false); setErro(error.message); return; }
     await onSalvou();
     setSalvando(false);
   };
+  const mudarQtd = (k: number, v: string) => setLs(ls.map((x, i) => (i === k ? { ...x, quantity: v.replace(/[^\d,.]/g, '') } : x)));
 
   return (
     <div className="mt-3 space-y-3">
-      <p className="text-[13px] font-extrabold text-zinc-800">Do que é feito?</p>
+      <div>
+        <p className="text-[13px] font-extrabold text-zinc-800">Ficha do iFood: do que é feito?</p>
+        <p className="text-[11.5px] text-zinc-500">Itens do cardápio (já têm ficha) + o que muda no delivery: embalagem, sachê, talher…</p>
+      </div>
       <div className="relative">
         <i className="ri-add-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
-        <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Adicionar insumo (digite o nome)"
+        <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Adicionar item do cardápio ou insumo"
           className="w-full h-11 pl-9 pr-3 rounded-xl border border-zinc-200 text-[14px] bg-white focus:outline-none focus:border-amber-400" />
-        {achados.length > 0 && (
-          <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-zinc-200 rounded-xl shadow-lg overflow-hidden">
-            {achados.map((i) => (
-              <button key={i.id} type="button" onClick={() => { setLs([...ls, { ingredient_id: i.id, quantity: '', unit: unidadePadrao(i.unit) }]); setBusca(''); }}
+        {(achadosItens.length > 0 || achadosIns.length > 0) && (
+          <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-zinc-200 rounded-xl shadow-lg overflow-hidden max-h-72 overflow-y-auto">
+            {achadosItens.map((a) => (
+              <button key={`i${a.id}`} type="button" onClick={() => { setLs([...ls, { kind: 'item', id: a.id, nome: a.nome, quantity: '1' }]); setBusca(''); }}
                 className="w-full flex justify-between gap-3 px-3 py-2 text-sm text-left hover:bg-zinc-50 cursor-pointer">
-                <span className="text-zinc-800">{i.name}</span>
-                <span className="text-xs text-zinc-400 tabular-nums whitespace-nowrap">{brl(n(i.unit_price))}/{UNID_LABEL[i.unit] ?? i.unit}</span>
+                <span className="text-zinc-800"><i className="ri-restaurant-line text-zinc-400" /> {a.nome}</span>
+                <span className="text-xs text-zinc-400 whitespace-nowrap">item do cardápio</span>
+              </button>
+            ))}
+            {achadosIns.map((i) => (
+              <button key={`n${i.id}`} type="button" onClick={() => { setLs([...ls, { kind: 'insumo', id: i.id, nome: i.name, quantity: '', unit: unidadePadrao(i.unit) }]); setBusca(''); }}
+                className="w-full flex justify-between gap-3 px-3 py-2 text-sm text-left hover:bg-zinc-50 cursor-pointer">
+                <span className="text-zinc-800"><i className="ri-archive-line text-zinc-400" /> {i.name}</span>
+                <span className="text-xs text-zinc-400 tabular-nums whitespace-nowrap">insumo · {brl(n(i.unit_price))}/{UNID_LABEL[i.unit] ?? i.unit}</span>
               </button>
             ))}
           </div>
@@ -289,22 +327,28 @@ function MontarCusto({ tenantId, item, ultimo, onVoltar, onSalvou }: {
       </div>
 
       <div className="rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
-        {!insumos && <div className="flex justify-center py-5"><div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" /></div>}
-        {insumos && ls.length === 0 && <p className="px-3 py-5 text-center text-xs text-zinc-400">Nenhum insumo ainda. Adicione acima.</p>}
+        {ls.length === 0 && <p className="px-3 py-5 text-center text-xs text-zinc-400">Nada ainda. Adicione acima.</p>}
         {ls.map((l, k) => {
-          const ins = porId.get(l.ingredient_id);
+          const ins = l.kind === 'insumo' ? porId.get(l.id) : undefined;
+          const c = custos[k];
+          const fichaItem = l.kind === 'item' ? custoItem.get(l.id) : undefined;
+          const sub = l.kind === 'item'
+            ? (custoItem.has(l.id) ? (fichaItem == null ? 'item sem ficha no cardápio' : `ficha ${brl(fichaItem)}`) : 'item do cardápio')
+            : ins ? `${brl(n(ins.unit_price))}/${UNID_LABEL[ins.unit] ?? ins.unit}` : 'insumo';
           return (
-            <div key={l.ingredient_id} className="flex flex-wrap items-center gap-2 px-3 py-2">
+            <div key={`${l.kind}${l.id}`} className="flex flex-wrap items-center gap-2 px-3 py-2">
               <div className="flex-1 min-w-[140px]">
-                <p className="text-[13px] text-zinc-800">{ins?.name ?? 'Insumo removido'}</p>
-                {ins && <p className="text-[11px] text-zinc-400 tabular-nums">{brl(n(ins.unit_price))}/{UNID_LABEL[ins.unit] ?? ins.unit}</p>}
+                <p className="text-[13px] text-zinc-800"><i className={l.kind === 'item' ? 'ri-restaurant-line text-zinc-400' : 'ri-archive-line text-zinc-400'} /> {l.nome}</p>
+                <p className="text-[11px] text-zinc-400">{sub}</p>
               </div>
-              <input inputMode="decimal" value={l.quantity} placeholder="Qtd" onChange={(e) => setLs(ls.map((x, i) => (i === k ? { ...x, quantity: e.target.value.replace(/[^\d,.]/g, '') } : x)))}
-                className="w-20 h-9 px-2 border border-zinc-200 rounded-lg text-sm text-right tabular-nums focus:outline-none focus:border-amber-400" />
-              <select value={l.unit} onChange={(e) => setLs(ls.map((x, i) => (i === k ? { ...x, unit: e.target.value } : x)))} className="h-9 px-2 border border-zinc-200 rounded-lg text-sm bg-white">
-                {unidadesDo(ins?.unit ?? l.unit).map((u) => <option key={u} value={u}>{UNID_LABEL[u]}</option>)}
-              </select>
-              <span className="w-16 text-right text-[13px] tabular-nums text-zinc-700">{brl(custoLinha(l))}</span>
+              <input inputMode="decimal" value={l.quantity} placeholder="Qtd" onChange={(e) => mudarQtd(k, e.target.value)}
+                className="w-16 h-9 px-2 border border-zinc-200 rounded-lg text-sm text-right tabular-nums focus:outline-none focus:border-amber-400" />
+              {l.kind === 'insumo' ? (
+                <select value={l.unit} onChange={(e) => setLs(ls.map((x, i) => (i === k && x.kind === 'insumo' ? { ...x, unit: e.target.value } : x)))} className="h-9 px-2 border border-zinc-200 rounded-lg text-sm bg-white">
+                  {unidadesDo(ins?.unit ?? l.unit).map((u) => <option key={u} value={u}>{UNID_LABEL[u]}</option>)}
+                </select>
+              ) : <span className="text-xs text-zinc-500 w-8">un</span>}
+              <span className={`w-16 text-right text-[13px] tabular-nums ${c == null ? 'text-orange-600' : 'text-zinc-700'}`}>{c == null ? '—' : brl(c)}</span>
               <button type="button" aria-label="Tirar" onClick={() => setLs(ls.filter((_, i) => i !== k))} className="w-8 h-8 flex items-center justify-center rounded-lg text-zinc-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"><i className="ri-delete-bin-line" /></button>
             </div>
           );
@@ -312,10 +356,15 @@ function MontarCusto({ tenantId, item, ultimo, onVoltar, onSalvou }: {
       </div>
 
       <div className="grid grid-cols-2 gap-2 rounded-2xl bg-zinc-50 p-3 text-center">
-        <div><p className="text-[11px] text-zinc-500">Comida por unidade</p><p className="font-extrabold tabular-nums">{brl(custoUnit)}</p></div>
+        <div><p className="text-[11px] text-zinc-500">Comida por unidade</p><p className="font-extrabold tabular-nums">{custoUnit == null ? '—' : brl(custoUnit)}</p></div>
         <div><p className="text-[11px] text-zinc-500">Preço médio no iFood</p><p className="font-extrabold tabular-nums">{precoMedio > 0 ? brl(precoMedio) : '—'}</p></div>
       </div>
-      <p className="text-[11.5px] text-zinc-500 leading-snug">Custo montado à mão entra na sobra, mas <b>não baixa estoque</b>: para baixar, ligue ao item do cardápio.</p>
+      {semFicha.length > 0 && <p className="text-[11.5px] text-orange-700 bg-orange-50 rounded-xl px-3 py-2">{semFicha.map((l) => l.nome).join(', ')} não tem ficha técnica no cardápio: o custo fica em aberto até cadastrar a ficha.</p>}
+      <p className="text-[11.5px] text-zinc-500 leading-snug">
+        {umItemSo
+          ? <>O custo de tudo entra no lucro bruto. Estoque: quando o pedido entrar na cozinha do ERPOS, baixa o <b>{linhasItem[0].nome}</b>; os insumos extras, por enquanto, entram só no custo.</>
+          : <>Por enquanto esta ficha entra <b>só no custo</b> (lucro bruto e CMV); a baixa no estoque dela ainda não acontece.</>}
+      </p>
       {erro && <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{erro}</p>}
       <div className="flex gap-2 pt-1">
         <button type="button" className={`${btn('out')} flex-1`} disabled={salvando} onClick={onVoltar}>Voltar</button>

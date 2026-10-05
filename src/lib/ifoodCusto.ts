@@ -15,6 +15,7 @@ const chunk = <T,>(arr: T[], n: number) => Array.from({ length: Math.ceil(arr.le
 const num = (v: unknown) => Number(v ?? 0) || 0;
 
 interface LinkRow { level: 'item' | 'complemento'; name: string; name_key: string; group_key: string; target_kind: string; menu_item_id: string | null; combo_id: string | null; option_id: string | null }
+interface FichaLinha { level: 'item' | 'complemento'; name_key: string; group_key: string; kind: 'item' | 'insumo'; menu_item_id: string | null; ingredient_id: string | null; quantity: number; unit: string | null }
 interface FichaRow { item_id: string; quantity: number; unit: string; unit_price: number; ingredient_unit: string | null }
 
 /** Custo atual da ficha de cada item do cardápio (null = item sem ficha). */
@@ -89,6 +90,52 @@ export async function fetchCustosIfood(tenantId: string): Promise<{ mapa: MapaCu
         alvo = { custo: 0, alvo: 'Não usa estoque', tipo: 'sem_estoque', precoBalcao: null };
       }
       mapa.set(chave, alvo);
+    }
+    // Ficha do iFood montada (itens do cardápio + insumos, ifood_ficha_linhas): manda no custo do produto.
+    const fl = await fetchAllRows<FichaLinha>((f, t) => supabase.from('ifood_ficha_linhas')
+      .select('level, name_key, group_key, kind, menu_item_id, ingredient_id, quantity, unit')
+      .eq('tenant_id', tenantId).order('ordem').order('id').range(f, t));
+    if (fl.error) throw new Error(fl.error.message);
+    if (fl.rows.length) {
+      const idsItem = [...new Set(fl.rows.map((l) => l.menu_item_id).filter((x): x is string => !!x))];
+      const idsIng = [...new Set(fl.rows.map((l) => l.ingredient_id).filter((x): x is string => !!x))];
+      const fichasF = await custoFichaItens(tenantId, idsItem);
+      const precos = new Map<string, { name: string; price: number }>();
+      for (const part of chunk(idsItem, 150)) {
+        const { data } = await supabase.from('menu_items').select('id, name, price').in('id', part);
+        for (const i of (data ?? []) as Array<{ id: string; name: string; price: number | null }>) precos.set(i.id, { name: i.name, price: num(i.price) });
+      }
+      const ings = new Map<string, { unit: string; unit_price: number }>();
+      for (const part of chunk(idsIng, 150)) {
+        const { data } = await supabase.from('ingredients').select('id, unit, unit_price').in('id', part);
+        for (const g of (data ?? []) as Array<{ id: string; unit: string; unit_price: number | null }>) ings.set(g.id, { unit: g.unit, unit_price: num(g.unit_price) });
+      }
+      const porChave = new Map<string, FichaLinha[]>();
+      for (const l of fl.rows) {
+        const k = l.level === 'item' ? `item|${l.name_key}` : `complemento|${l.name_key}|${l.group_key}`;
+        porChave.set(k, [...(porChave.get(k) ?? []), l]);
+      }
+      for (const [k, ls] of porChave) {
+        let custo: number | null = 0;
+        let balcao = 0;
+        const itensNomes: string[] = [];
+        let nIns = 0;
+        for (const l of ls) {
+          const q = num(l.quantity);
+          if (l.kind === 'item' && l.menu_item_id) {
+            const c = fichasF.get(l.menu_item_id);
+            if (c == null) custo = null; else if (custo != null) custo += c * q;
+            balcao += (precos.get(l.menu_item_id)?.price ?? 0) * q;
+            itensNomes.push(`${q !== 1 ? `${q}× ` : ''}${precos.get(l.menu_item_id)?.name ?? 'item'}`);
+          } else if (l.ingredient_id) {
+            const g = ings.get(l.ingredient_id);
+            nIns += 1;
+            if (custo != null) custo += g ? custoLinhaFicha(q, l.unit, g.unit, g.unit_price) : 0;
+          }
+        }
+        const alvo = `Ficha do iFood: ${[...itensNomes, ...(nIns ? [`${nIns} insumo${nIns > 1 ? 's' : ''}`] : [])].join(' + ')}`;
+        mapa.set(k, { custo, alvo, tipo: 'ficha', precoBalcao: itensNomes.length ? balcao : null });
+      }
     }
   } catch (e) {
     return { mapa, erro: e instanceof Error ? e.message : String(e) };

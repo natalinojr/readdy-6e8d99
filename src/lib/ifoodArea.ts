@@ -195,7 +195,7 @@ export interface CustoAlvo {
   custo: number | null;
   /** O que está ligado: "Burrito de Frango", "Combo X", "Não usa estoque", "Custo montado à mão". */
   alvo: string | null;
-  tipo: 'item' | 'combo' | 'option' | 'sem_estoque' | 'composicao' | null;
+  tipo: 'item' | 'combo' | 'option' | 'sem_estoque' | 'composicao' | 'ficha' | null;
   /** Preço no balcão do que está ligado (item/combo do cardápio; adicional da opção). */
   precoBalcao: number | null;
 }

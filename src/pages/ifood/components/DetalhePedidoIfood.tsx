@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import ExplicaLucro from './ExplicaLucro';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -197,6 +198,9 @@ function Negociacao({ d, pode, busy, onResponder }: { d: Record<string, unknown>
 
 // ── Componente ──────────────────────────────────────────────────────────────
 
+/** " (17,7%)" — quanto o valor é das vendas do pedido. */
+const pctVenda = (v: number, venda: number) => (venda > 0.005 ? ` (${((v / venda) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%)` : '');
+
 export default function DetalhePedidoIfood({ p, lojas, acesso, tenantId, modo, onFechar, onMudou }: {
   p: PedidoArea;
   lojas: LojaIfood[];
@@ -380,11 +384,11 @@ export default function DetalhePedidoIfood({ p, lojas, acesso, tenantId, modo, o
             <Linha rotulo="Comissão e taxas do iFood" valor="fecha amanhã" tom="menos" />
           ) : (
             <>
-              <Linha rotulo="Comissão e taxas do iFood" valor={menos(p.comissaoETaxas)} tom="menos" />
+              <Linha rotulo={`Comissão e taxas do iFood${pctVenda(p.comissaoETaxas, p.venda)}${p.estimado ? ' · média da loja' : ''}`} valor={menos(p.comissaoETaxas)} tom="menos" />
               {f && (
                 <>
-                  {f.comissao > 0.005 && <Linha pequena rotulo="Comissão" valor={brl(f.comissao)} />}
-                  {f.transacao > 0.005 && <Linha pequena rotulo="Taxa de pagamento" valor={brl(f.transacao)} />}
+                  {f.comissao > 0.005 && <Linha pequena rotulo={`Comissão${pctVenda(f.comissao, p.venda)}`} valor={brl(f.comissao)} />}
+                  {f.transacao > 0.005 && <Linha pequena rotulo={`Taxa de pagamento${pctVenda(f.transacao, p.venda)}`} valor={brl(f.transacao)} />}
                   {f.entregaSobDemanda > 0.005 && <Linha pequena rotulo="Entrega do iFood" valor={brl(f.entregaSobDemanda)} />}
                   {f.outrosServicos > 0.005 && <Linha pequena rotulo="Outros serviços" valor={brl(f.outrosServicos)} />}
                   {Math.abs(f.ajustes) > 0.005 && <Linha pequena rotulo={f.ajustes > 0 ? 'Ressarcimento / ajuste (a favor)' : 'Ajuste'} valor={`${f.ajustes > 0 ? '+ ' : '− '}${brl(Math.abs(f.ajustes))}`} />}
@@ -405,13 +409,13 @@ export default function DetalhePedidoIfood({ p, lojas, acesso, tenantId, modo, o
           <div className={`mt-3 rounded-2xl border px-4 py-3 flex items-center gap-3 ${p.sobra < -0.005 ? 'bg-red-50 border-red-200' : 'bg-emerald-50 border-emerald-200'}`}>
             <div className={`text-xl font-extrabold tabular-nums ${p.sobra < -0.005 ? 'text-red-600' : 'text-emerald-700'}`}>{p.sobra < 0 ? '−' : ''}{brl(Math.abs(p.sobra))}</div>
             <div className="text-[12.5px] leading-snug">
-              <b className={p.sobra < -0.005 ? 'text-red-700' : 'text-emerald-800'}>{p.sobra < -0.005 ? 'de prejuízo' : 'sobrou'}{pctSobra != null ? ` (${pctSobra}%)` : ''}{p.estimado ? ' · estimado' : ''}</b>
-              {p.sobraBalcao != null && <span className="block text-zinc-600">No balcão os mesmos itens deixam {brl(p.sobraBalcao)}.</span>}
+              <b className={p.sobra < -0.005 ? 'text-red-700' : 'text-emerald-800'}>{p.sobra < -0.005 ? 'de prejuízo' : 'de lucro bruto'}{pctSobra != null ? ` (${pctSobra}%)` : ''}{p.estimado ? ' · estimado' : ''}</b> <ExplicaLucro />
+              {p.sobraBalcao != null && <span className="block text-zinc-600">No balcão os mesmos itens dão {brl(p.sobraBalcao)} de lucro bruto.</span>}
             </div>
           </div>
         ) : (
           <div className="mt-3 rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-[12.5px] text-zinc-600">
-            <b className="text-zinc-800">Sobra em aberto.</b>{' '}
+            <b className="text-zinc-800">Lucro bruto em aberto.</b>{' '}
             {p.semFicha.length ? `Falta ficha em: ${p.semFicha.join(', ')}.` : p.chega == null ? 'O iFood ainda não fechou as taxas deste pedido.' : 'Sem os itens não dá para somar a comida.'}
           </div>
         )

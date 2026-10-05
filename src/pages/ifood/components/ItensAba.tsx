@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import ExplicaLucro from './ExplicaLucro';
 import { useSearchParams } from 'react-router-dom';
 import { fetchCardapioIfood, type MenuLinha } from '@/lib/ifoodDashboard';
 import { itensDoCardapio, itensDosPedidos, resumoItens, type ItemArea } from '@/lib/ifoodArea';
@@ -160,7 +161,7 @@ export default function ItensAba({ tenantId, loja, lojas, periodo, acesso, dados
     { id: 'vendidos', rotulo: 'Mais vendidos' },
     { id: 'prejuizo', rotulo: 'Dão prejuízo', n: resumo.prejuizo.length, tom: resumo.prejuizo.length ? 'red' : undefined },
     { id: 'semficha', rotulo: 'Sem ficha', n: semFicha.length, tom: semFicha.length ? 'amber' : undefined },
-    { id: 'pior', rotulo: 'Pior sobra' },
+    { id: 'pior', rotulo: 'Menor lucro' },
     { id: 'complementos', rotulo: 'Complementos' },
   ];
   const opcoesChip = todosChips.filter((o) => verDinheiro || (o.id !== 'prejuizo' && o.id !== 'pior'));
@@ -170,7 +171,7 @@ export default function ItensAba({ tenantId, loja, lojas, periodo, acesso, dados
     { valor: `${resumo.cobertura.toFixed(0)}%`, rotulo: 'das vendas com ficha', tom: resumo.cobertura >= 90 ? 'green' as const : 'amber' as const },
     ...(verDinheiro ? [
       { valor: resumo.de100 ? `${resumo.de100.comida.toFixed(0)}%` : '—', rotulo: 'comida (CMV)' },
-      { valor: resumo.de100 ? `${resumo.de100.sobra.toFixed(0)}%` : '—', rotulo: 'sobra média', tom: resumo.de100 ? (resumo.de100.sobra < 0 ? 'red' as const : 'green' as const) : undefined },
+      { valor: resumo.de100 ? `${resumo.de100.sobra.toFixed(0)}%` : '—', rotulo: 'lucro bruto médio', tom: resumo.de100 ? (resumo.de100.sobra < 0 ? 'red' as const : 'green' as const) : undefined },
     ] : []),
   ];
 
@@ -190,7 +191,7 @@ export default function ItensAba({ tenantId, loja, lojas, periodo, acesso, dados
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-xl md:text-2xl font-extrabold text-zinc-900 leading-tight">{frase.manchete}</h2>
+        <h2 className="text-xl md:text-2xl font-extrabold text-zinc-900 leading-tight">{frase.manchete}{verDinheiro && <> <ExplicaLucro item /></>}</h2>
         <p className="text-[13px] text-zinc-500 mt-1">{frase.sub}</p>
       </div>
 
@@ -206,7 +207,7 @@ export default function ItensAba({ tenantId, loja, lojas, periodo, acesso, dados
           </>}>
           {acesso.ligar
             ? 'Ligue cada item do iFood ao item do seu cardápio (ele já tem ficha). Combo que só existe no iFood: monte o custo com os insumos.'
-            : 'Peça a um gerente para ligar cada item do iFood ao item do cardápio: sem a ficha, a sobra fica em aberto.'}
+            : 'Peça a um gerente para ligar cada item do iFood ao item do cardápio: sem a ficha, o lucro bruto fica em aberto.'}
         </CartaoAcao>
       )}
 
@@ -214,7 +215,7 @@ export default function ItensAba({ tenantId, loja, lojas, periodo, acesso, dados
 
       {lista.length === 0 ? (
         <Vazio icone="ri-restaurant-line" titulo={chip === 'prejuizo' ? 'Nenhum item dá prejuízo' : chip === 'semficha' ? 'Todos os itens têm ficha' : 'Nada para mostrar aqui'}>
-          {chip === 'prejuizo' ? 'Nos itens com ficha, todos sobram alguma coisa depois do iFood e da comida.' : undefined}
+          {chip === 'prejuizo' ? 'Nos itens com ficha, todos dão lucro bruto depois do iFood e da comida.' : undefined}
         </Vazio>
       ) : (
         <>
@@ -266,7 +267,7 @@ export default function ItensAba({ tenantId, loja, lojas, periodo, acesso, dados
                   <th className="text-right font-bold px-3 py-2.5">Faturado</th>
                   <th className="text-right font-bold px-3 py-2.5">Preço médio</th>
                   <th className="text-right font-bold px-3 py-2.5">Comida/un</th>
-                  {verDinheiro && <th className="text-right font-bold px-3 py-2.5">Sobra/un</th>}
+                  {verDinheiro && <th className="text-right font-bold px-3 py-2.5">Lucro bruto/un</th>}
                   <th className="text-left font-bold px-3 py-2.5">{verDinheiro ? 'Margem' : 'Ficha'}</th>
                   <th className="text-left font-bold px-3 py-2.5 w-32">Participação</th>
                 </tr>
@@ -318,7 +319,7 @@ export default function ItensAba({ tenantId, loja, lojas, periodo, acesso, dados
         <b>De onde vêm os números:</b>{' '}
         {fonte === 'cardapio' && periodoCardapio
           ? `itens do relatório de Cardápio importado do Portal do Parceiro (${ddmm(periodoCardapio.de)} a ${ddmm(periodoCardapio.ate)}). Ele não traz a taxa de cada pedido, então a sobra usa a média do período (*).`
-          : 'cada pedido do iFood traz os itens na hora, e a sobra usa o que chegou de cada pedido depois das taxas (estimado pela média da loja até o iFood fechar, no dia seguinte).'}
+          : 'cada pedido do iFood traz os itens na hora, e o lucro bruto usa o que chegou de cada pedido depois das taxas (estimado pela média da loja até o iFood fechar, no dia seguinte).'}
         {' '}A comida vem da ficha atual do item no estoque. Conta gerencial: não entra na DRE.
       </Nota>
 
@@ -371,7 +372,7 @@ function SeletorFonte({ fonte, onChange, periodoCardapio, primeiroDia }: {
 }
 
 function ContaDoItem({ i, dinheiro, bloqueado }: { i: ItemArea; dinheiro: boolean; bloqueado: boolean }) {
-  const Linha = ({ rot, valor, sub, tom }: { rot: string; valor: string; sub?: string; tom?: 'red' | 'green' }) => (
+  const Linha = ({ rot, valor, sub, tom }: { rot: import('react').ReactNode; valor: string; sub?: string; tom?: 'red' | 'green' }) => (
     <div className="flex items-start justify-between gap-3 py-2.5 border-t border-zinc-100 first:border-t-0">
       <div className="min-w-0"><p className="text-[13.5px] text-zinc-700">{rot}</p>{sub && <p className="text-[11.5px] text-zinc-400 mt-0.5">{sub}</p>}</div>
       <b className={`text-[14px] font-extrabold tabular-nums whitespace-nowrap ${tom === 'red' ? 'text-red-600' : tom === 'green' ? 'text-emerald-700' : 'text-zinc-900'}`}>{valor}</b>
@@ -395,17 +396,17 @@ function ContaDoItem({ i, dinheiro, bloqueado }: { i: ItemArea; dinheiro: boolea
             : descricaoLigacao(i)} />
         {dinheiro && !complemento && (
           <>
-            <Linha rot="Sobra por unidade" valor={i.sobraUnit == null ? '—' : brlSinal(i.sobraUnit)} tom={i.sobraUnit == null ? undefined : i.sobraUnit < 0 ? 'red' : 'green'} />
+            <Linha rot={<>Lucro bruto por unidade <ExplicaLucro item /></>} valor={i.sobraUnit == null ? '—' : brlSinal(i.sobraUnit)} tom={i.sobraUnit == null ? undefined : i.sobraUnit < 0 ? 'red' : 'green'} />
             <Linha rot="Margem" valor={i.margem == null ? '—' : pct(i.margem)} tom={i.margem == null ? undefined : i.margem < 0 ? 'red' : 'green'} />
           </>
         )}
       </div>
-      {complemento && <p className="text-[11.5px] text-zinc-400 mt-2">O valor do complemento já está dentro do preço do item; a conta de sobra é feita no item.</p>}
+      {complemento && <p className="text-[11.5px] text-zinc-400 mt-2">O valor do complemento já está dentro do preço do item; a conta do lucro bruto é feita no item.</p>}
       {dinheiro && !complemento && (i.precoEmpata != null || i.precoMesmoBalcao != null) && (
         <div className="mt-3 rounded-2xl bg-amber-50 px-3.5 py-3 space-y-1.5">
-          {i.precoEmpata != null && <p className="text-[13px] text-zinc-800">Preço que empata (sobra zero): <b>{brl(i.precoEmpata)}</b></p>}
+          {i.precoEmpata != null && <p className="text-[13px] text-zinc-800">Preço que empata (lucro bruto zero): <b>{brl(i.precoEmpata)}</b></p>}
           {i.precoMesmoBalcao != null && (
-            <p className="text-[13px] text-zinc-800">Para sobrar o mesmo que no balcão: <b>{brl(i.precoMesmoBalcao)}</b>{i.precoBalcao != null ? <span className="text-zinc-500"> (balcão {brl(i.precoBalcao)})</span> : null}</p>
+            <p className="text-[13px] text-zinc-800">Para dar o mesmo lucro bruto do balcão: <b>{brl(i.precoMesmoBalcao)}</b>{i.precoBalcao != null ? <span className="text-zinc-500"> (balcão {brl(i.precoBalcao)})</span> : null}</p>
           )}
           <p className="text-[11.5px] text-zinc-500 leading-snug">É só uma sugestão: o preço do iFood muda no Portal do Parceiro, o ERPOS não altera.</p>
         </div>
