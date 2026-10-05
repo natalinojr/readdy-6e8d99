@@ -238,6 +238,16 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
                           </div>
                         )}
                       </div>
+                      <div className="pt-2 flex flex-wrap items-center gap-2">
+                        <button disabled={!!busy} className="px-3 py-1.5 rounded-lg border border-zinc-200 text-xs font-semibold text-zinc-700 hover:bg-zinc-50 disabled:opacity-50"
+                          onClick={async () => {
+                            const r = await run('backfill', 'order_backfill', {});
+                            if (r) setOk(`${Number(r.importados ?? 0)} pedido(s) antigo(s) trazidos com itens${Number(r.sem_detalhe ?? 0) ? ` · ${Number(r.sem_detalhe)} sem detalhe no iFood` : ''}.`);
+                          }}>
+                          {busy === 'backfill' ? 'Buscando… (pode levar 1 min)' : 'Buscar itens dos pedidos dos últimos 15 dias'}
+                        </button>
+                        <p className="text-[11px] text-zinc-500 w-full">Para pedidos de antes de ligar: o iFood guarda os itens por cerca de 15 dias. Só lê — não mexe em cozinha nem estoque.</p>
+                      </div>
                     </div>
                   )}
                 </section>

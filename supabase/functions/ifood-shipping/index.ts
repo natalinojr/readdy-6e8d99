@@ -15,6 +15,7 @@
 //   set_options    { homologation_mode?, shipping_enabled?, default_prep_min?, shipping_merchant_id?, order_*?, order_emit_nfce?, order_nfce_momento? }
 //   request_user_code / confirm_authorization { authorization_code } / delete_config   admin/gerente
 //   refresh_merchants                                renova o acesso e relê as lojas de cada autorização   admin/gerente
+//   order_backfill { dias? }                        pedidos de antes de ligar (Vendas → GET /orders/{id}, ~15 dias)   admin/gerente
 //   prepare        { order_id }                     formulário pré-preenchido (endereço, telefone, itens, pagamento)
 //   quote          { order_id, lat, lng }           GET shipping/v1.0/merchants/{m}/deliveryAvailabilities
 //   create         { order_id, quote_id, customer, address, payment, prep_min }
@@ -1222,6 +1223,58 @@ Deno.serve(async (req) => {
       const { data: o } = await admin.from('ifood_orders').select('*').eq('id', String(body.order_row_id ?? '')).eq('tenant_id', tenantId).maybeSingle();
       return o;
     };
+    // Pedidos de ANTES de ligar os pedidos: a API de Vendas (fin_ifood_sales) tem a lista; o GET /orders/{id} ainda
+    // devolve itens/cliente por ~15 dias (testado 05/10: 19/09 vinha, 18/09 já 404). Grava só ifood_orders/itens
+    // (situação = a da Venda), sem funil/estoque/cozinha. Pedido que já está em ifood_orders não é tocado.
+    if (action === 'order_backfill') {
+      if (!isManager) return errResp('Só admin ou supervisor importa pedidos antigos do iFood.', 403);
+      if (!cfg?.client_id) return errResp('App do iFood não configurado.');
+      const dias = Math.max(1, Math.min(30, Math.round(Number(body.dias) || 16)));
+      const desde = new Date(Date.now() - dias * 86400_000).toISOString();
+      const auths = await listAuths();
+      const lojas = [...new Set(auths.flatMap((a: any) => (a.merchants ?? []).map((m: any) => String(m.id))))];
+      if (!lojas.length) return errResp('Nenhuma loja do iFood autorizada no app ERPOS PDV.');
+      const { data: vendas, error: vErr } = await admin.from('fin_ifood_sales')
+        .select('merchant_id, sale_id, current_status, sales_channel, sale_created_at')
+        .eq('tenant_id', tenantId).in('merchant_id', lojas).gte('sale_created_at', desde).order('sale_created_at', { ascending: false }).limit(1000);
+      if (vErr) return errResp('Ler vendas: ' + vErr.message, 500);
+      const ids = (vendas ?? []).map((v: any) => String(v.sale_id));
+      const ja = new Set<string>();
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data } = await admin.from('ifood_orders').select('ifood_order_id').in('ifood_order_id', ids.slice(i, i + 200));
+        for (const r of data ?? []) ja.add(r.ifood_order_id);
+      }
+      const fila = (vendas ?? []).filter((v: any) => !ja.has(String(v.sale_id))).slice(0, 150);
+      const ctxs = new Map<string, Ctx | null>();
+      let importados = 0, semDetalhe = 0;
+      const erros: string[] = [];
+      const um = async (v: any) => {
+        if (!ctxs.has(v.merchant_id)) ctxs.set(v.merchant_id, await ctxFor(admin, cfg, v.merchant_id));
+        const c = ctxs.get(v.merchant_id);
+        if (!c) { semDetalhe++; return; }
+        const r = await call(admin, c, 'GET', `/order/v1.0/orders/${v.sale_id}`);
+        if (!r.ok || !r.data) { semDetalhe++; if (r.status !== 404 && erros.length < 3) erros.push(apiError(r, 'Detalhe')); return; }
+        const now = new Date().toISOString();
+        const status = String(v.current_status ?? '').toUpperCase() === 'CANCELLED' ? 'cancelled' : 'concluded';
+        const { data: row, error } = await admin.from('ifood_orders').upsert({
+          tenant_id: tenantId, merchant_id: v.merchant_id, ifood_order_id: String(v.sale_id), status,
+          ...orderRowFromDetails(r.data), sales_channel: r.data?.salesChannel ?? v.sales_channel ?? null,
+          details_at: now, updated_at: now,
+        }, { onConflict: 'ifood_order_id', ignoreDuplicates: true }).select('id').maybeSingle();
+        if (error) { if (erros.length < 3) erros.push('Gravar: ' + error.message); return; }
+        if (!row) return; // entrou pelo polling enquanto importava
+        const itens = orderItemsFromDetails(r.data).map((i: any) => ({ ...i, tenant_id: tenantId, order_row_id: row.id }));
+        if (itens.length) {
+          const { error: iErr } = await admin.from('ifood_order_items').insert(itens);
+          if (iErr && erros.length < 3) erros.push('Itens: ' + iErr.message);
+        }
+        importados++;
+      };
+      for (let i = 0; i < fila.length; i += 5) await Promise.all(fila.slice(i, i + 5).map(um));
+      log('INFO', 'order', 'backfill', { tenantId, dias, vendas: vendas?.length ?? 0, importados, semDetalhe });
+      return json({ success: true, importados, sem_detalhe: semDetalhe, ja_tinha: ja.size, restantes: Math.max(0, (vendas ?? []).length - ja.size - fila.length), erros });
+    }
+
     if (action === 'order_refresh') {
       const o = await getIfoodOrder();
       if (!o) return errResp('Pedido não encontrado.');
