@@ -1,4 +1,4 @@
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { diasEntre, type LojaComparada, type PeriodoLojas } from '@/lib/lojasComparar';
 import { horaDoDia } from '@/lib/diaLoja';
 import { brl, PontoLoja } from './ui';
@@ -9,7 +9,9 @@ interface Props {
   periodo: PeriodoLojas;
 }
 
-const compacto = (v: number) => (v >= 1000 ? `${(v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mil` : String(Math.round(v)));
+// Eixo no mesmo jeito do Dashboard e dos Relatórios: R$1,4k
+const compacto = (v: number) => (v >= 1000 ? `R$${(v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}k` : `R$${Math.round(v)}`);
+const idGrad = (id: string) => `grad-loja-${id.replace(/[^a-zA-Z0-9]/g, '')}`;
 const nomeCurto = (n: string) => n.split(' ').slice(0, 3).join(' ');
 
 type Ponto = Record<string, number | string | null>;
@@ -65,6 +67,11 @@ export default function GraficoLojas({ lojas, cores, periodo }: Props) {
   const umDia = periodo === 'hoje' || periodo === 'ontem';
   const { pontos, agora } = umDia ? dadosHoras(lojas, periodo) : { pontos: dadosDias(lojas), agora: null };
   const nomes = new Map(lojas.map((l) => [l.tenantId, l.nome]));
+  // Loja sem venda nenhuma (nem agora nem antes) não desenha a linha zerada no chão: fica só na legenda.
+  const vendeu = (l: LojaComparada) => pontos.some((p) => Number(p[l.tenantId] ?? 0) > 0 || Number(p[`${l.tenantId}_ant`] ?? 0) > 0);
+  const desenhadas = lojas.filter(vendeu);
+  // Sombra embaixo da linha (como Vendas por Hora): mais fraca quando há muitas lojas, para não virar borrão.
+  const sombra = desenhadas.length <= 2 ? 0.18 : desenhadas.length <= 4 ? 0.1 : 0;
 
   return (
     <div className="bg-white border border-zinc-200 rounded-2xl p-4 min-w-0">
@@ -75,12 +82,16 @@ export default function GraficoLojas({ lojas, cores, periodo }: Props) {
           : 'Venda de cada dia (linha cheia) × o dia equivalente do período anterior (tracejada)'}
       </p>
       <div className="flex flex-wrap gap-x-3 gap-y-1 mb-2 text-[11px] font-semibold text-zinc-600">
-        {lojas.map((l) => (
-          <span key={l.tenantId} className="inline-flex items-center gap-1.5 min-w-0">
-            <span className="inline-block w-4 h-0.5 rounded" style={{ background: cores[l.tenantId] }} />
-            <span className="truncate max-w-[160px]">{l.nome}</span>
-          </span>
-        ))}
+        {lojas.map((l) => {
+          const semVenda = pontos.length > 0 && !desenhadas.includes(l);
+          return (
+            <span key={l.tenantId} className={`inline-flex items-center gap-1.5 min-w-0 ${semVenda ? 'text-zinc-400' : ''}`}>
+              <span className="inline-block w-2.5 h-2.5 rounded-full" style={{ background: cores[l.tenantId], opacity: semVenda ? 0.35 : 1 }} />
+              <span className="truncate max-w-[160px]">{l.nome}</span>
+              {semVenda && <span className="font-normal">· sem venda</span>}
+            </span>
+          );
+        })}
         <span className="inline-flex items-center gap-1.5 text-zinc-400">
           <span className="inline-block w-4 border-t-2 border-dashed border-zinc-300" /> anterior
         </span>
@@ -88,31 +99,39 @@ export default function GraficoLojas({ lojas, cores, periodo }: Props) {
       {pontos.length === 0 ? (
         <div className="h-[220px] flex items-center justify-center text-xs text-zinc-400">Sem vendas no período</div>
       ) : (
-        <div className="h-[230px] -ml-2">
+        <div className="h-[240px] -ml-2">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={pontos} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
-              <CartesianGrid stroke="#f4f4f5" vertical={false} />
-              <XAxis dataKey="rotulo" tick={{ fontSize: 10.5, fill: '#a1a1aa' }} tickLine={false} axisLine={{ stroke: '#e4e4e7' }} interval="preserveStartEnd" minTickGap={14} />
-              <YAxis tick={{ fontSize: 10.5, fill: '#a1a1aa' }} tickLine={false} axisLine={false} width={48} tickFormatter={compacto} />
+            <ComposedChart data={pontos} margin={{ top: 18, right: 14, bottom: 0, left: 0 }}>
+              <defs>
+                {desenhadas.map((l) => (
+                  <linearGradient key={l.tenantId} id={idGrad(l.tenantId)} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={cores[l.tenantId]} stopOpacity={sombra} />
+                    <stop offset="95%" stopColor={cores[l.tenantId]} stopOpacity={0} />
+                  </linearGradient>
+                ))}
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f4f4f5" vertical={false} />
+              <XAxis dataKey="rotulo" tick={{ fontSize: 11, fill: '#71717a' }} tickLine={false} axisLine={false} interval="preserveStartEnd" minTickGap={14} />
+              <YAxis tick={{ fontSize: 10, fill: '#a1a1aa' }} tickLine={false} axisLine={false} width={52} tickFormatter={compacto} />
               {agora !== null && pontos.some((p) => p.x === agora) && (
                 <ReferenceLine x={`${agora % 24}h`} stroke="#d4d4d8" strokeDasharray="2 3" label={{ value: 'agora', position: 'top', fontSize: 10, fill: '#a1a1aa' }} />
               )}
               <Tooltip
-                cursor={{ stroke: '#a1a1aa', strokeWidth: 1 }}
+                cursor={{ stroke: '#d4d4d8', strokeWidth: 1, strokeDasharray: '3 3' }}
                 content={({ active, payload, label }) => {
                   if (!active || !payload?.length) return null;
                   const p = payload[0].payload as Ponto;
                   return (
-                    <div className="bg-zinc-900 text-white rounded-xl px-3 py-2 text-[11.5px] shadow-lg min-w-[170px]">
-                      <p className="font-bold mb-1">{umDia ? `até ${label}` : label}</p>
-                      {lojas.map((l) => (
-                        <div key={l.tenantId} className="flex items-center justify-between gap-3">
-                          <span className="inline-flex items-center gap-1.5 min-w-0">
+                    <div className="bg-white border border-zinc-200 rounded-xl px-3 py-2 text-[11.5px] shadow-lg min-w-[180px]">
+                      <p className="font-bold text-zinc-900 mb-1">{umDia ? `até ${label}` : label}</p>
+                      {desenhadas.map((l) => (
+                        <div key={l.tenantId} className="flex items-center justify-between gap-3 py-px">
+                          <span className="inline-flex items-center gap-1.5 min-w-0 text-zinc-600">
                             <PontoLoja cor={cores[l.tenantId]} className="!w-2 !h-2" />
                             <span className="truncate max-w-[120px]">{nomeCurto(nomes.get(l.tenantId) ?? '')}</span>
                           </span>
                           <span className="tabular-nums">
-                            <b>{p[l.tenantId] == null ? '—' : brl(Number(p[l.tenantId]), false)}</b>
+                            <b className="text-zinc-900">{p[l.tenantId] == null ? '—' : brl(Number(p[l.tenantId]), false)}</b>
                             <span className="text-zinc-400"> / {p[`${l.tenantId}_ant`] == null ? '—' : brl(Number(p[`${l.tenantId}_ant`]), false)}</span>
                           </span>
                         </div>
@@ -122,16 +141,18 @@ export default function GraficoLojas({ lojas, cores, periodo }: Props) {
                   );
                 }}
               />
-              {lojas.map((l) => (
-                <Line key={`${l.tenantId}_ant`} dataKey={`${l.tenantId}_ant`} stroke={cores[l.tenantId]} strokeOpacity={0.45}
-                  strokeWidth={1.5} strokeDasharray="4 4" dot={false} isAnimationActive={false} />
+              {desenhadas.map((l) => (
+                <Line key={`${l.tenantId}_ant`} type="monotone" dataKey={`${l.tenantId}_ant`} stroke={cores[l.tenantId]} strokeOpacity={0.4}
+                  strokeWidth={1.5} strokeDasharray="5 4" dot={false} activeDot={false} isAnimationActive={false} />
               ))}
-              {lojas.map((l) => (
-                <Line key={l.tenantId} dataKey={l.tenantId} stroke={cores[l.tenantId]} strokeWidth={2.2}
-                  dot={!umDia ? { r: 3, strokeWidth: 0, fill: cores[l.tenantId] } : false} activeDot={{ r: 4 }}
+              {desenhadas.map((l) => (
+                <Area key={l.tenantId} type="monotone" dataKey={l.tenantId} stroke={cores[l.tenantId]} strokeWidth={2.5}
+                  fill={`url(#${idGrad(l.tenantId)})`}
+                  dot={!umDia ? { r: 3, strokeWidth: 0, fill: cores[l.tenantId] } : false}
+                  activeDot={{ r: 4.5, fill: cores[l.tenantId], stroke: '#fff', strokeWidth: 2 }}
                   connectNulls={false} isAnimationActive={false} />
               ))}
-            </LineChart>
+            </ComposedChart>
           </ResponsiveContainer>
         </div>
       )}

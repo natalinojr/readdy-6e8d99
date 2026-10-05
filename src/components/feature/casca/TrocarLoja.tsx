@@ -17,8 +17,6 @@ import { supabase } from '@/lib/supabase';
 import { useAuth, DB_TO_FRONTEND_ROLE } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { useLojasComparar } from '@/hooks/useLojasComparar';
-import { rotuloComparacao, totalLojas } from '@/lib/lojasComparar';
-import { brl, Variacao } from '@/pages/lojas/components/ui';
 import { usePendenciasHoje } from '@/pages/hoje/hojeStore';
 import { podeSair } from '@/lib/guardaSaida';
 import { getLojaAtiva } from '@/lib/lojaAtiva';
@@ -139,9 +137,6 @@ export function useSuasLojas(onFicar: () => void, aoSair: () => void = () => {})
 
   const pronto = lojas !== null && (cansou || ((!carregandoComparar || !!erroComparar) && itens !== null));
   const veComparar = comparadas.length >= 2;
-  // As lojas juntas hoje (as mesmas do "Suas lojas agora": sem as escondidas e as paradas).
-  const juntas = useMemo(() => comparadas.filter((l) => !l.oculta && !l.parada), [comparadas]);
-  const total = useMemo(() => totalLojas(juntas), [juntas]);
   const primeiroOutro = visiveis.find((c) => !c.aqui)?.tenantId ?? null;
 
   const entrar = useCallback(async (c: CartaoLoja) => {
@@ -172,37 +167,11 @@ export function useSuasLojas(onFicar: () => void, aoSair: () => void = () => {})
 
   return {
     pronto, erroLojas, visiveis, escondidas, mostrarEscondidas, setMostrarEscondidas,
-    veComparar, juntas, total, primeiroOutro, ocupado, entrar, irComparar,
+    veComparar, primeiroOutro, ocupado, entrar, irComparar,
   };
 }
 
 export type SuasLojas = ReturnType<typeof useSuasLojas>;
-
-/** "Suas N lojas juntas hoje": o total do dia (as mesmas lojas do Comparar, sem as escondidas e as paradas). */
-export function TotalLojasCartao({ s }: { s: SuasLojas }) {
-  const { juntas, total } = s;
-  if (!s.veComparar || juntas.length === 0) return null;
-  return (
-    <button type="button" onClick={() => { void s.irComparar(); }} disabled={!!s.ocupado}
-      className="w-full text-left rounded-[18px] bg-[#1F1A14] text-white p-4 mb-3 active:scale-[.99] transition-transform">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] font-extrabold uppercase tracking-[.1em] text-white/60">
-          {juntas.length === 1 ? 'Sua loja hoje' : `Suas ${juntas.length} lojas juntas hoje`}
-        </span>
-        <span className="text-[12px] font-bold text-amber-300 whitespace-nowrap">Comparar <i className="ri-arrow-right-s-line" /></span>
-      </div>
-      <div className="flex items-end gap-2 flex-wrap mt-1.5">
-        <span className="text-[30px] leading-none font-black tracking-tight tabular-nums">{brl(total.faturamento)}</span>
-        <Variacao pct={total.variacao} escuro titulo={total.variacao === null ? 'Uma das lojas não tem base de comparação' : undefined} />
-      </div>
-      <div className="text-[12px] text-white/60 mt-1.5 tabular-nums">
-        {total.pedidos} {total.pedidos === 1 ? 'pedido' : 'pedidos'}
-        {total.pedidos > 0 && <> · tíquete {brl(total.ticket)}</>}
-        {juntas[0] && <> · {rotuloComparacao('hoje', juntas[0])}</>}
-      </div>
-    </button>
-  );
-}
 
 /** Os cartões das lojas + as escondidas recolhidas. */
 export function ListaLojas({ s, onFicar, rotuloAqui }: { s: SuasLojas; onFicar: () => void; rotuloAqui?: string }) {
