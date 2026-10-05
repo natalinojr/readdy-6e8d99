@@ -54,7 +54,7 @@ export default function DescontosAba({ podePromocoes, podeVouchers, secaoInicial
     const alvo = secaoInicial === 'vouchers' ? vouchersRef.current : promocoesRef.current;
     if (!alvo) return; // sem permissão para essa seção: nada a rolar
     rolouPara.current = secaoInicial;
-    alvo.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    alvo.scrollIntoView({ block: 'start' }); // instantâneo: a rolagem suave parava no meio quando a lista acabava de carregar
   }, [secaoInicial, podePromocoes, cardapioLoading]);
 
   if (!podePromocoes && !podeVouchers) return null;

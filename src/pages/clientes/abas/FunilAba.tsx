@@ -681,7 +681,7 @@ export default function FunilAba(props: Props) {
               <button
                 key={key}
                 onClick={function () { setAba(key); }}
-                className={'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors ' +
+                className={'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-colors whitespace-nowrap ' +
                   (aba === key ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700')}
               >
                 <i className={icon} /> {label}
