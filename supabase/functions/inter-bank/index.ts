@@ -888,7 +888,8 @@ async function executePayment(admin: Admin, tenantId: string, id: string) {
     let valorOriginal: number | null = null;
     if (!r.ok && p.kind === 'boleto') {
       const txt = String(r.data?.detail ?? r.data?.message ?? r.raw ?? '');
-      const m = txt.match(/m[aá]ximo aceito:?\s*R\$\s*([\d.,]+)/i);
+      // termina num dígito: o Inter escreve "R$ 3823.54." e o ponto final virava NaN (2ª recusa, 05/10)
+      const m = txt.match(/m[aá]ximo aceito:?\s*R\$\s*([\d.,]*\d)/i);
       const max = m ? Number(/,\d{1,2}$/.test(m[1]) ? m[1].replace(/\./g, '').replace(',', '.') : m[1].replace(/,/g, '')) : NaN;
       const aprovado = Number(p.amount);
       if (Number.isFinite(max) && max > 0 && max < aprovado - 0.005 && max >= aprovado * 0.5) {
