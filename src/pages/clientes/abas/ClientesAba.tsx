@@ -227,7 +227,7 @@ interface Props {
 }
 
 export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
-  const { clientes, loading, error, recarregar, atualizarCliente, registrarContato } = useClientes();
+  const { clientes, loading, error, recarregar, atualizarCliente, juntarClientes, registrarContato } = useClientes();
   const { user } = useAuth();
   const { hasPermissao } = usePermissoes();
   // Emitir voucher/gift card e mexer no voucher de aniversário é da aba Vouchers: quem só
@@ -606,7 +606,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
                           </div>
                           <div className="min-w-0">
                             <p className="text-sm font-semibold text-zinc-800">{cliente.nome}</p>
-                            <p className="text-xs text-zinc-400">{cliente.celular || '—'}</p>
+                            <p className="text-xs text-zinc-400">{cliente.celular || (cliente.cpf ? 'Só CPF da nota · sem celular' : '—')}</p>
                             {cliente.itensFavoritos.length > 0 && (
                               <p className="text-[10px] text-zinc-400 truncate max-w-[200px]" title={cliente.itensFavoritos.join(', ')}>
                                 <i className="ri-heart-3-line text-rose-300" /> {cliente.itensFavoritos[0]}
@@ -741,7 +741,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
                         ))}
                       </div>
                       <p className="text-xs text-zinc-400 truncate">
-                        {cliente.celular || '—'} · {cliente.totalVisitas} compra{cliente.totalVisitas === 1 ? '' : 's'}
+                        {cliente.celular || (cliente.cpf ? 'Só CPF' : '—')} · {cliente.totalVisitas} compra{cliente.totalVisitas === 1 ? '' : 's'}
                         {cliente.dataNascimento && <> · 🎂 {fmtAniversario(cliente.dataNascimento)}</>}
                       </p>
                       {cliente.notes && (
@@ -823,6 +823,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
           onClose={() => setEditarCliente(null)}
           onSave={(patch) => atualizarCliente(editarCliente.id, patch)}
           onOptOutDesfeito={() => recarregar(true)}
+          onJuntar={juntarClientes}
         />
       )}
 

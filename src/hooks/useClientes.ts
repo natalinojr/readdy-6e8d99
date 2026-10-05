@@ -143,9 +143,23 @@ export function useClientes() {
     const { data, error: invErr } = await invokeWithAuth('customer-write', {
       body: { action: 'update_customer', active_tenant_id: user.tenantId, customer_id: customerId, ...patch },
     });
-    if (invErr) throw new Error(typeof invErr === 'string' ? invErr : JSON.stringify(invErr));
-    const resp = data as { error?: string };
+    if (invErr) throw new Error(invErr.message || 'Erro ao salvar');
+    const resp = data as { error?: string; code?: string; campo?: 'phone' | 'cpf'; outro?: { id: string; nome: string } };
+    if (resp?.code === 'duplicado' && resp.outro && resp.campo) throw new ErroClienteDuplicado(resp.error ?? 'Cadastro repetido', resp.campo, resp.outro);
     if (resp?.error) throw new Error(mensagemDeErroCliente(resp.error));
+    await carregar(true);
+  }, [user?.tenantId, carregar]);
+
+  // Junta dois cadastros da mesma pessoa (ex.: o "só CPF" da nota com o do celular): tudo do
+  // `removerId` passa para o `manterId` (customer-write › merge_customers) e a lista recarrega.
+  const juntarClientes = useCallback(async (manterId: string, removerId: string) => {
+    if (!user?.tenantId) throw new Error('Sem loja ativa');
+    const { data, error: invErr } = await invokeWithAuth('customer-write', {
+      body: { action: 'merge_customers', active_tenant_id: user.tenantId, manter_id: manterId, remover_id: removerId },
+    });
+    if (invErr) throw new Error(invErr.message || 'Não consegui juntar os cadastros.');
+    const resp = data as { error?: string } | null;
+    if (resp?.error) throw new Error(resp.error);
     await carregar(true);
   }, [user?.tenantId, carregar]);
 
@@ -161,7 +175,18 @@ export function useClientes() {
     }
   }, [user?.tenantId]);
 
-  return { clientes, loading, error, recarregar: carregar, atualizarCliente, registrarContato };
+  return { clientes, loading, error, recarregar: carregar, atualizarCliente, juntarClientes, registrarContato };
+}
+
+/** O celular/CPF digitado já é de outro cliente: a tela oferece juntar os dois cadastros. */
+export class ErroClienteDuplicado extends Error {
+  campo: 'phone' | 'cpf';
+  outro: { id: string; nome: string };
+  constructor(mensagem: string, campo: 'phone' | 'cpf', outro: { id: string; nome: string }) {
+    super(mensagem);
+    this.campo = campo;
+    this.outro = outro;
+  }
 }
 
 /** Erro do customer-write em português (o 23505 do banco = celular/CPF já usado por outro cliente). */

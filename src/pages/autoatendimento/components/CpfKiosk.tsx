@@ -2,9 +2,14 @@
 // balcão (fiscal_settings.enabled + emit_on_counter): o CPF digitado aqui vai no
 // pedido (orders.customer_cpf) e a nota automática sai identificada.
 // Aceita CPF (11) e CNPJ (14) — nota de empresa é o mesmo campo.
-import { useState } from 'react';
+// Convite do clube: confirmado um CPF válido (não CNPJ), e se a página passar `convite`
+// (clube ligado, pessoa ainda fora do clube), pergunta ao servidor se o CPF já é membro (máx. ~3s):
+// não é → ConviteClubeKiosk antes de seguir; é membro, deu erro ou demorou → segue direto.
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { isValidCpfCnpj, mascaraCpfCnpj, tipoDoc } from '@/lib/cpfCnpj';
+import { cpfElegivelAoConvite, type ResultadoConsultaClube } from '@/lib/conviteClubeKiosk';
+import ConviteClubeKiosk, { type ConviteClube } from './ConviteClubeKiosk';
 
 interface Props {
   total: number;
@@ -12,33 +17,68 @@ interface Props {
   onVoltar: () => void;
   /** CPF que o cliente já digitou no clube de fidelidade (vem preenchido; ele pode apagar). */
   cpfInicial?: string;
+  /** Convite do clube (ausente = não convida: clube desligado, pessoa já no clube, treino etc.). */
+  convite?: ConviteClube;
 }
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
-export default function CpfKiosk({ total, onContinuar, onVoltar, cpfInicial }: Props) {
+export default function CpfKiosk({ total, onContinuar, onVoltar, cpfInicial, convite }: Props) {
   const { t } = useTranslation();
   const [digitos, setDigitos] = useState(cpfInicial ?? '');
   const [erro, setErro] = useState('');
+  // Consulta ao clube em andamento (botão "Verificando…") e convite aberto. O convite guarda uma
+  // cópia dos dados da página: ao entrar no clube a página deixa de oferecer `convite`, mas a tela
+  // do convite precisa continuar de pé até mostrar a confirmação.
+  const [verificando, setVerificando] = useState(false);
+  const [conviteAberto, setConviteAberto] = useState<ConviteClube | null>(null);
+  // Numera a consulta: qualquer toque (tecla, Voltar, Sem CPF) ou sair da tela invalida a resposta que ainda vem.
+  const consulta = useRef(0);
+  useEffect(() => () => { consulta.current += 1; }, []);
+  const cancelarConsulta = () => { consulta.current += 1; setVerificando(false); };
 
   const ehCnpj = tipoDoc(digitos) === 'CNPJ' || digitos.length > 11;
   const completo = digitos.length === 11 || digitos.length === 14;
   const valido = completo && isValidCpfCnpj(digitos);
 
   const teclar = (d: string) => {
+    cancelarConsulta();
     setErro('');
     if (d === '⌫') { setDigitos((v) => v.slice(0, -1)); return; }
     setDigitos((v) => (v + d).slice(0, 14));
   };
 
-  const confirmar = () => {
+  const confirmar = async () => {
+    if (verificando) return;
     if (!valido) {
       setErro(digitos.length < 11 ? t('cliente.cpfFaltamDigitos') : t('cliente.cpfInvalido'));
       return;
     }
+    if (convite && cpfElegivelAoConvite(digitos) && !convite.jaTratado(digitos)) {
+      const cpf = digitos;
+      const minha = ++consulta.current;
+      setVerificando(true);
+      let r: ResultadoConsultaClube;
+      try { r = await convite.consultar(cpf); } catch { r = 'erro'; }
+      if (minha !== consulta.current) return; // a pessoa mexeu ou saiu da tela: ignora a resposta
+      setVerificando(false);
+      convite.onTratado(cpf);
+      if (r === 'nao_membro') { setConviteAberto(convite); return; }
+    }
     onContinuar(digitos);
   };
+
+  if (conviteAberto) {
+    return (
+      <ConviteClubeKiosk
+        cpf={digitos}
+        programa={conviteAberto.programa}
+        cadastrar={conviteAberto.cadastrar}
+        onSeguir={() => onContinuar(digitos)}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col items-center justify-center h-full p-4 text-center overflow-hidden portrait:overflow-y-auto portrait:py-6">
@@ -96,24 +136,24 @@ export default function CpfKiosk({ total, onContinuar, onVoltar, cpfInicial }: P
           </div>
 
           <div className="flex gap-2 w-full">
-            <button onClick={onVoltar}
+            <button onClick={() => { cancelarConsulta(); onVoltar(); }}
               className="px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-bold text-base rounded-xl cursor-pointer whitespace-nowrap transition-colors">
               <i className="ri-arrow-left-line mr-1" />
               {t('cliente.voltar')}
             </button>
             <button
-              onClick={confirmar}
-              disabled={!completo}
+              onClick={() => { void confirmar(); }}
+              disabled={!completo || verificando}
               className="flex-1 py-3 bg-amber-500 hover:bg-amber-400 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-950 text-xl font-black rounded-xl cursor-pointer active:scale-95 transition-all whitespace-nowrap"
             >
               <i className="ri-checkbox-circle-line mr-1" />
-              {t('cliente.confirmar')}
+              {verificando ? t('cliente.clubeVerificando') : t('cliente.confirmar')}
             </button>
           </div>
 
           {/* Sem CPF é o caminho normal: fica sempre à mão, sem precisar apagar o que digitou */}
           <button
-            onClick={() => onContinuar(null)}
+            onClick={() => { cancelarConsulta(); onContinuar(null); }}
             className="w-full py-3 bg-zinc-800/60 hover:bg-zinc-700 text-zinc-300 font-bold text-base rounded-xl cursor-pointer active:scale-95 transition-all whitespace-nowrap"
           >
             {t('cliente.semCpf')}

@@ -27,7 +27,8 @@ export interface CadastroClube { cpf: string; nome: string; celular: string; nas
 
 export interface ClubeApi {
   buscar: (cpf: string) => Promise<{ encontrado: boolean; resumo?: ClubeResumo; erro?: string }>;
-  cadastrar: (d: CadastroClube) => Promise<{ resumo?: ClubeResumo; erro?: string }>;
+  /** `aindaVale` (opcional): a resposta só entra no estado se ainda valer quando chegar (convite do CPF na nota). */
+  cadastrar: (d: CadastroClube, aindaVale?: () => boolean) => Promise<{ resumo?: ClubeResumo; erro?: string }>;
   usar: (alvo: { recompensa_id?: string; beneficio_id?: string }, celularFinal: string) => Promise<{ ok: boolean; erro?: string; aviso?: string }>;
   girar: () => Promise<{ indice?: number; premio?: { nome: string; tipo: string }; resumo?: ClubeResumo; erro?: string }>;
   /** Link de uso único para abrir a página do clube no celular do cliente (QR). */
