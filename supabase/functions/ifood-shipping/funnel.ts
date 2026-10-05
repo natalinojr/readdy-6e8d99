@@ -12,6 +12,8 @@
 //   fica fora das somas de venda (orders.ifood_repasse). Cobrado pela loja (motoboy, balcão, mesa) = venda da loja, não
 //   pago até o caixa receber; total = o que o cliente paga (já com o desconto que o iFood banca).
 
+import { valorVendaIfood } from '../_shared/ifood-valores.ts';
+
 export interface IfoodLink {
   level: 'item' | 'complemento'; name_key: string; group_key: string; ifood_id: string | null; external_code: string | null;
   target_kind: 'item' | 'combo' | 'option' | 'sem_estoque'; menu_item_id: string | null; combo_id: string | null; option_id: string | null;
@@ -119,12 +121,8 @@ export function montarPedidoErpos(o: any, itens: any[], links: IfoodLink[], menu
     items.push(principal, ...extras);
   }
 
-  const t = o.total ?? {};
-  const subtotal = r2(num(t.subTotal));
-  const taxa = entrega && loja ? r2(num(t.deliveryFee)) : 0;
-  // Desconto que a LOJA paga (cupom da loja); o que o iFood banca não é desconto da loja.
-  const descLoja = r2((Array.isArray(o.benefits) ? o.benefits : []).reduce((s: number, b: any) =>
-    s + (Array.isArray(b.sponsorshipValues) ? b.sponsorshipValues : []).filter((x: any) => x.name === 'MERCHANT').reduce((a: number, x: any) => a + num(x.value), 0), 0));
+  // Venda = itens + entrega da loja − desconto bancado pela loja (regra única com a NFC-e: _shared/ifood-valores.ts).
+  const { subtotal, taxaLoja: taxa, descLoja } = valorVendaIfood(o);
   const metodos: any[] = Array.isArray(o.payments?.methods) ? o.payments.methods : [];
   const offline = metodos.filter((m) => m.type === 'OFFLINE');
   // Só o entregador do iFood cobra por conta do iFood; retirada/mesa/motoboy da loja = a loja recebe.

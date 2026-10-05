@@ -12,8 +12,9 @@
 //   save_config    { client_id, client_secret? }    admin/gerente — só app PRÓPRIO (teste); sem isso a loja usa
 //                                                   o app ERPOS PDV do sistema (secrets IFOOD_PDV_CLIENT_ID/SECRET)
 //   use_system_app                                  volta a loja para o app do sistema
-//   set_options    { homologation_mode?, shipping_enabled?, default_prep_min?, shipping_merchant_id? }
+//   set_options    { homologation_mode?, shipping_enabled?, default_prep_min?, shipping_merchant_id?, order_*?, order_emit_nfce? }
 //   request_user_code / confirm_authorization { authorization_code } / delete_config   admin/gerente
+//   refresh_merchants                                renova o acesso e relê as lojas de cada autorização   admin/gerente
 //   prepare        { order_id }                     formulário pré-preenchido (endereço, telefone, itens, pagamento)
 //   quote          { order_id, lat, lng }           GET shipping/v1.0/merchants/{m}/deliveryAvailabilities
 //   create         { order_id, quote_id, customer, address, payment, prep_min }
@@ -78,6 +79,24 @@ async function listarLojas(access: string, homolog: boolean) {
     if (lote.length < size) break;
   }
   return { ok: true, status: 200, data: null, raw: '', merchants };
+}
+
+/**
+ * Lojas que a autorização libera, sem o módulo Merchant: o polling de eventos (módulo Order) responde 403 com
+ * `unauthorizedMerchants` para loja não autorizada. 05/10: app erpos-pdv em produção só com Order/Events liberados
+ * (Merchant/Review/Shipping esperando o chamado) → /merchants vinha [] e /merchants/{id} 403. Candidatas = lojas do
+ * iFood desta loja do ERPOS no financeiro. Polling sem ack não consome evento (o iFood entrega de novo).
+ */
+async function lojasPorEventos(access: string, homolog: boolean, candidatas: { id: string; name: string }[]) {
+  let ids = [...new Set(candidatas.map((c) => c.id))];
+  for (let i = 0; i < 3 && ids.length; i++) {
+    const r = await ifoodFetch('/events/v1.0/events:polling', { headers: { Authorization: `Bearer ${access}`, Accept: 'application/json', 'x-polling-merchants': ids.join(',') } }, homolog);
+    if (r.ok) return candidatas.filter((c) => ids.includes(c.id));
+    const negadas: string[] = r.status === 403 ? (r.data?.error?.unauthorizedMerchants ?? r.data?.unauthorizedMerchants ?? []).map(String) : [];
+    if (!negadas.length) return [];
+    ids = ids.filter((id) => !negadas.includes(id));
+  }
+  return [];
 }
 
 async function ifoodFetch(path: string, init: RequestInit, homolog: boolean, maxAttempts = 4) {
@@ -501,6 +520,64 @@ async function aceiteAutomatico(admin: Admin, c: Ctx, row: any) {
   }
 }
 
+// ── NFC-e dos pedidos do iFood (IFOOD-PEDIDOS-FUNIL.md, etapa 5) ──
+// Só com a chave da loja order_emit_nfce (+ fiscal da loja ligado; a fiscal-write confere e calcula o valor da venda).
+// Pago no app / cobrado pelo entregador do iFood (orders.ifood_repasse): a nota sai quando o pedido fica pronto, sai
+// para entrega ou conclui — o que vier primeiro. Cobrado pela loja: sai quando o caixa recebe (order-write).
+// A chamada à fiscal-write não segura o polling (até 70 s do provedor; trava de 90 s da loja): roda em segundo plano.
+function emSegundoPlano(p: Promise<unknown>) {
+  // deno-lint-ignore no-explicit-any
+  const rt = (globalThis as any).EdgeRuntime;
+  if (rt && typeof rt.waitUntil === 'function') rt.waitUntil(p); else p.catch(() => {});
+}
+
+async function chamarFiscal(body: Record<string, unknown>) {
+  const anon = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
+  const r = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/fiscal-write?forceFunctionRegion=sa-east-1`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${anon}`, apikey: anon, 'x-internal-key': Deno.env.get('FISCAL_INTERNAL_KEY') ?? '' },
+    body: JSON.stringify(body),
+  });
+  return { http: r.status, data: await r.json().catch(() => ({})) as any };
+}
+
+async function notaFiscalIfood(admin: Admin, cfg: any, row: any) {
+  if (cfg.order_emit_nfce !== true || !row.order_id || row.is_test === true || !['ready', 'dispatched', 'concluded'].includes(row.status)) return;
+  const { data: o } = await admin.from('orders').select('id, is_paid, is_draft, ifood_repasse, status, is_training').eq('id', row.order_id).maybeSingle();
+  if (!o || !o.is_paid || !o.ifood_repasse || o.is_draft || o.status === 'cancelled' || o.is_training) return;
+  // Uma tentativa automática só: qualquer documento já criado (autorizado, em andamento, rejeitado, erro, cancelado à
+  // mão) fica com a tela Notas Fiscais. Erro de tempo esgotado pode ter sido autorizado na SEFAZ — reenviar sozinho
+  // geraria uma 2ª nota.
+  const { data: docs } = await admin.from('fiscal_documents').select('id').eq('tenant_id', row.tenant_id).contains('order_ids', [o.id]).limit(1);
+  if ((docs ?? []).length) return;
+  emSegundoPlano(chamarFiscal({ action: 'emit', tenant_id: row.tenant_id, source_type: 'order', source_id: o.id, trigger: 'ifood_funnel' })
+    .then((r) => log('INFO', 'fiscal', 'NFC-e do iFood', { ifood: row.ifood_order_id, order: o.id, http: r.http, status: r.data?.status, msg: String(r.data?.message ?? '').slice(0, 200) }))
+    .catch((e) => log('WARN', 'fiscal', 'NFC-e do iFood falhou', { ifood: row.ifood_order_id, error: String(e) })));
+}
+
+/** iFood cancelou depois da nota: cancela a NFC-e autorizada; se a SEFAZ recusar (prazo) ou a nota ainda estiver
+ *  em emissão, fica o aviso no pedido (ifood_orders.funnel_error). */
+async function cancelarNotaIfood(admin: Admin, row: any) {
+  const { data: docs } = await admin.from('fiscal_documents').select('id, numero, status').eq('tenant_id', row.tenant_id)
+    .contains('order_ids', [row.order_id]).in('status', ['authorized', 'processing', 'pending']);
+  for (const d of (docs ?? []) as any[]) {
+    const nota = `NFC-e${d.numero ? ` nº ${d.numero}` : ''}`;
+    if (d.status !== 'authorized') {
+      await funnelErro(admin, row.id, `Pedido cancelado no iFood com a ${nota} ainda em emissão. Confira em Configurações › Fiscal › Notas e cancele se ela for autorizada.`);
+      continue;
+    }
+    emSegundoPlano((async () => {
+      let erro: string | null = null;
+      try {
+        const r = await chamarFiscal({ action: 'cancel', tenant_id: row.tenant_id, document_id: d.id, justificativa: 'Pedido cancelado pelo iFood depois da emissao da nota' });
+        if (!r.data?.success) erro = String(r.data?.error ?? `HTTP ${r.http}`);
+      } catch (e) { erro = String((e as Error)?.message ?? e); }
+      log(erro ? 'WARN' : 'INFO', 'fiscal', 'cancelar NFC-e do iFood', { ifood: row.ifood_order_id, doc: d.id, erro });
+      if (erro) await funnelErro(admin, row.id, `Pedido cancelado no iFood, mas a ${nota} não foi cancelada (${erro.slice(0, 160)}). Veja em Configurações › Fiscal › Notas.`);
+    })());
+  }
+}
+
 /** Depois de cada evento do pedido: cria no ERPOS, repassa cancelamento ou conclusão. */
 async function funnelAfterEvent(admin: Admin, c: Ctx, rowId: string) {
   const { data: row } = await admin.from('ifood_orders').select('*').eq('id', rowId).maybeSingle();
@@ -509,6 +586,7 @@ async function funnelAfterEvent(admin: Admin, c: Ctx, rowId: string) {
     if (row.order_id) {
       const { error } = await admin.rpc('fn_ifood_cancel_erpos_order', { p_order_id: row.order_id, p_reason: `iFood: ${row.cancel_reason ?? 'cancelado'}` });
       if (error) throw new Error('Cancelar pedido no ERPOS: ' + error.message);
+      await cancelarNotaIfood(admin, row);
     }
     return;
   }
@@ -525,9 +603,11 @@ async function funnelAfterEvent(admin: Admin, c: Ctx, rowId: string) {
       await admin.from('order_items').update({ status: 'delivered', delivered_at: new Date().toISOString() }).eq('order_id', o.id).in('status', ['new', 'preparing', 'ready']);
       await admin.from('orders').update({ status: 'delivered', is_draft: false, updated_at: new Date().toISOString() }).eq('id', o.id);
     }
+    await notaFiscalIfood(admin, c.cfg, row);
     return;
   }
   if (!row.order_id && funnelOn(c.cfg)) await criarPedidoFunil(admin, c, row);
+  else if (row.order_id) await notaFiscalIfood(admin, c.cfg, row);
 }
 
 /** A cada polling da loja no funil: pedidos que não entraram (ex.: caixa fechado), confirmações pendentes e avisos. */
@@ -731,6 +811,7 @@ function safeConfig(cfg: any, auths: any[]) {
     order_enabled: cfg.order_enabled === true,
     order_mode: cfg.order_mode === 'operate' || cfg.order_mode === 'funnel' ? cfg.order_mode : 'read_only',
     order_auto_confirm: cfg.order_auto_confirm !== false,
+    order_emit_nfce: cfg.order_emit_nfce === true,
     order_merchant_ids: cfg.order_merchant_ids ?? [],
   };
 }
@@ -798,10 +879,49 @@ Deno.serve(async (req) => {
     const cfg = withSystemApp(cfgRow);
     const listAuths = async () => (await admin.from('ifood_pdv_auths').select('id, merchants, authorized_at').eq('tenant_id', tenantId).order('authorized_at', { ascending: false })).data ?? [];
 
+    // A autorização traz TODAS as lojas do login do Portal do Parceiro. Loja do iFood que já é de outra loja do ERPOS
+    // (no financeiro — fin_ifood_merchants — ou ligada lá em pedidos/entregas) não pode ser ligada aqui: os dois
+    // tenants disputariam os mesmos eventos (ack) e o pedido seria contado em dobro.
+    const lojasDeOutra = async (ids: string[]): Promise<Map<string, string>> => {
+      const out = new Map<string, string>();
+      const alvo = [...new Set(ids.filter(Boolean))];
+      if (!alvo.length) return out;
+      const [{ data: fin }, { data: pdv }] = await Promise.all([
+        admin.from('fin_ifood_merchants').select('tenant_id, merchant_id').in('merchant_id', alvo).neq('tenant_id', tenantId),
+        admin.from('ifood_pdv_config').select('tenant_id, shipping_merchant_id, order_enabled, order_merchant_ids').neq('tenant_id', tenantId),
+      ]);
+      const deTenant = new Map<string, string>();
+      for (const f of fin ?? []) deTenant.set(String(f.merchant_id), f.tenant_id);
+      for (const p of pdv ?? []) for (const id of alvo) {
+        if (p.shipping_merchant_id === id || (p.order_enabled && (p.order_merchant_ids ?? []).includes(id))) deTenant.set(id, p.tenant_id);
+      }
+      if (!deTenant.size) return out;
+      const { data: ts } = await admin.from('tenants').select('id, name').in('id', [...new Set(deTenant.values())]);
+      const nome = new Map((ts ?? []).map((t: any) => [t.id, t.name as string]));
+      for (const [id, t] of deTenant) out.set(id, nome.get(t) ?? 'outra loja');
+      return out;
+    };
+
+    // Lojas da autorização: /merchants (módulo Merchant) e, se vier vazio ou negado, as lojas do iFood desta loja do
+    // ERPOS no financeiro conferidas pelo polling de eventos (módulo Order).
+    const lojasDaAutorizacao = async (access: string, homolog: boolean) => {
+      const m = await listarLojas(access, homolog);
+      if (m.ok && m.merchants.length) return m;
+      const { data: fin } = await admin.from('fin_ifood_merchants').select('merchant_id, name').eq('tenant_id', tenantId);
+      const cand = (fin ?? []).map((f: any) => ({ id: String(f.merchant_id), name: String(f.name ?? f.merchant_id) }));
+      const merchants = cand.length ? await lojasPorEventos(access, homolog, cand) : [];
+      return merchants.length ? { ok: true, status: 200, data: null, raw: '', merchants } : m;
+    };
+
     if (action === 'get_config') {
       // Loja sem config ainda: com o app do sistema, a tela já mostra "Gerar código".
       const shown = cfg ?? withSystemApp({ tenant_id: tenantId });
-      return json({ success: true, config: safeConfig(shown, cfg ? await listAuths() : []), can_edit: isManager, system_app_available: hasSystemApp() });
+      const config = safeConfig(shown, cfg ? await listAuths() : []);
+      if (config?.merchants.length) {
+        const outra = await lojasDeOutra(config.merchants.map((m) => m.id));
+        config.merchants = config.merchants.map((m) => ({ ...m, outra_loja: outra.get(m.id) ?? null }));
+      }
+      return json({ success: true, config, can_edit: isManager, system_app_available: hasSystemApp() });
     }
 
     // ── Entregas (qualquer pessoa da loja: quem despacha é o caixa/expedição) ──
@@ -1342,6 +1462,8 @@ Deno.serve(async (req) => {
         const id = String(body.shipping_merchant_id ?? '').trim();
         const m = (await listAuths()).flatMap((a: any) => a.merchants ?? []).find((x: any) => x.id === id);
         if (id && !m) return errResp('Essa loja do iFood ainda não autorizou o app ERPOS PDV.');
+        const dona = id ? (await lojasDeOutra([id])).get(id) : undefined;
+        if (dona) return errResp(`A loja do iFood "${m?.name ?? id}" é da loja "${dona}" no ERPOS — escolha uma loja do iFood desta loja.`);
         if (id !== (cfg.shipping_merchant_id ?? '') && await temAtivas()) return errResp(MSG_ATIVAS);
         upd.shipping_merchant_id = id || null; upd.shipping_merchant_name = m?.name ?? null;
       }
@@ -1352,9 +1474,18 @@ Deno.serve(async (req) => {
         if (body.order_mode === 'funnel' && cfg.order_mode !== 'funnel') upd.funnel_since = new Date().toISOString();
       }
       if (typeof body.order_auto_confirm === 'boolean') upd.order_auto_confirm = body.order_auto_confirm;
-      if (Array.isArray(body.order_merchant_ids)) {
-        const ok = new Set((await listAuths()).flatMap((a: any) => (a.merchants ?? []).map((m: any) => m.id)));
-        const ids = body.order_merchant_ids.map(String).filter((id: string) => ok.has(id));
+      if (typeof body.order_emit_nfce === 'boolean') upd.order_emit_nfce = body.order_emit_nfce;
+      let aviso: string | null = null;
+      const pedidosLigados = (upd.order_enabled ?? cfg.order_enabled) === true;
+      if (Array.isArray(body.order_merchant_ids) || (pedidosLigados && typeof body.order_enabled === 'boolean')) {
+        const ok = new Map<string, string>((await listAuths()).flatMap((a: any) => (a.merchants ?? []).map((m: any) => [m.id, m.name])));
+        const pedidos: string[] = Array.isArray(body.order_merchant_ids) ? body.order_merchant_ids.map(String) : (cfg.order_merchant_ids ?? []);
+        let ids = pedidos.filter((id) => ok.has(id));
+        const outra = await lojasDeOutra(ids);
+        if (outra.size) {
+          aviso = 'Não ligado aqui (é de outra loja do ERPOS): ' + [...outra].map(([id, dona]) => `${ok.get(id)} → ${dona}`).join('; ') + '.';
+          ids = ids.filter((id) => !outra.has(id));
+        }
         upd.order_merchant_ids = ids;
       }
       if (typeof body.shipping_enabled === 'boolean') {
@@ -1364,7 +1495,7 @@ Deno.serve(async (req) => {
       }
       const { error } = await admin.from('ifood_pdv_config').update(upd).eq('id', cfg.id);
       if (error) return errResp('Salvar: ' + error.message, 500);
-      return json({ success: true });
+      return json({ success: true, aviso });
     }
 
     // App centralizado: token por client_credentials e a lista das lojas que o app enxerga (sem código).
@@ -1435,7 +1566,7 @@ Deno.serve(async (req) => {
       }, cfg.homologation_mode === true);
       if (!r.ok || !r.data?.accessToken) return errResp(apiError(r, 'Autorizar'));
       const access = r.data.accessToken as string;
-      const { merchants } = await listarLojas(access, cfg.homologation_mode === true);
+      const { merchants } = await lojasDaAutorizacao(access, cfg.homologation_mode === true);
       const now = new Date().toISOString();
       const { error: aErr } = await admin.from('ifood_pdv_auths').insert({
         tenant_id: tenantId, access_token: access, refresh_token: r.data.refreshToken ?? null,
@@ -1445,9 +1576,29 @@ Deno.serve(async (req) => {
       if (aErr) return errResp('Gravar autorização: ' + aErr.message, 500);
       const upd: Record<string, unknown> = { user_code: null, auth_verifier_secret: null, updated_at: now };
       // Uma loja só na autorização e nenhuma escolhida ainda → já fica escolhida.
-      if (!cfg.shipping_merchant_id && merchants.length === 1) Object.assign(upd, { shipping_merchant_id: merchants[0].id, shipping_merchant_name: merchants[0].name });
+      if (!cfg.shipping_merchant_id && merchants.length === 1 && !(await lojasDeOutra([merchants[0].id])).size) Object.assign(upd, { shipping_merchant_id: merchants[0].id, shipping_merchant_name: merchants[0].name });
       await admin.from('ifood_pdv_config').update(upd).eq('id', cfg.id);
-      return json({ success: true, merchants });
+      const aviso = merchants.length ? null
+        : 'O iFood aceitou o código, mas a loja ainda não apareceu — pode levar alguns minutos. Espere um pouco e clique em "Atualizar lojas". Se continuar sem loja, confira no Portal do Parceiro (Integrações) se o ERPOS PDV ficou Ativo na loja certa.';
+      return json({ success: true, merchants, aviso });
+    }
+
+    // Renova o acesso de cada autorização e relê as lojas que ela enxerga (loja liberada depois, ou autorização que
+    // voltou sem nenhuma loja — 05/10 Paranaguá: Apps do portal mostrava o ERPOS PDV nas 3 lojas e /merchants vinha []).
+    if (action === 'refresh_merchants') {
+      if (!cfg?.client_id) return errResp('App do iFood não configurado.');
+      const auths = (await admin.from('ifood_pdv_auths').select('*').eq('tenant_id', tenantId)).data ?? [];
+      if (!auths.length) return errResp('A loja ainda não autorizou o app ERPOS PDV.');
+      let total = 0;
+      for (const a of auths) {
+        a.token_expires_at = null; // força renovar
+        const access = await getToken(admin, cfg, a);
+        const m = await lojasDaAutorizacao(access, cfg.homologation_mode === true);
+        if (!m.ok && m.status !== 403) return errResp(apiError(m, 'Listar lojas'));
+        await admin.from('ifood_pdv_auths').update({ merchants: m.merchants, updated_at: new Date().toISOString() }).eq('id', a.id);
+        total += m.merchants.length;
+      }
+      return json({ success: true, total, aviso: total ? null : 'O iFood ainda não libera nenhuma loja para o ERPOS PDV. Loja recém-autorizada pode levar alguns minutos — tente de novo daqui a pouco. Se continuar, confira no Portal do Parceiro (Integrações) se o ERPOS PDV está Ativo na loja.' });
     }
 
     if (action === 'delete_config') {
