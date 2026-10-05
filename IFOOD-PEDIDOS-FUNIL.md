@@ -176,12 +176,21 @@ d95420e); foi **desfeita** no mesmo dia porque o dono escolheu este desenho. Apr
   modo "Pedido entra no ERPOS").
 - **Presença e intermediador (contadora 05/10: "não presencial" + iFood como intermediador)** — `_shared/ifood-nota.ts`.
   NFC-e só aceita indPres 1, 4 ou 5 (rejeição 717); "não presencial" na NFC-e = 4 (entrega a domicílio), que exige
-  destinatário com endereço (787/788; Ajuste SINIEF 09/2026) e indIntermed (434). **Teste em homologação na SEFAZ-PR
-  (05/10, conta Brasil NFe da Paranaguá, autorizado pelo dono):** entrega + CPF + endereço + intermediador (CNPJ iFood
-  14.380.200/0001-21 + merchant id como idCadIntTran) → **AUTORIZADA**; entrega **sem CPF** → 787 (o Brasil NFe não
-  manda o grupo dest sem documento); retirada (indPres 1) + intermediador → o Brasil NFe recusa ("só com indPres 2, 3,
-  4 ou 9"). **Regra:** entrega com CPF (o cliente pediu CPF na nota) → indPres 4 + intermediador + destinatário com
-  endereço (código IBGE pelo CEP: ViaCEP, depois lista do IBGE); entrega sem CPF, endereço incompleto, retirada e
-  consumo no local → presencial sem intermediador (como o delivery da loja). O iFood esconde o CPF, então a maioria
-  sai presencial. Para mudar isso: perguntar ao Brasil NFe se aceitam destinatário sem documento (idEstrangeiro vazio).
+  destinatário com endereço (787/788; Ajuste SINIEF 09/2026) e indIntermed (434). Homologação SEFAZ-PR 05/10 (conta
+  Brasil NFe da Paranaguá): entrega + CPF + endereço + intermediador (CNPJ iFood 14.380.200/0001-21 + merchant id)
+  → AUTORIZADA; sem CPF → 787; intermediador com indPres 1 → recusado pelo Brasil NFe. **O Brasil NFe liberou os dois
+  em 06/10** (dest com `<idEstrangeiro/>` vazio + nome + endereço quando indPres 4 sem CpfCnpj; intermediador com
+  indPres 1). **Regra (branch `claude/ifood-nfce-sem-cpf`, publicar só depois da homologação com a versão nova e do
+  OK da contadora sobre o idEstrangeiro vazio = "estrangeiro sem documento"):** entrega com endereço completo →
+  indPres 4 + intermediador + destinatário (CPF só se o cliente pediu); retirada/no local/endereço incompleto →
+  presencial + intermediador. Código IBGE pelo CEP (ViaCEP, depois lista do IBGE).
+- **Partes da ficha montada do iFood (dono 05/10: dividir o preço entre comida e bebida)** — `fiscal-write/valores.ts
+  › ratearPartesIfood`. O funil grava as partes como linhas a R$ 0 com notes `parte de <origem>` (contrato com o
+  funnel.ts). Na nota: parte de complemento pago leva o preço do complemento (tirado dos opcionais do produto);
+  complemento a R$ 0 ("Escolha sua bebida") e parte da ficha do produto dividem o preço-base pelo preço de cardápio
+  (produto × partes); parte sem referência fica fora; centavos para baixo nas partes (nunca negativo), resto no
+  produto; total igual. Bebida sai na própria linha com NCM/CEST/CSOSN 500 (senão o ICMS-ST seria pago de novo no
+  Simples). Limitação conhecida: produto com o mesmo nome de um complemento no mesmo pedido — a parte é tratada como
+  do complemento (total certo, divisão entre NCMs pode errar). Revisão Opus 05/10: 1 P1 (preço negativo por
+  arredondamento) e 1 P2 (complemento a R$ 0) corrigidos.
 - **Regra do dono (05/10):** a loja só abre no iFood depois de abrir o caixa no ERPOS.

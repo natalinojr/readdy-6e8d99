@@ -160,6 +160,41 @@ describe('ratearPartesIfood (dono 05/10: dividir o preço entre comida e bebida)
     expect(r.itens).toEqual([{ id: 'combo', item_price: 30, opcionais: 0, opcoesMovidas: [] }]);
   });
 
+  it('revisão P1: balde 6 cervejas R$ 59,99 (produto sem item próprio) → partes arredondam para baixo, nada negativo', () => {
+    const itens = [
+      L('balde', { item_id: null, item_name: 'Balde 6 Heineken', item_price: 59.99 }),
+      L('cerv', { item_id: 'mi-heineken', item_name: 'Heineken', notes: 'parte de Balde 6 Heineken', quantity: 6 }),
+    ];
+    const r = f.ratearPartesIfood(itens, new Map([['mi-heineken', 12]]));
+    const by = Object.fromEntries(r.itens.map((x: any) => [x.id, x]));
+    expect(by.cerv.item_price).toBe(9.99);
+    expect(by.balde.item_price).toBeGreaterThanOrEqual(0);
+    expect(total(r.itens, itens)).toBe(59.99);
+  });
+
+  it('revisão P1: combo 2 burgers + 2 refri R$ 59,95 não deixa nada negativo e fecha o total', () => {
+    const itens = [
+      L('combo', { item_id: null, item_name: 'Combo 2+2', item_price: 59.95 }),
+      L('burger', { item_id: 'mi-b', item_name: 'Burger', notes: 'parte de Combo 2+2', quantity: 2 }),
+      L('coca', { item_id: 'mi-c', item_name: 'Coca', notes: 'parte de Combo 2+2', quantity: 2 }),
+    ];
+    const r = f.ratearPartesIfood(itens, new Map([['mi-b', 25], ['mi-c', 7]]));
+    expect(r.itens.every((x: any) => x.item_price >= 0)).toBe(true);
+    expect(total(r.itens, itens)).toBe(59.95);
+  });
+
+  it('revisão P2: bebida do combo como complemento a R$ 0 ("Escolha sua bebida: Coca Zero") → divide pelo cardápio', () => {
+    const itens = [
+      L('taco', { item_id: 'mi-taco', item_name: 'Combo Taco', item_price: 31.49, opcoes: [{ nome: 'Coca Zero', preco: 0 }] }),
+      L('coca', { item_id: 'mi-coca', item_name: 'Coca Zero', notes: 'parte de Coca Zero' }),
+    ];
+    const r = f.ratearPartesIfood(itens, new Map([['mi-taco', 25], ['mi-coca', 6]]));
+    const by = Object.fromEntries(r.itens.map((x: any) => [x.id, x]));
+    expect(by.coca.item_price).toBe(6.09);
+    expect(by.taco).toMatchObject({ item_price: 25.4, opcoesMovidas: ['coca zero'] });
+    expect(total(r.itens, itens)).toBe(31.49);
+  });
+
   it('pedido sem partes: nada muda', () => {
     const itens = [L('a', { item_id: 'x', item_name: 'Bowl', item_price: 36.99, quantity: 2 })];
     expect(f.ratearPartesIfood(itens, new Map()).itens).toEqual([{ id: 'a', item_price: 36.99, opcionais: 0, opcoesMovidas: [] }]);

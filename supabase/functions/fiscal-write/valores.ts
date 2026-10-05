@@ -153,29 +153,49 @@ export interface ItemParte {
 export interface ItemRateado { id: string; item_price: number; opcionais: number; opcoesMovidas: string[] }
 
 const PARTE = /^parte de (.+)$/i;
+/** Centavos para BAIXO: a soma das partes nunca passa do valor dividido (o resto fica no produto). */
+const piso2 = (n: number) => Math.floor(n * 100 + 1e-6) / 100;
 
 export function ratearPartesIfood(itens: ItemParte[], precoCardapio: Map<string, number>): { itens: ItemRateado[]; foraDaNota: string[] } {
   const r = new Map<string, ItemRateado>();
   for (const i of itens) r.set(i.id, { id: i.id, item_price: Number(i.item_price ?? 0), opcionais: round2(i.opcoes.reduce((s, o) => s + Number(o.preco ?? 0), 0)), opcoesMovidas: [] });
-  const ref = (i: ItemParte) => (i.item_id ? Number(precoCardapio.get(i.item_id) ?? 0) : 0) * Number(i.quantity ?? 1);
+  const qtd = (i: ItemParte) => Math.max(1, Number(i.quantity ?? 1));
+  const ref = (i: ItemParte) => (i.item_id ? Number(precoCardapio.get(i.item_id) ?? 0) : 0) * qtd(i);
   const partes = itens.filter((i) => PARTE.test(String(i.notes ?? '').trim()) && Math.abs(Number(i.item_price ?? 0)) < 0.005);
   const principais = itens.filter((i) => !partes.includes(i));
   const comValor = new Set<string>();
 
-  // Dá `total` às partes pelo peso (preço de cardápio × qtd); devolve o que foi dado (preço unitário em centavos).
-  const dar = (ps: ItemParte[], total: number, pesoTotal: number): number => {
+  // Dá `total` às partes na proporção do peso (sem peso nenhum: divide igual). Preço unitário arredondado para baixo,
+  // então o que foi dado nunca passa de `total`. Devolve o que foi dado.
+  const dar = (ps: ItemParte[], total: number, pesoOutros: number): number => {
+    const peso = ps.reduce((s, p) => s + ref(p), 0);
+    const igual = !(peso > 0);
+    if (igual && pesoOutros > 0) return 0; // as partes não têm preço de referência e o produto tem: fica tudo no produto
+    const pesoTotal = igual ? ps.reduce((s, p) => s + qtd(p), 0) : peso + pesoOutros;
     let dado = 0;
     for (const p of ps) {
-      const w = ref(p);
-      if (!(w > 0) || !(pesoTotal > 0)) continue;
-      const q = Math.max(1, Number(p.quantity ?? 1));
-      const unit = round2((total * w / pesoTotal) / q);
+      const w = igual ? qtd(p) : ref(p);
+      if (!(w > 0)) continue;
+      const unit = piso2((total * w / pesoTotal) / qtd(p));
       if (!(unit > 0)) continue;
       r.get(p.id)!.item_price = unit;
-      dado = round2(dado + unit * q);
+      dado = round2(dado + unit * qtd(p));
       comValor.add(p.id);
     }
     return dado;
+  };
+  // Tira `dado` das linhas do produto, na proporção de `quanto(l)` (o que cada uma tinha), pelo campo indicado.
+  const tirar = (ls: ItemParte[], dado: number, quanto: (l: ItemParte) => number, campo: 'opcionais' | 'item_price') => {
+    const base = ls.reduce((s, l) => s + quanto(l), 0);
+    let falta = dado;
+    ls.forEach((l, idx) => {
+      const rl = r.get(l.id)!;
+      const t = idx === ls.length - 1 ? falta : round2(dado * quanto(l) / base);
+      rl[campo] = round2(rl[campo] - t / qtd(l));
+      if (rl.opcionais < 0) { rl.item_price = round2(rl.item_price + rl.opcionais); rl.opcionais = 0; }
+      if (rl.item_price < 0) rl.item_price = 0; // trava: nunca negativo (a diferença de centavo vai para o ajuste da nota)
+      falta = round2(falta - t);
+    });
   };
 
   const grupos = new Map<string, ItemParte[]>(); // `${order_id}|${origem}`
@@ -184,56 +204,34 @@ export function ratearPartesIfood(itens: ItemParte[], precoCardapio: Map<string,
     grupos.set(k, [...(grupos.get(k) ?? []), p]);
   }
   for (const [k, ps] of grupos) {
-    const [orderId, origem] = [k.slice(0, k.indexOf('|')), k.slice(k.indexOf('|') + 1)];
+    const orderId = k.slice(0, k.indexOf('|'));
+    const origem = k.slice(k.indexOf('|') + 1);
     const doPedido = principais.filter((i) => i.order_id === orderId);
-    // 1) Complemento: linhas do produto que têm a opção <origem>.
+    const precoOpcao = (l: ItemParte) => round2(l.opcoes.filter((o) => o.nome.trim().toLowerCase() === origem).reduce((s, o) => s + Number(o.preco ?? 0), 0));
     const comOpcao = doPedido.filter((i) => i.opcoes.some((o) => o.nome.trim().toLowerCase() === origem));
     if (comOpcao.length) {
-      let total = 0;
-      for (const l of comOpcao) {
-        const preco = round2(l.opcoes.filter((o) => o.nome.trim().toLowerCase() === origem).reduce((s, o) => s + Number(o.preco ?? 0), 0));
-        total = round2(total + preco * Number(l.quantity ?? 1));
+      const total = round2(comOpcao.reduce((s, l) => s + precoOpcao(l) * qtd(l), 0));
+      if (total > 0) {
+        // 1) Complemento pago: as partes levam o preço do complemento, tirado dos opcionais do produto.
+        const dado = dar(ps, total, 0);
+        if (dado > 0) tirar(comOpcao, dado, (l) => precoOpcao(l) * qtd(l), 'opcionais');
+      } else {
+        // 1b) Complemento a R$ 0 (bebida que já vem no combo, "Escolha sua bebida: Coca"): divide o preço-base das
+        //     linhas do produto que têm a opção, pelo preço de cardápio (produto × partes).
+        const base = round2(comOpcao.reduce((s, l) => s + r.get(l.id)!.item_price * qtd(l), 0));
+        const dado = base > 0 ? dar(ps, base, comOpcao.reduce((s, l) => s + ref(l), 0)) : 0;
+        if (dado > 0) tirar(comOpcao, dado, (l) => r.get(l.id)!.item_price * qtd(l), 'item_price');
       }
-      const peso = ps.reduce((s, p) => s + ref(p), 0);
-      const pesoUsado = peso > 0 ? peso : ps.length; // sem preço de cardápio: divide igual entre as partes
-      const dado = peso > 0 ? dar(ps, total, peso) : (() => {
-        let d = 0;
-        for (const p of ps) { const q = Math.max(1, Number(p.quantity ?? 1)); const unit = round2(total / pesoUsado / q); if (unit > 0) { r.get(p.id)!.item_price = unit; d = round2(d + unit * q); comValor.add(p.id); } }
-        return d;
-      })();
-      if (dado > 0) {
-        // Tira dos opcionais das linhas do produto, na proporção do que cada uma tinha da opção.
-        let falta = dado;
-        comOpcao.forEach((l, idx) => {
-          const q = Math.max(1, Number(l.quantity ?? 1));
-          const preco = round2(l.opcoes.filter((o) => o.nome.trim().toLowerCase() === origem).reduce((s, o) => s + Number(o.preco ?? 0), 0));
-          const tirar = idx === comOpcao.length - 1 ? falta : Math.min(falta, round2(preco * q * dado / total));
-          const rl = r.get(l.id)!;
-          rl.opcionais = round2(rl.opcionais - tirar / q);
-          if (rl.opcionais < 0) { rl.item_price = round2(rl.item_price + rl.opcionais); rl.opcionais = 0; }
-          rl.opcoesMovidas.push(origem);
-          falta = round2(falta - tirar);
-        });
-      }
+      if (ps.some((p) => comValor.has(p.id))) for (const l of comOpcao) r.get(l.id)!.opcoesMovidas.push(origem);
       continue;
     }
-    // 2) Produto: linhas principais com o nome <origem> (item_name) — o preço-base é dividido pelo cardápio.
+    // 2) Parte da ficha do produto: linhas com o nome <origem>; o preço-base é dividido pelo cardápio.
     const prods = doPedido.filter((i) => String(i.item_name ?? '').trim().toLowerCase() === origem);
     if (!prods.length) continue;
-    const base = round2(prods.reduce((s, l) => s + Number(l.item_price ?? 0) * Number(l.quantity ?? 1), 0));
-    const pesoProd = prods.reduce((s, l) => s + ref(l), 0);
-    const pesoPartes = ps.reduce((s, p) => s + ref(p), 0);
-    if (!(base > 0) || !(pesoPartes > 0)) continue;
-    // Produto sem preço de cardápio próprio (ficha só de partes): tudo vai para as partes.
-    const dado = dar(ps, base, pesoProd + pesoPartes);
-    let falta = dado;
-    prods.forEach((l, idx) => {
-      const q = Math.max(1, Number(l.quantity ?? 1));
-      const lb = Number(l.item_price ?? 0) * q;
-      const tirar = idx === prods.length - 1 ? falta : round2(dado * lb / base);
-      r.get(l.id)!.item_price = round2((lb - tirar) / q);
-      falta = round2(falta - tirar);
-    });
+    const base = round2(prods.reduce((s, l) => s + r.get(l.id)!.item_price * qtd(l), 0));
+    if (!(base > 0)) continue;
+    const dado = dar(ps, base, prods.reduce((s, l) => s + ref(l), 0));
+    if (dado > 0) tirar(prods, dado, (l) => r.get(l.id)!.item_price * qtd(l), 'item_price');
   }
   const fora = partes.filter((p) => !comValor.has(p.id)).map((p) => p.id);
   return { itens: itens.filter((i) => !fora.includes(i.id)).map((i) => r.get(i.id)!), foraDaNota: fora };
