@@ -273,6 +273,17 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-10-04 — Pedidos (/pedidos): números errados corrigidos (antes do layout novo)
+- **Total 0 é real.** `useOrdersHistory` só soma os itens quando `total_amount` vem **nulo**; antes `0` (cortesia, 100% de desconto) virava o valor cheio dos itens e entrava no Faturamento/Ticket/CSV (P2209260004 Paranaguá, P0107260007 Vila Leste).
+- **"Hoje" vivo:** `page.tsx` usa o estado `hoje` (recalculado a cada minuto), não a constante `HOJE` de `utils.ts` (fica presa no dia em que o chunk carregou). `PedidosFiltros`/`PedidosLista` ainda importam a constante (só rótulo/`max` do campo) — trocar no layout novo.
+- **"Ao vivo"** = sessão atual, preset Hoje ou Dia = hoje. Só aí: recarga a cada pedido (ping + realtime) e entrada dos pedidos que o KDS já tem e o banco ainda não (`soDoKds`, sem treino). Sessão encerrada/outro dia não recebe mais pedido do KDS com total 0.
+- **Recarga silenciosa:** o hook só liga `loading` quando o filtro muda (`filtroRef`); recarga do mesmo filtro troca os dados por baixo. `seqRef`: só a carga mais recente grava. Antes cada ping trocava a lista pelo spinner (perdia scroll e fechava a janela de emitir NF no meio do CPF).
+- **Sessão:** sessão sem pedidos não cai mais no "hoje inteiro" (`&& !sid`); modo Sessão sem sessão aberta mostra lista vazia com aviso (antes, os pedidos de hoje com o rótulo "Sessão atual"). **"Todos os dias"** vai pela consulta paginada (`from='2000-01-01'`): sem data o hook cai na RPC do KDS, que só traz hoje.
+- **Fim do dia exclusivo** (`lt` dia seguinte 00:00 BRT), igual ao Dashboard. Número do pedido segue o dia de operação (P2609260008 nasceu 27/09 03:40): filtro por data é calendário.
+- **Tempo:** pedido andando = desde a criação; entregue = `tempo_total_min` gravado; sem marca da cozinha = sem tempo (não vira "45h"/atrasado). `TempoCell`: entregue sem `delivered_at` mostra parado; sem baixa há 12h+ mostra "parado".
+- Filtro "Em aberto" ignora pedido `delivered` e item cancelado (bebida skip_kds nunca ganha unidade entregue). CSV: prefixo `'` em célula que começa com `= + - @` (nome do cliente do QR) e sem item cancelado.
+- **Em aberto (decisão do dono):** "Faturamento" daqui soma não pagos (igual ao fechamento do caixa); o Dashboard soma só pagos. Protótipo do layout novo: `docs/prototipos/pedidos-proposta.html`.
+
 ### 2026-10-04 — Estoque: layout novo (5 grupos, Registrar, ficha do insumo, Arrumar a lista)
 - **Protótipo aprovado pelo dono** (`docs/prototipos/estoque-abas-proposta.html`). Regra: nenhuma aba, número ou botão sai; ids `?tab=` iguais (links antigos abrem no lugar novo).
 - **Estrutura:** `src/pages/estoque/page.tsx` = grupos + pílulas + busca + ⋯ + "+ Registrar" e TODAS as janelas comuns, abertas por qualquer aba pelo controle `useEstoqueTela()` (`src/pages/estoque/EstoqueTela.tsx`: situação da regra única, irPara, abrirFicha, abrirRegistrar, abrirArrumar, contar, abrirEntrada/Saida/Perda/Transferir/Compra, editarInsumo…). Peças visuais em `components/ui/EstoqueUi.tsx` (Faixa, CartaoAcao, CartaoBarra, Chips, SecaoTitulo, MenuMais…). Folhas novas em `components/folhas/` (FichaInsumo, Arrumar, EscolherFornecedor, Registrar, Perda).

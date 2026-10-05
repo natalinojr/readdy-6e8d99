@@ -165,12 +165,29 @@ export function TempoCell({ pedido }: { pedido: PedidoRecente }) {
 
   if (isCancelado) return <span className="text-xs text-zinc-300">—</span>;
 
+  // Entregue sem a hora de entrega gravada (bebida sem cozinha, baixa pelo caixa): mostra o
+  // tempo registrado, parado. Antes o relógio seguia correndo para sempre ("2133min").
+  const isEntregue = pedido.status === 'delivered' || pedido.status === 'entregue';
+  if (isEntregue && !pedido._entregueTs) {
+    return pedido.tempoAberto !== undefined
+      ? <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-md w-fit flex items-center gap-0.5 whitespace-nowrap bg-zinc-100 text-zinc-500"><i className="ri-timer-line text-[10px]" />{pedido.tempoAberto} min</span>
+      : <span className="text-xs text-zinc-300">—</span>;
+  }
+
   const toTs = pedido._entregueTs ?? null;
   const secs = pedido._criadoTs
     ? calcSecs(pedido._criadoTs, toTs, nowMs)
     : (pedido.tempoAberto ?? 0) * 60;
 
   const mins = Math.floor(secs / 60);
+  // Sem baixa na cozinha há mais de 12h: não é atraso, é pedido esquecido — mostra parado
+  if (!toTs && mins >= 12 * 60) {
+    return (
+      <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-md w-fit flex items-center gap-0.5 whitespace-nowrap bg-red-50 text-red-600" title="Pedido sem baixa na cozinha há mais de 12 horas">
+        <i className="ri-alarm-warning-line text-[10px]" />parado
+      </span>
+    );
+  }
   const isAtrasado = mins > 15;
   const isNoPrazo = hasEntrega && !isAtrasado;
   const isAtivo = !hasEntrega && !!pedido._criadoTs;
