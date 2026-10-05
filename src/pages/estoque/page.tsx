@@ -160,6 +160,7 @@ export default function EstoquePage() {
     abrirSaida: naoSoContar((id?: string) => setSaida({ insumoId: id })),
     abrirPerda: naoSoContar((id?: string) => setPerda({ insumoId: id })),
     abrirTransferir: naoSoContar(() => setTransferir(true)),
+    abrirProgramar: naoSoContar(() => { if (podeConfigurar && situacao.data) setConfig(true); }),
     abrirCompra: naoSoContar((id?: string) => setCompra({ insumoId: id })),
     abrirNovoInsumo: naoSoContar(() => setInsumoModal('novo')),
     editarInsumo: naoSoContar((id: string) => setInsumoModal(id)),

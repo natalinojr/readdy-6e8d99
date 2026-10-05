@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { usePermissoes } from '@/hooks/usePermissoes';
-import { useToast } from '@/contexts/ToastContext';
 import { useEstoque, type InventarioSession } from '../../../contexts/EstoqueContext';
 import { contagemDeHoje, descreverFrequencia, itensDoPlano, quandoFica, type InsumoSituacao } from '@/lib/estoqueRegras';
 import { dateKeyBrasilia, todayBrasilia } from '@/lib/dateUtils';
@@ -27,30 +26,20 @@ function temRascunhoSalvo(tenantId: string): boolean {
   }
 }
 
-/** Os que mais giram em reais por dia (para a semanal sugerida). Mesma conta do "Criar as duas de sempre" do Início. */
-function maisGiram(insumos: InsumoSituacao[], n = 10): InsumoSituacao[] {
-  return insumos
-    .filter((i) => i.contaInventario && (i.consumoDia ?? 0) > 0)
-    .sort((a, b) => (b.consumoDia ?? 0) * b.preco - (a.consumoDia ?? 0) * a.preco)
-    .slice(0, n);
-}
-
 const minutosPara = (n: number) => Math.max(1, Math.round(n * 0.7));
 const plural = (n: number, um: string, varios: string) => (n === 1 ? um : varios);
 
 export default function InventarioTab() {
   const { inventarioSessions } = useEstoque();
   const { user } = useAuth();
-  const toast = useToast();
   const { hasPermissao } = usePermissoes();
-  const { situacao, recarregarSituacao, contar, abrirFicha, podeConfigurar, podeContar } = useEstoqueTela();
+  const { situacao, recarregarSituacao, contar, abrirFicha, abrirProgramar, podeConfigurar, podeContar } = useEstoqueTela();
   const podeInventariar = hasPermissao('estoque_inventario');
   const [view, setView] = useState<View>('historico');
   const [sessionDetalhe, setSessionDetalhe] = useState<InventarioSession | null>(null);
   const [startFresh, setStartFresh] = useState(false);
   // 'escolher' = quem pediu contagem cheia com rascunho aberto; 'descartar' = quem tocou em "Descartar".
   const [modalRascunho, setModalRascunho] = useState<null | 'escolher' | 'descartar'>(null);
-  const [criando, setCriando] = useState(false);
 
   const tenantId = user?.tenantId ?? '';
   // Rascunho pode estar neste aparelho ou no banco (começado em outro celular).
@@ -137,33 +126,6 @@ export default function InventarioTab() {
   const ultimaYmd = ultimaTs ? dateKeyBrasilia(ultimaTs) : inventarioSessions[0] ? dataBRparaYmd(inventarioSessions[0].data) : null;
   const diasSemContar = ultimaYmd ? diasEntre(ultimaYmd, hoje) : null;
 
-  // "Criar as duas de sempre": geral no último dia do mês + semanal (segunda) dos 10 que mais giram. Igual ao Início.
-  const criarPadrao = async () => {
-    if (!situacao || !tenantId) return;
-    setCriando(true);
-    try {
-      const topo = maisGiram(situacao.insumos).map((i) => i.id);
-      const r1 = await supabase.rpc('fn_estoque_salvar_plano', {
-        p_tenant_id: tenantId, p_id: null, p_nome: 'Contagem geral', p_frequencia: 'mensal',
-        p_dia_semana: null, p_dia_mes: 0, p_todos: true, p_itens: [],
-      });
-      if (r1.error) throw r1.error;
-      if (topo.length) {
-        const r2 = await supabase.rpc('fn_estoque_salvar_plano', {
-          p_tenant_id: tenantId, p_id: null, p_nome: 'Contagem semanal', p_frequencia: 'semanal',
-          p_dia_semana: 1, p_dia_mes: null, p_todos: false, p_itens: topo,
-        });
-        if (r2.error) throw r2.error;
-      }
-      toast.success('Contagens programadas', topo.length ? 'Geral no último dia do mês e semanal toda segunda.' : 'Geral no último dia do mês.');
-    } catch (e) {
-      toast.error('Não programei as contagens', (e as { message?: string })?.message ?? String(e));
-    } finally {
-      setCriando(false);
-      void recarregarSituacao(); // se a 1ª foi gravada, o cartão muda e não duplica ao tentar de novo
-    }
-  };
-
   const negativos = conferir.filter((i) => i.estoque < 0).length;
   const marcados = conferir.length - negativos;
   const tituloConferir = marcados === 0
@@ -231,8 +193,10 @@ export default function InventarioTab() {
                     <i className="ri-scales-3-line" />Contar agora ({itensDevidos.length} · ~{minutosPara(itensDevidos.length)} min)
                   </button>
                 )}
-                {situacao && planos.length === 0 && podeConfigurar && (
-                  <button disabled={criando} onClick={criarPadrao} className={btn('p', 'sm')}>{criando ? 'Criando…' : 'Criar as duas de sempre'}</button>
+                {situacao && podeConfigurar && (
+                  <button onClick={abrirProgramar} className={btn(planos.length === 0 ? 'p' : 'out', 'sm')}>
+                    <i className="ri-calendar-schedule-line" />{planos.length === 0 ? 'Programar contagens' : 'Mudar as contagens programadas'}
+                  </button>
                 )}
                 {podeInventariar && (
                   <button onClick={handleNovaContagem} className={btn('out', 'sm')}><i className="ri-clipboard-line" />Contagem cheia agora</button>
@@ -244,7 +208,7 @@ export default function InventarioTab() {
             ) : planos.length === 0 ? (
               <>
                 <p>
-                  {textoDiasSemContar(diasSemContar)} Programe a <b>geral no fim do mês</b> e a <b>semanal dos 10 que mais giram</b>:
+                  {textoDiasSemContar(diasSemContar)} Programe quando contar e o que contar:
                   {' '}no dia, quem cuida do estoque recebe aviso no celular.
                 </p>
                 {!podeConfigurar && <p className="text-[11.5px] text-zinc-400 mt-1.5">Quem programa é o supervisor ou o dono.</p>}
