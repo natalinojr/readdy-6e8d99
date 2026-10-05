@@ -3,7 +3,7 @@ import { useState, useMemo, useEffect } from 'react';
 import { X, Check, Minus, Plus } from 'lucide-react';
 import type { ItemPedidoCliente, ItemCardapioPublico } from '@/types/mesaCliente';
 import ItemImage from '@/components/base/ItemImage';
-import { toggleOpcaoGrupo, primeiroGrupoFaltando, mensagemGrupoFaltando, mensagemMaximoAtingido } from '@/lib/optionGroupSelection';
+import { toggleOpcaoGrupo, opcoesDoGrupoNoCarrinho, primeiroGrupoFaltando,mensagemGrupoFaltando, mensagemMaximoAtingido } from '@/lib/optionGroupSelection';
 import { comQuebraAposVirgula } from '../../../lib/quebraTexto';
 
 interface Props {
@@ -126,9 +126,7 @@ export default function EditarItemKiosk({ itemCarrinho, itemCardapio, index, onS
     const map: Record<string, { id?: string; nome: string; precoAdicional: number; grupoNome: string }[]> = {};
     if (itemCardapio?.opcoes) {
       for (const grupo of itemCardapio.opcoes) {
-        const fromCarrinho = itemCarrinho.opcoesSelecionadas.filter((sel) =>
-          grupo.itens.some((it) => it.nome === sel.nome)
-        );
+        const fromCarrinho = opcoesDoGrupoNoCarrinho(itemCarrinho.opcoesSelecionadas, grupo);
         map[grupo.grupo] = fromCarrinho.length > 0 ? fromCarrinho : [];
       }
     }
