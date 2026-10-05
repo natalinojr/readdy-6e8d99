@@ -313,6 +313,8 @@ Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme
   do menu da loja: `FULL_SCREEN_PROTECTED` agora com Suspense). Loja sem venda em 30 dias (PDV ou iFood) fica
   recolhida; esconder loja é por pessoa (`user_preferences` chave `comparar_lojas_ocultar`, uma linha por loja).
   Tocar na loja = `selectTenant` + `/dashboard`. Cor da loja fixa pela ordem do nome (nunca pelo ranking).
+  Ordem (pedido do dono 05/10): maior faturamento primeiro; empate (de madrugada tudo em R$ 0) pelo `fat_30d`
+  (PDV sem repasse + iFood bruto, 30 dias — migração `20261005013000`), depois o nome: `ordenarPorFaturamento`.
 - **Pegadinhas:** sessão esquecida aberta por dias faz o "hoje" da loja ficar naquele dia (é a regra; o rótulo mostra
   "dia dd/mm" e o caixa aberto desde quando). `availableTenants` fica vazio depois de escolher a loja — para saber se a
   pessoa tem várias lojas use `canSwitchTenant`. Protótipo aprovado: `docs/prototipos/lojas-agora-proposta.html`.
