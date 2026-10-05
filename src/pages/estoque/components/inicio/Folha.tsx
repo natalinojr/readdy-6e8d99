@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
 
 // Folha que sobe de baixo no celular (janela no centro a partir de sm). Voltar do Android fecha.
@@ -13,6 +13,13 @@ export default function Folha({ aberta, titulo, subtitulo, onFechar, children, r
   rodape?: ReactNode;
 }) {
   useVoltarFecha(aberta, onFechar, 'estoque-folha');
+  // Esc fecha (no computador), menos na folha que guarda o que foi digitado (fecharNoFundo = false).
+  useEffect(() => {
+    if (!aberta || !fecharNoFundo) return;
+    const tecla = (e: KeyboardEvent) => { if (e.key === 'Escape') onFechar(); };
+    window.addEventListener('keydown', tecla);
+    return () => window.removeEventListener('keydown', tecla);
+  }, [aberta, fecharNoFundo, onFechar]);
   if (!aberta) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/45" onClick={fecharNoFundo ? onFechar : undefined}>

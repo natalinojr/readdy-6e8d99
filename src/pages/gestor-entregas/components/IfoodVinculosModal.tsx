@@ -64,7 +64,8 @@ export default function IfoodVinculosModal({ tenantId, onClose }: Props) {
   const opcoes = (l: Linha) => {
     const q = norm(busca.trim());
     return alvos
-      .filter((a) => (l.level === 'item' ? a.kind !== 'option' : true))
+      // Só o cardápio principal (itens e combos), nunca opção (dono, 05/10).
+      .filter((a) => a.kind !== 'option')
       .filter((a) => !q || norm(`${a.nome} ${a.detalhe ?? ''}`).includes(q))
       // complemento do iFood costuma ser opção do cardápio → opções primeiro
       .sort((a, b) => (l.level === 'complemento' ? Number(b.kind === 'option') - Number(a.kind === 'option') : 0))

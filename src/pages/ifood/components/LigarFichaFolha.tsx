@@ -230,8 +230,8 @@ export default function LigarFichaFolha({ tenantId, aberta, fila, indice = 0, tr
 }
 
 // ── Montar a ficha do iFood: itens do cardápio + insumos (dono, 05/10: no delivery vai embalagem, sachê…) ──
-// Grava em fn_ifood_ficha_salvar (ifood_ficha_linhas). Vale para o custo; a baixa de estoque segue a ligação
-// simples (a função mantém a ligação quando há 1 item com quantidade 1).
+// Grava em fn_ifood_ficha_salvar (ifood_ficha_linhas). Vale para o custo e para a baixa de estoque no modo "Entrar na
+// cozinha do ERPOS" (ifood-shipping/funnel.ts): itens viram linhas do pedido; insumos baixam ligados ao pedido.
 
 type LinhaFicha = { kind: 'item'; id: string; nome: string; quantity: string } | { kind: 'insumo'; id: string; nome: string; quantity: string; unit: string };
 
@@ -361,9 +361,9 @@ function MontarFicha({ tenantId, item, ultimo, itensCardapio, inicial, onVoltar,
       </div>
       {semFicha.length > 0 && <p className="text-[11.5px] text-orange-700 bg-orange-50 rounded-xl px-3 py-2">{semFicha.map((l) => l.nome).join(', ')} não tem ficha técnica no cardápio: o custo fica em aberto até cadastrar a ficha.</p>}
       <p className="text-[11.5px] text-zinc-500 leading-snug">
-        {umItemSo
-          ? <>O custo de tudo entra no lucro bruto. Estoque: quando o pedido entrar na cozinha do ERPOS, baixa o <b>{linhasItem[0].nome}</b>; os insumos extras, por enquanto, entram só no custo.</>
-          : <>Por enquanto esta ficha entra <b>só no custo</b> (lucro bruto e CMV); a baixa no estoque dela ainda não acontece.</>}
+        O custo de tudo entra no lucro bruto. Estoque, quando o pedido entrar na cozinha do ERPOS:{' '}
+        {umItemSo ? <>baixa o <b>{linhasItem[0].nome}</b></> : linhasItem.length ? <>baixa os itens (na cozinha aparecem como "parte de {item.nome}", a R$ 0)</> : null}
+        {ls.some((l) => l.kind === 'insumo') ? <>{linhasItem.length ? ' e ' : ''}os insumos baixam junto com o pedido (voltam se o iFood cancelar)</> : null}.
       </p>
       {erro && <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{erro}</p>}
       <div className="flex gap-2 pt-1">

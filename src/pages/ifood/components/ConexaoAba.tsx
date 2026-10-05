@@ -375,8 +375,23 @@ export default function ConexaoAba({ tenantId, lojas, dados }: AbaProps) {
                 disabled={!podeEditar || !!busy} onChange={(v) => run('auto', 'set_options', { order_auto_confirm: v }, v ? 'Pedidos do iFood aceitos sozinhos.' : 'Pedidos do iFood esperam o Aceitar.')} />
             )}
             {emFunil && typeof cfg?.order_emit_nfce === 'boolean' && (
-              <Chave titulo="Emitir NFC-e" texto="A nota sai quando o pedido é concluído no iFood e está pago. Confirme com a contadora antes de ligar." ligado={cfg.order_emit_nfce}
+              <Chave titulo="Emitir NFC-e" texto={cfg.order_nfce_momento === 'conclusao' ? 'A nota sai quando o iFood conclui o pedido e ele está pago.' : 'A nota sai quando o pedido fica pronto ou sai e está pago (recomendado).'} ligado={cfg.order_emit_nfce}
                 disabled={!podeEditar || !!busy} onChange={(v) => run('nfce', 'set_options', { order_emit_nfce: v }, v ? 'NFC-e dos pedidos do iFood ligada.' : 'NFC-e dos pedidos do iFood desligada.')} />
+            )}
+            {emFunil && cfg?.order_emit_nfce && (
+              <div className="pl-1">
+                <p className="text-xs font-semibold text-zinc-500 mb-1">Quando a nota sai</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {([['saida', 'Pronto ou saiu · recomendado'], ['conclusao', 'Quando o iFood conclui']] as const).map(([v, t]) => (
+                    <button key={v} type="button" disabled={!podeEditar || !!busy}
+                      onClick={() => run('nfce-mom', 'set_options', { order_nfce_momento: v }, 'Momento da nota salvo.')}
+                      className={`text-xs font-semibold rounded-full px-3 py-1.5 border ${(cfg.order_nfce_momento ?? 'saida') === v ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-white text-zinc-600 border-zinc-200 hover:border-zinc-400'}`}>
+                      {t}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11.5px] text-zinc-400 mt-1 leading-snug">Pela regra da SEFAZ a nota deve sair antes de a mercadoria circular. Confirme com a contadora.</p>
+              </div>
             )}
             <Chave titulo="Lançar no financeiro" texto="Venda e taxas de cada repasse na DRE, em Receitas e no Fluxo de Caixa." ligado={fin?.post_to_ledger === true}
               disabled={!podeEditar || !!busy || !fin} onChange={mudarLedger} />

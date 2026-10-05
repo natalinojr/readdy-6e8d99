@@ -27,8 +27,8 @@ export default function ValorNotaIfood({ o }: { o: PedidoOrder }) {
   const ifoodEntrega = o.tipo === 'DELIVERY' && !n.entregaLoja;
   const candidatos: [string, number][] = [
     ['Desconto pago pelo iFood (volta no repasse)', o.promoIfood],
-    [ifoodEntrega ? 'Entrega paga pelo cliente (é do iFood)' : '', ifoodEntrega ? o.entregaCliente : 0],
-    ['Entrega grátis paga pela loja (custo cobrado pelo iFood)', n.entregaGratisForaNota],
+    // Taxa de entrega com entregador do iFood é do iFood — quem paga é o cliente ou, na entrega grátis, a loja.
+    [ifoodEntrega ? (n.entregaGratisForaNota > 0.005 ? 'Taxa de entrega do iFood (paga pela loja: entrega grátis, custo cobrado no repasse)' : 'Taxa de entrega paga pelo cliente (é do iFood)') : '', ifoodEntrega ? o.entregaCliente : 0],
     ['Taxa de serviço (é do iFood)', o.taxaServico],
   ];
   const fora = candidatos.filter(([r, v]) => r && v > 0.005);
@@ -50,7 +50,7 @@ export default function ValorNotaIfood({ o }: { o: PedidoOrder }) {
               {fora.map(([r, v]) => <span key={r} className="block tabular-nums">· {r}: {brl(v)}</span>)}
             </>
           )}
-          <br />Comissão e taxas do iFood também ficam fora: são despesa da loja, não abatem a nota. O que o cliente pagou no app sai como forma "99 – iFood - online". A nota só sai com o pedido concluído no iFood e com a NFC-e do iFood ligada na loja.
+          <br />Comissão e taxas do iFood também ficam fora: são despesa da loja, não abatem a nota. O que o cliente pagou no app sai como forma "99 – iFood - online". A nota sai no momento escolhido na configuração do iFood (pronto/saiu ou conclusão), com a NFC-e do iFood ligada na loja.
         </Ajuda>
       </span>
       <b className="tabular-nums whitespace-nowrap text-zinc-900">{brl(n.valorVenda)}</b>
