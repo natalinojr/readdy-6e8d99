@@ -3,6 +3,7 @@ import { Minus, Plus, X, Clock } from 'lucide-react';
 import { type ItemCardapioPublico, type ItemPedidoCliente } from '@/types/mesaCliente';
 import ItemImage from '../../../components/base/ItemImage';
 import { useObsPorItemId } from '@/hooks/useObsPorItemId';
+import { opcoesDoGrupoNoCarrinho } from '@/lib/optionGroupSelection';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -49,8 +50,7 @@ export default function EditarItemCarrinhoModal({ item, itemAtual, index, onSalv
   const [selecionadas, setSelecionadas] = useState<Record<string, { id?: string; nome: string; precoAdicional: number; grupoNome: string }[]>>(() => {
     const result: Record<string, { id?: string; nome: string; precoAdicional: number; grupoNome: string }[]> = {};
     item.opcoes?.forEach((grupo) => {
-      const sels = itemAtual.opcoesSelecionadas
-        .filter((opt) => grupo.itens.some((gopt) => gopt.nome === opt.nome))
+      const sels = opcoesDoGrupoNoCarrinho(itemAtual.opcoesSelecionadas, grupo)
         .map((opt) => ({ id: opt.id || grupo.itens.find((gi) => gi.nome === opt.nome)?.id, nome: opt.nome, precoAdicional: opt.precoAdicional || grupo.itens.find((gi) => gi.nome === opt.nome)?.precoAdicional || 0, grupoNome: grupo.grupo }));
       if (sels.length > 0) result[grupo.grupo] = sels;
     });

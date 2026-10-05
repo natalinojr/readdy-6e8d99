@@ -1673,6 +1673,7 @@ export default function DRETab() {
           month={mes}
           mode={dreMode}
           onClose={() => setDrillDown(null)}
+          onChanged={loadData}
         />
       )}
     </div>

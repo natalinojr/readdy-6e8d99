@@ -254,6 +254,8 @@ export interface CompraLinha {
   valor: number;
   destino: 'cmv' | 'despesa';
   dreCategoryId: string | null;
+  /** Item ligado a insumo do estoque (sempre CMV). */
+  ligadoEstoque?: boolean;
   pago?: number;
 }
 
@@ -357,6 +359,7 @@ export async function fetchComprasLinhas(tenantId: string, purchases: PurchaseRe
       valor: (Number(it.total_price ?? 0) + Number(it.freight_allocated ?? 0)) * peso,
       destino: it.dre_category_id && despesaIds.has(it.dre_category_id) ? 'despesa' : 'cmv',
       dreCategoryId: it.dre_category_id,
+      ligadoEstoque: !!it.ingredient_id,
       pago: peso < 1 ? peso : undefined,
     });
   }

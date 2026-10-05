@@ -3,6 +3,7 @@ import {
   minExigidoGrupo,
   maxPermitidoGrupo,
   toggleOpcaoGrupo,
+  opcoesDoGrupoNoCarrinho,
   primeiroGrupoFaltando,
   mensagemGrupoFaltando,
 } from '@/lib/optionGroupSelection';
@@ -59,5 +60,23 @@ describe('optionGroupSelection', () => {
     expect(mensagemGrupoFaltando(grupos[1])).toBe('Escolha: Molhos (mínimo 2)');
     expect(primeiroGrupoFaltando(grupos, { Molhos: [op('A')] })?.grupo).toBe('Molhos');
     expect(primeiroGrupoFaltando(grupos, { Molhos: [op('A'), op('B')] })).toBeNull();
+  });
+});
+
+describe('opcoesDoGrupoNoCarrinho', () => {
+  const g1 = { grupo: 'Primeiro', itens: [{ nome: 'Barbacoa' }, { nome: '4 Quesos' }] };
+  const g2 = { grupo: 'Segundo', itens: [{ nome: 'Barbacoa' }, { nome: '4 Quesos' }] };
+  const carrinho = [
+    { nome: 'Barbacoa', grupoNome: 'Primeiro' },
+    { nome: '4 Quesos', grupoNome: 'Segundo' },
+  ];
+
+  it('mesma opção em dois grupos não duplica ao reabrir a edição', () => {
+    expect(opcoesDoGrupoNoCarrinho(carrinho, g1)).toEqual([carrinho[0]]);
+    expect(opcoesDoGrupoNoCarrinho(carrinho, g2)).toEqual([carrinho[1]]);
+  });
+
+  it('sem grupoNome casa só pelo nome (carrinho antigo)', () => {
+    expect(opcoesDoGrupoNoCarrinho([{ nome: 'Barbacoa' }], g1)).toHaveLength(1);
   });
 });
