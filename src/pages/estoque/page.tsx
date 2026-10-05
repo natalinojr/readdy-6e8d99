@@ -9,6 +9,7 @@ import CmvTab from './components/CmvTab';
 import ProducaoTab from './components/ProducaoTab';
 import FornecedoresRelatorioTab from './components/FornecedoresRelatorioTab';
 import ValidadeTab from './components/ValidadeTab';
+import ComprasPorInsumoTab from './components/ComprasPorInsumoTab';
 import ConsumoIngredientesTab from '../relatorios/components/ConsumoIngredientesTab';
 import { useEstoque, type Insumo } from '../../contexts/EstoqueContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -37,12 +38,13 @@ import { EstoqueTelaContext, type AbaEstoque, type EstoqueTelaApi, type FiltroAr
 // Layout novo (2026-10-04, protótipo docs/prototipos/estoque-abas-proposta.html aprovado pelo dono):
 // as 10 abas em 5 grupos, como o Financeiro — em cima o grupo, embaixo as abas dele em pílula. Nenhuma aba
 // saiu; os ids (?tab=) continuam os mesmos, então os links antigos abrem no lugar novo.
-const VALID_TABS: AbaEstoque[] = ['inicio', 'insumos', 'movimentacoes', 'teorico', 'inventario', 'cmv', 'producao', 'fornecedores', 'validade', 'consumo'];
+const VALID_TABS: AbaEstoque[] = ['inicio', 'insumos', 'movimentacoes', 'teorico', 'inventario', 'cmv', 'producao', 'fornecedores', 'compras', 'validade', 'consumo'];
 
 const ABAS: Record<AbaEstoque, { label: string; icon: string }> = {
   inicio: { label: 'Início', icon: 'ri-home-5-line' },
   insumos: { label: 'Lista', icon: 'ri-list-check-2' },
   fornecedores: { label: 'Por fornecedor', icon: 'ri-truck-line' },
+  compras: { label: 'Compras por insumo', icon: 'ri-shopping-basket-line' },
   validade: { label: 'Validade e lotes', icon: 'ri-calendar-check-line' },
   movimentacoes: { label: 'Movimentações', icon: 'ri-arrow-left-right-line' },
   producao: { label: 'Produção', icon: 'ri-knife-line' },
@@ -54,7 +56,7 @@ const ABAS: Record<AbaEstoque, { label: string; icon: string }> = {
 
 const GRUPOS: { id: string; label: string; icon: string; abas: AbaEstoque[] }[] = [
   { id: 'inicio', label: 'Início', icon: 'ri-home-5-line', abas: ['inicio'] },
-  { id: 'insumos', label: 'Insumos', icon: 'ri-archive-line', abas: ['insumos', 'fornecedores', 'validade'] },
+  { id: 'insumos', label: 'Insumos', icon: 'ri-archive-line', abas: ['insumos', 'fornecedores', 'compras', 'validade'] },
   { id: 'movimentos', label: 'Movimentos', icon: 'ri-arrow-left-right-line', abas: ['movimentacoes', 'producao'] },
   { id: 'contagem', label: 'Contagem', icon: 'ri-scales-3-line', abas: ['inventario', 'teorico'] },
   { id: 'custo', label: 'Custo', icon: 'ri-percent-line', abas: ['cmv', 'consumo'] },
@@ -284,6 +286,7 @@ export default function EstoquePage() {
             </div>
           )}
           {tab === 'fornecedores' && <FornecedoresRelatorioTab />}
+          {tab === 'compras' && <ComprasPorInsumoTab />}
           {tab === 'validade' && <ValidadeTab />}
         </div>
 
