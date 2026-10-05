@@ -139,6 +139,7 @@ interface RPCOrder {
   waiter_name?: string | null;
   created_at: string;
   total_amount?: number | string | null;
+  delivery_fee?: number | string | null;
   is_paid?: boolean | null;
   cancel_reason?: string | null;
   session_id?: string | null;
@@ -164,17 +165,34 @@ interface RPCOrder {
  */
 export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?: string | null) {
   const { user } = useAuth();
-  const [orders, setOrders] = useState<DBOrder[]>([]);
+  const [orders, setOrdersState] = useState<DBOrder[]>([]);
   const [loading, setLoading] = useState(true);
   // Modo histórico atingiu o teto de segurança — resultado incompleto
   const [truncated, setTruncated] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Cada carga ganha um número: só a mais recente grava (ping + troca de filtro ao mesmo tempo)
+  const seqRef = useRef(0);
+  // Filtro da última carga: recarga do mesmo filtro (ping do realtime) é silenciosa
+  const filtroRef = useRef<string | null>(null);
 
   const load = useCallback(async (from?: string, to?: string, sid?: string | null) => {
     if (!user?.tenantId) return;
 
-    setLoading(true);
-    setTruncated(false);
+    const seq = ++seqRef.current;
+    const filtro = `${from ?? ''}|${to ?? ''}|${sid ?? ''}`;
+    // Só mostra "carregando" na 1ª carga ou quando o filtro muda. O ping do realtime
+    // recarrega por baixo sem trocar a lista pelo spinner (perdia o scroll e fechava
+    // a janela de emitir NF no meio do CPF).
+    if (filtroRef.current !== filtro) {
+      filtroRef.current = filtro;
+      setLoading(true);
+    }
+    let trunc = false;
+    const setOrders = (list: DBOrder[]) => {
+      if (seq !== seqRef.current) return;
+      setOrdersState(list);
+      setTruncated(trunc);
+    };
     try {
       let rawOrders: RPCOrder[] = [];
 
@@ -301,7 +319,8 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
         // ── MODO HISTÓRICO: query direta com filtro de data ────────────────
         // Usa fuso horário de Brasília para garantir que o dia completo é coberto
         const fromTs = from ? `${from}T00:00:00-03:00` : undefined;
-        const toTs = to ? `${to}T23:59:59-03:00` : undefined;
+        // Fim exclusivo: dia seguinte 00:00 de Brasília, igual ao Dashboard (lte 23:59:59 perdia os milissegundos finais)
+        const toTs = to ? new Date(new Date(`${to}T00:00:00-03:00`).getTime() + 86_400_000).toISOString() : undefined;
 
         console.log('[useOrdersHistory] historic mode — querying:', { from: fromTs, to: toTs, tenant: user.tenantId });
 
@@ -373,7 +392,7 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
             .range(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE - 1);
 
           if (fromTs) query = query.gte('created_at', fromTs);
-          if (toTs) query = query.lte('created_at', toTs);
+          if (toTs) query = query.lt('created_at', toTs);
 
           const { data: pageData, error: pageErr } = await query;
 
@@ -387,7 +406,7 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
           if (rows.length < PAGE_SIZE) break;
           if (collected.length >= MAX_ORDERS) {
             console.warn(`[useOrdersHistory] historic mode — atingiu o teto de ${MAX_ORDERS} pedidos; resultado truncado`);
-            setTruncated(true);
+            trunc = true;
             break;
           }
         }
@@ -403,7 +422,7 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
               .eq('is_training', false)
               .eq('is_draft', false)
               .gte('created_at', fromTs ?? '')
-              .lte('created_at', toTs ?? '')
+              .lt('created_at', toTs ?? '')
               .order('created_at', { ascending: false })
               .limit(500);
             if (!fallbackErr && fallbackData && fallbackData.length > 0) {
@@ -442,13 +461,15 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
           } catch (fb) {
             console.warn('[useOrdersHistory] fallback simples também falhou:', fb);
           }
+          // Falhou tudo: não deixa os pedidos do filtro anterior com o rótulo novo
+          setOrders([]);
           return;
         }
 
         if (pageError) {
           // Erro no meio da paginação: usa o que veio, mas sinaliza parcial
           console.warn('[useOrdersHistory] historic mode — falha ao paginar, resultado parcial:', pageError.message);
-          setTruncated(true);
+          trunc = true;
         }
 
         console.log('[useOrdersHistory] historic mode — direct query returned:', collected.length, 'orders');
@@ -460,7 +481,8 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
       }
 
       // Se RPC retornou vazio no modo "hoje", faz fallback para query direta
-      if (rawOrders.length === 0 && !from && !to) {
+      // (sem sessão: sessão sem pedidos não pode puxar os pedidos de hoje de outras sessões)
+      if (rawOrders.length === 0 && !from && !to && !sid) {
         console.log('[useOrdersHistory] RPC vazio — tentando fallback direto');
         const { fromTs, toTs } = getTodayBrasiliaRange();
         let query = supabase
@@ -549,7 +571,7 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
     } catch (e) {
       console.error('[useOrdersHistory] unexpected error:', e);
     } finally {
-      setLoading(false);
+      if (seq === seqRef.current) setLoading(false);
     }
   }, [user?.tenantId]);
 
@@ -628,10 +650,11 @@ function mapRPCOrders(rpcOrders: RPCOrder[], _tenantId: string): DBOrder[] {
         : (o.is_paid ?? false)
     );
 
-    // Fallback: calcula total dos itens se total_amount da RPC for nulo/zerado
+    // Fallback: soma os itens só se total_amount vier nulo. Total 0 é real (cortesia,
+    // 100% de desconto) — antes caía no valor cheio dos itens e entrava no faturamento.
     const calcTotalFromItems = items.reduce((sum, item) => sum + item.preco * item.quantidade, 0);
-    const rpcTotal = Number(o.total_amount) || 0;
-    const finalTotal = rpcTotal > 0 ? rpcTotal : calcTotalFromItems;
+    const rpcTotal = o.total_amount == null ? NaN : Number(o.total_amount);
+    const finalTotal = Number.isFinite(rpcTotal) ? rpcTotal : calcTotalFromItems;
 
     return {
       id: o.id,
@@ -656,7 +679,7 @@ function mapRPCOrders(rpcOrders: RPCOrder[], _tenantId: string): DBOrder[] {
       sla_entrega_min: slaData.slaEntrega,
       tempo_total_min: slaData.tempoTotal,
       delivery_platform: (o as RPCOrder & { delivery_platform?: string | null }).delivery_platform ?? null,
-      delivery_fee: null,
+      delivery_fee: o.delivery_fee != null ? Number(o.delivery_fee) || null : null,
       session_id: (o as RPCOrder & { session_id?: string | null }).session_id ?? null,
       session_number: (o as RPCOrder & { session_number?: string | null }).session_number ?? null,
       participant_token: o.participant_token ?? null,
@@ -845,10 +868,10 @@ async function mapDirectQueryOrders(data: DirectQueryOrder[], tenantId: string):
       };
     });
 
-    // Calcula total dos itens como fallback se total_amount do banco estiver nulo/zerado
+    // Soma os itens só se total_amount vier nulo (total 0 = cortesia/100% de desconto, é real)
     const calcTotalFromItems = items.reduce((sum, item) => sum + item.preco * item.quantidade, 0);
-    const dbTotal = Number(o.total_amount) || 0;
-    const finalTotal = dbTotal > 0 ? dbTotal : calcTotalFromItems;
+    const dbTotal = o.total_amount == null ? NaN : Number(o.total_amount);
+    const finalTotal = Number.isFinite(dbTotal) ? dbTotal : calcTotalFromItems;
 
     // Usa waiter_name do banco diretamente; fallback para userMap se não disponível
     const operador = o.waiter_name ?? (o.origin_user_id ? (userMap[o.origin_user_id] ?? null) : null);

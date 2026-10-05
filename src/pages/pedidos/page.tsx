@@ -19,7 +19,7 @@ import { useSessao } from '@/contexts/SessaoContext';
 import ModoFaturamentoToggle from '@/components/feature/ModoFaturamentoToggle';
 import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
 import {
-  HOJE, somarDias, MESES, STATUS_LABEL as _STATUS_LABEL, DB_STATUS_LABEL, ORIGEM_LABEL,
+  getHojeBR, somarDias, MESES, STATUS_LABEL as _STATUS_LABEL, DB_STATUS_LABEL, ORIGEM_LABEL,
   formatarDataExibicao, isQRUniversal, clienteNome, origemLabelFor,
 } from './components/utils';
 import type { FiltroStatus, FiltroOrigem, ModoPeriodo } from './components/utils';
@@ -199,11 +199,13 @@ function dbParaRecente(o: DBOrder): PedidoRecente {
   const slaEspera = o.sla_espera_min != null ? Number(o.sla_espera_min) : undefined;
   const slaCozinha = o.sla_cozinha_min != null ? Number(o.sla_cozinha_min) : undefined;
   const slaEntrega = o.sla_entrega_min != null ? Number(o.sla_entrega_min) : undefined;
-  // Calcula tempo total em minutos desde a criação do pedido
+  // Pedido andando: tempo desde a criação. Entregue: o tempo gravado (criado → último evento).
+  // Sem marca da cozinha, entregue/cancelado fica sem tempo — antes virava "45h" e "atrasado".
+  const isAtivo = o.status === 'new' || o.status === 'preparing' || o.status === 'ready';
   const tempoTotalCalc = Math.floor((Date.now() - new Date(o.created_at).getTime()) / 60000);
-  const tempoTotal = o.tempo_total_min != null ? Number(o.tempo_total_min) : tempoTotalCalc;
+  const tempoTotal = isAtivo ? tempoTotalCalc : (o.tempo_total_min != null ? Number(o.tempo_total_min) : undefined);
   const slaAlvo = 15;
-  const atrasado = tempoTotal !== undefined ? tempoTotal > slaAlvo : undefined;
+  const atrasado = o.status === 'cancelled' ? false : tempoTotal !== undefined ? tempoTotal > slaAlvo : undefined;
 
   // Coleta timestamps de fases para SLA em tempo real
   const allInicioPreparoTs = o.itens
@@ -526,17 +528,25 @@ export default function PedidosPage() {
   const { modo } = useModoFaturamento();
 
   // Sessão atual do SessaoContext (para modo sessão ativa)
-  const { sessao: sessaoAtiva } = useSessao();
+  const { sessao: sessaoAtiva, loadingSession } = useSessao();
+
+  // "Hoje" de Brasília recalculado a cada minuto: a aba aberta de um dia para o outro
+  // não fica presa no dia em que carregou (antes mostrava ontem com o rótulo "Hoje").
+  const [hoje, setHoje] = useState(getHojeBR);
+  useEffect(() => {
+    const id = setInterval(() => setHoje((h) => { const agora = getHojeBR(); return agora === h ? h : agora; }), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
   // Filtro de data
   const [modoPeriodo, setModoPeriodo] = useState<ModoPeriodo>('preset');
   const [presetAtivo, setPresetAtivo] = useState<string>('hoje');
-  const [diaEspecifico, setDiaEspecifico] = useState(HOJE);
-  const [periodoInicio, setPeriodoInicio] = useState(somarDias(HOJE, -6));
-  const [periodoFim, setPeriodoFim] = useState(HOJE);
-  const [mesSelecionado, setMesSelecionado] = useState(new Date().getMonth());
-  const [anoSelecionado, setAnoSelecionado] = useState(new Date().getFullYear());
-  const [anoApenas, setAnoApenas] = useState(new Date().getFullYear());
+  const [diaEspecifico, setDiaEspecifico] = useState(getHojeBR);
+  const [periodoInicio, setPeriodoInicio] = useState(() => somarDias(getHojeBR(), -6));
+  const [periodoFim, setPeriodoFim] = useState(getHojeBR);
+  const [mesSelecionado, setMesSelecionado] = useState(() => Number(getHojeBR().slice(5, 7)) - 1);
+  const [anoSelecionado, setAnoSelecionado] = useState(() => Number(getHojeBR().slice(0, 4)));
+  const [anoApenas, setAnoApenas] = useState(() => Number(getHojeBR().slice(0, 4)));
 
   // Sessão histórica selecionada pelo usuário
   const { sessions, loading: loadingSessions } = useSessions(30);
@@ -568,27 +578,27 @@ export default function PedidosPage() {
     if (modoPeriodo === 'preset') {
       if (presetAtivo === 'hoje') {
         // "Hoje" = filtro de data direto para garantir apenas pedidos do dia atual
-        return { hookDateFrom: HOJE, hookDateTo: HOJE, hookSessionId: null };
+        return { hookDateFrom: hoje, hookDateTo: hoje, hookSessionId: null };
       }
       if (presetAtivo === 'ontem') {
-        const d = somarDias(HOJE, -1);
+        const d = somarDias(hoje, -1);
         return { hookDateFrom: d, hookDateTo: d, hookSessionId: null };
       }
       if (presetAtivo === '7dias') {
-        return { hookDateFrom: somarDias(HOJE, -6), hookDateTo: HOJE, hookSessionId: null };
+        return { hookDateFrom: somarDias(hoje, -6), hookDateTo: hoje, hookSessionId: null };
       }
       if (presetAtivo === '30dias') {
-        return { hookDateFrom: somarDias(HOJE, -29), hookDateTo: HOJE, hookSessionId: null };
+        return { hookDateFrom: somarDias(hoje, -29), hookDateTo: hoje, hookSessionId: null };
       }
       if (presetAtivo === 'mes') {
-        const mesStr = String(new Date().getMonth() + 1).padStart(2, '0');
-        return { hookDateFrom: `${HOJE.slice(0, 4)}-${mesStr}-01`, hookDateTo: HOJE, hookSessionId: null };
+        return { hookDateFrom: `${hoje.slice(0, 7)}-01`, hookDateTo: hoje, hookSessionId: null };
       }
       if (presetAtivo === 'ano') {
-        return { hookDateFrom: `${HOJE.slice(0, 4)}-01-01`, hookDateTo: HOJE, hookSessionId: null };
+        return { hookDateFrom: `${hoje.slice(0, 4)}-01-01`, hookDateTo: hoje, hookSessionId: null };
       }
-      // 'todos' = sem filtro
-      return { hookDateFrom: undefined, hookDateTo: undefined, hookSessionId: null };
+      // 'todos' = sem filtro de data. Vai pela consulta paginada (teto de 5.000 com aviso);
+      // sem data nenhuma o hook cai na RPC do KDS, que só traz os pedidos de hoje.
+      return { hookDateFrom: '2000-01-01', hookDateTo: undefined, hookSessionId: null };
     }
     if (modoPeriodo === 'dia') {
       return { hookDateFrom: diaEspecifico, hookDateTo: diaEspecifico, hookSessionId: null };
@@ -610,7 +620,7 @@ export default function PedidosPage() {
     }
     return { hookDateFrom: undefined, hookDateTo: undefined, hookSessionId: null };
   }, [
-    modo, sessaoSelecionadaId, sessaoAtiva?.id,
+    modo, sessaoSelecionadaId, sessaoAtiva?.id, hoje,
     modoPeriodo, presetAtivo, diaEspecifico,
     periodoInicio, periodoFim, mesSelecionado,
     anoSelecionado, anoApenas,
@@ -630,10 +640,17 @@ export default function PedidosPage() {
   // raro de um evento realtime perdido.
   // Ping instantâneo via trigger no banco (orders-ping) — cobre o buraco do
   // postgres_changes (RLS por linha + cold start). Reusa o mesmo debounce de 800ms.
+  // "Ao vivo" = olhando pedidos que ainda podem mudar agora: sessão atual, Hoje, ou o dia de hoje.
+  // Só aí a lista recarrega a cada pedido e entram os pedidos que o KDS já tem e o banco ainda não.
+  const aoVivo = modo === 'sessao'
+    ? !sessaoSelecionadaId
+    : (modoPeriodo === 'preset' && presetAtivo === 'hoje') || (modoPeriodo === 'dia' && diaEspecifico === hoje);
+  // Modo sessão sem sessão aberta: não mostra os pedidos de hoje com o rótulo "Sessão atual"
+  const semSessaoAberta = modo === 'sessao' && !sessaoSelecionadaId && !sessaoAtiva?.id && !loadingSession;
+
   const pingDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useOrdersPing(user?.tenantId, () => {
-    const shouldLive = modo === 'sessao' || (modoPeriodo === 'preset' && presetAtivo === 'hoje');
-    if (!shouldLive) return;
+    if (!aoVivo) return;
     if (pingDebounceRef.current) clearTimeout(pingDebounceRef.current);
     pingDebounceRef.current = setTimeout(() => {
       reloadOrders(hookDateFrom, hookDateTo, hookSessionId ?? null);
@@ -642,8 +659,7 @@ export default function PedidosPage() {
   useEffect(() => () => { if (pingDebounceRef.current) clearTimeout(pingDebounceRef.current); }, []);
 
   useEffect(() => {
-    const shouldLive = modo === 'sessao' || (modoPeriodo === 'preset' && presetAtivo === 'hoje');
-    if (!shouldLive || !user?.tenantId) return;
+    if (!aoVivo || !user?.tenantId) return;
 
     let debounce: ReturnType<typeof setTimeout> | null = null;
     const agendarReload = () => {
@@ -663,7 +679,7 @@ export default function PedidosPage() {
       if (debounce) clearTimeout(debounce);
       supabase.removeChannel(canal);
     };
-  }, [user?.tenantId, reloadOrders, hookDateFrom, hookDateTo, hookSessionId, modo, modoPeriodo, presetAtivo]);
+  }, [user?.tenantId, reloadOrders, hookDateFrom, hookDateTo, hookSessionId, aoVivo]);
 
   useEffect(() => {
     if (modo !== 'sessao') setSessaoSelecionadaId(null);
@@ -676,7 +692,13 @@ export default function PedidosPage() {
 
   // ── Merge: DB (fonte da verdade) + KDS (status em tempo real) ────────────
   const pedidos = useMemo(() => {
+    if (semSessaoAberta) return [];
     const kdsMap = new Map(kdsPedidos.map((p) => [p.id, p]));
+    const dataBR = (p: KDSPedido) => new Date(p.criadoEm).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    // Pedido que o KDS já tem e o banco ainda não devolveu: só entra olhando "ao vivo"
+    // (numa sessão encerrada ou em outro dia ele entrava com total 0 e "Pendente").
+    const soDoKds = () => (aoVivo ? kdsPedidos : [])
+      .filter((p) => !p.isTraining && (modo === 'sessao' || dataBR(p) === hoje));
 
     if (dbOrders.length > 0) {
       const dbMapeados = dbOrders.map((o) => {
@@ -730,13 +752,7 @@ export default function PedidosPage() {
 
       // Adiciona pedidos do KDS que ainda não existem no DB (recém-criados)
       const dbIds = new Set(dbOrders.map((o) => o.id));
-      const apenasKds = kdsPedidos
-        .filter((p) => {
-          if (dbIds.has(p.id)) return false;
-          // Só inclui pedidos do dia atual para não poluir a lista
-          return new Date(p.criadoEm).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }) === HOJE;
-        })
-        .map(kdsParaRecente);
+      const apenasKds = soDoKds().filter((p) => !dbIds.has(p.id)).map(kdsParaRecente);
 
       return [...apenasKds, ...dbMapeados];
     }
@@ -744,44 +760,21 @@ export default function PedidosPage() {
     // Enquanto carrega, não mostra KDS (total=0 poluiria a lista)
     if (loadingSessaoOrders) return [];
 
-    // DB vazio após carregamento: usa KDS como fallback, mas filtra por data
-    return kdsPedidos
-      .filter((p) => {
-        const dataBR = new Date(p.criadoEm).toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
-        if (modo === 'sessao') return true;
-        if (modoPeriodo === 'preset') {
-          if (presetAtivo === 'hoje') return dataBR === HOJE;
-          if (presetAtivo === 'ontem') return dataBR === somarDias(HOJE, -1);
-          if (presetAtivo === '7dias') return dataBR >= somarDias(HOJE, -6) && dataBR <= HOJE;
-          if (presetAtivo === '30dias') return dataBR >= somarDias(HOJE, -29) && dataBR <= HOJE;
-          if (presetAtivo === 'mes') return dataBR.startsWith(HOJE.slice(0, 7));
-          if (presetAtivo === 'ano') return dataBR.startsWith(HOJE.slice(0, 4));
-          return true;
-        }
-        if (modoPeriodo === 'dia') return dataBR === diaEspecifico;
-        if (modoPeriodo === 'periodo') return dataBR >= periodoInicio && dataBR <= periodoFim;
-        if (modoPeriodo === 'mes') {
-          const mesStr = String(mesSelecionado + 1).padStart(2, '0');
-          return dataBR.startsWith(`${anoSelecionado}-${mesStr}`);
-        }
-        if (modoPeriodo === 'ano') return dataBR.startsWith(`${anoApenas}`);
-        return true;
-      })
-      .map(kdsParaRecente);
-  }, [kdsPedidos, dbOrders, loadingSessaoOrders, modo, modoPeriodo, presetAtivo, diaEspecifico,
-      periodoInicio, periodoFim, mesSelecionado, anoSelecionado, anoApenas]);
+    // DB vazio após carregamento: usa os pedidos de agora do KDS (só ao vivo)
+    return soDoKds().map(kdsParaRecente);
+  }, [kdsPedidos, dbOrders, loadingSessaoOrders, modo, aoVivo, semSessaoAberta, hoje]);
 
   // ── Filtro de data no frontend (apenas para filtragem visual) ─────────────
   const filtrarPorData = (p: PedidoRecente): boolean => {
     if (modo === 'sessao') return true;
-    const data = p.dataPedido ?? HOJE;
+    const data = p.dataPedido ?? hoje;
     if (modoPeriodo === 'preset') {
-      if (presetAtivo === 'hoje') return data === HOJE;
-      if (presetAtivo === 'ontem') return data === somarDias(HOJE, -1);
-      if (presetAtivo === '7dias') return data >= somarDias(HOJE, -6) && data <= HOJE;
-      if (presetAtivo === '30dias') return data >= somarDias(HOJE, -29) && data <= HOJE;
-      if (presetAtivo === 'mes') return data.startsWith(HOJE.slice(0, 7));
-      if (presetAtivo === 'ano') return data.startsWith(HOJE.slice(0, 4));
+      if (presetAtivo === 'hoje') return data === hoje;
+      if (presetAtivo === 'ontem') return data === somarDias(hoje, -1);
+      if (presetAtivo === '7dias') return data >= somarDias(hoje, -6) && data <= hoje;
+      if (presetAtivo === '30dias') return data >= somarDias(hoje, -29) && data <= hoje;
+      if (presetAtivo === 'mes') return data.startsWith(hoje.slice(0, 7));
+      if (presetAtivo === 'ano') return data.startsWith(hoje.slice(0, 4));
       return true;
     }
     if (modoPeriodo === 'dia') return data === diaEspecifico;
@@ -836,22 +829,28 @@ export default function PedidosPage() {
         const matchStatus = (() => {
           if (filtroStatus === 'todos') return true;
           if (filtroStatus === 'aberto') {
-            // Em aberto = pedido não cancelado que ainda não foi totalmente entregue
+            // Em aberto = pedido não cancelado que ainda não foi totalmente entregue.
+            // Pedido entregue no banco não volta: a bebida sem cozinha (skip_kds) nunca ganha
+            // "entregue" na unidade e o item cancelado nunca é entregue — seguravam o pedido aqui.
             if (p.status === 'cancelled' || p.status === 'cancelado') return false;
-            const totalUnidades = p.itensDetalhes.reduce((acc, item) => acc + item.quantidade, 0);
-            const unidadesEntregues = p.itensDetalhes.reduce((acc, item) => {
+            if (p.status === 'delivered' || p.status === 'entregue') return false;
+            const itensValidos = p.itensDetalhes.filter((item) => !item.cancelado);
+            const totalUnidades = itensValidos.reduce((acc, item) => acc + item.quantidade, 0);
+            const unidadesEntregues = itensValidos.reduce((acc, item) => {
               return acc + (item.unidades?.filter((u) => u.status === 'entregue').length ?? 0);
             }, 0);
             return unidadesEntregues < totalUnidades;
           }
           if (filtroStatus === 'pronto') {
             // Pelo menos uma unidade está pronta ou entregue
+            if (p.status === 'ready' || p.status === 'delivered') return true;
             return p.itensDetalhes.some((item) =>
               item.unidades?.some((u) => u.status === 'pronto' || u.status === 'entregue') ?? false,
             );
           }
           if (filtroStatus === 'entregue') {
             // Pelo menos uma unidade foi entregue
+            if (p.status === 'delivered') return true;
             return p.itensDetalhes.some((item) =>
               item.unidades?.some((u) => u.status === 'entregue') ?? false,
             );
@@ -875,7 +874,7 @@ export default function PedidosPage() {
       .sort((a, b) => b.minutosAtras === a.minutosAtras ? 0 : a.minutosAtras - b.minutosAtras);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pedidos, busca, filtroStatus, filtroOrigem, filtroPlataforma, modoPeriodo, presetAtivo, diaEspecifico,
-      periodoInicio, periodoFim, mesSelecionado, anoSelecionado, anoApenas, modo]);
+      periodoInicio, periodoFim, mesSelecionado, anoSelecionado, anoApenas, modo, hoje]);
 
   // ── Agrupamento de pedidos unificados para a lista ─────────────────────────
   const pedidosAgrupados = useMemo(() => agruparPedidosUnificados(filtrados), [filtrados]);
@@ -900,7 +899,7 @@ export default function PedidosPage() {
   const slaMedio = pedidosComSla.length > 0
     ? Math.round(pedidosComSla.reduce((acc, p) => acc + (p.slaCozinha ?? 0), 0) / pedidosComSla.length)
     : null;
-  const pagos = filtrados.filter((p) => p.pago).length;
+  const pagos = filtrados.filter((p) => p.pago && !['cancelado', 'cancelled'].includes(p.status)).length;
   const pendentes = filtrados.filter(
     (p) => !p.pago && !['cancelado', 'cancelled'].includes(p.status),
   ).length;
@@ -921,14 +920,22 @@ export default function PedidosPage() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  // Célula de CSV: texto que começa com = + - @ vira fórmula no Excel (o nome do cliente do
+  // QR é digitado por ele) — prefixa com ' para abrir como texto.
+  const celulaCsv = (v: string | number) => {
+    const t = String(v);
+    const seguro = /^[=+\-@\t\r]/.test(t) ? `'${t}` : t;
+    return `"${seguro.replace(/"/g, '""')}"`;
+  };
+
   const exportarCSV = (modoExport: 'resumo' | 'detalhado' = 'resumo') => {
     const label = labelDataAtiva().replace(/[\s→]/g, '_');
-    const dateStr = new Date().toISOString().slice(0, 10);
+    const dateStr = hoje;
     if (modoExport === 'detalhado') {
       const headers = ['Nº Pedido','Código','Sessão','Data','Hora','Status','Pagamento','Destino','Origem','Operador','Item','Qtd','Preço Unit (R$)','Subtotal Item (R$)','Opções','Observação','Estação','SLA Espera (min)','SLA Cozinha (min)','Tempo Total (min)','Total Pedido (R$)'];
       const rows: string[][] = [];
       filtrados.forEach((p) => {
-        p.itensDetalhes.forEach((item) => {
+        p.itensDetalhes.filter((item) => !item.cancelado).forEach((item) => {
           rows.push([
             String(p.numero).padStart(4, '0'), p.numeroCodigo ?? '', p.session_number ?? '', p.dataPedido ?? '', p.criadoEm,
             DB_STATUS_LABEL[p.status] ?? _STATUS_LABEL[p.status] ?? p.status,
@@ -945,7 +952,7 @@ export default function PedidosPage() {
           ]);
         });
       });
-      const csv = [headers, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n');
+      const csv = [headers, ...rows].map((r) => r.map(celulaCsv).join(';')).join('\n');
       const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -958,13 +965,13 @@ export default function PedidosPage() {
         DB_STATUS_LABEL[p.status] ?? _STATUS_LABEL[p.status] ?? p.status,
         p.pago ? 'Pago' : 'Pendente',
         destinoStr(p), origemLabelFor(p), p.garcomNome ?? '',
-        p.itensDetalhes.map((i) => `${i.quantidade}x ${i.nome}`).join(' | '),
+        p.itensDetalhes.filter((i) => !i.cancelado).map((i) => `${i.quantidade}x ${i.nome}`).join(' | '),
         p.slaEspera !== undefined ? String(p.slaEspera) : '',
         p.slaCozinha !== undefined ? String(p.slaCozinha) : '',
         p.tempoAberto !== undefined ? String(p.tempoAberto) : '',
         p.total.toFixed(2).replace('.', ','),
       ]);
-      const csv = [headers, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n');
+      const csv = [headers, ...rows].map((r) => r.map(celulaCsv).join(';')).join('\n');
       const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1131,6 +1138,14 @@ export default function PedidosPage() {
             >
               <i className="ri-close-line" /> Voltar à sessão atual
             </button>
+          </div>
+        )}
+
+        {/* Modo sessão sem sessão aberta: lista vazia de propósito (antes mostrava os pedidos de hoje) */}
+        {semSessaoAberta && (
+          <div className="flex items-center gap-3 px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-xs text-zinc-600">
+            <i className="ri-store-2-line text-zinc-400 flex-shrink-0" />
+            <span>Nenhuma sessão aberta agora. Escolha uma sessão anterior no seletor ou troque para <strong>Calendário</strong>.</span>
           </div>
         )}
 
