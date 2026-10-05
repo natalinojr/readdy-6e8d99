@@ -213,7 +213,10 @@ export default function AppLayout() {
             <i className="ri-graduation-cap-fill text-amber-900 text-base" />
           </div>
         )}
-        <TopBar onMenuToggle={() => setSidebarOpen((v) => !v)} />
+        <TopBar
+          onMenuToggle={() => setSidebarOpen((v) => !v)}
+          onLigarCasca={casca.podeLigar ? () => { void casca.setLigada(true); } : undefined}
+        />
         <main className="flex-1 overflow-y-auto p-4 md:p-6">
           <RotaProtegida>
             {/* O alerta de sessão esquecida é renderizado apenas no PDV Caixa

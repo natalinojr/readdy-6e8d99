@@ -84,9 +84,11 @@ const perfilLabel: Record<string, string> = {
 
 interface TopBarProps {
   onMenuToggle?: () => void;
+  /** Volta para o menu novo (casca). Ausente = a pessoa não tem o menu novo. */
+  onLigarCasca?: () => void;
 }
 
-export default function TopBar({ onMenuToggle }: TopBarProps) {
+export default function TopBar({ onMenuToggle, onLigarCasca }: TopBarProps) {
   const { user, logout, canSwitchTenant, switchTenant } = useAuth();
   const navigate = useNavigate();
   const { isModoTreino } = useModoTreino();
@@ -343,6 +345,18 @@ export default function TopBar({ onMenuToggle }: TopBarProps) {
                   </div>
                   Criar nova loja
                 </button>
+
+                {onLigarCasca && (
+                  <button
+                    onClick={() => { setShowUserMenu(false); onLigarCasca(); }}
+                    className="w-full text-left px-4 py-2.5 text-sm text-zinc-700 hover:bg-zinc-50 flex items-center gap-2.5 cursor-pointer transition-colors"
+                  >
+                    <div className="w-4 h-4 flex items-center justify-center">
+                      <i className="ri-layout-masonry-line text-zinc-400 text-sm" />
+                    </div>
+                    Usar o menu novo
+                  </button>
+                )}
               </div>
 
               <div className="border-t border-zinc-100" />

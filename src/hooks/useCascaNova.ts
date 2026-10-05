@@ -27,7 +27,7 @@ function gravarLocal(userId: string, v: boolean) {
   try { localStorage.setItem(`${CHAVE_LOCAL}:${userId}`, v ? '1' : '0'); } catch { /* sem storage */ }
 }
 
-export function useCascaNova(): { ligada: boolean; setLigada: (v: boolean) => Promise<void> } {
+export function useCascaNova(): { ligada: boolean; podeLigar: boolean; setLigada: (v: boolean) => Promise<void> } {
   const { user, availableTenants } = useAuth();
   const padrao = (user?.email ?? '').toLowerCase() === ADMIN_MASTER_EMAIL;
   const [valor, setValor] = useState<boolean | null>(() => lerLocal(user?.id));
@@ -80,5 +80,6 @@ export function useCascaNova(): { ligada: boolean; setLigada: (v: boolean) => Pr
     }
   }, [user?.id, user?.tenantId, availableTenants]);
 
-  return { ligada: valor ?? padrao, setLigada };
+  // Volta pelo menu antigo: quem já desligou a casca (valor '0') ou o dono, para ninguém ficar preso no antigo.
+  return { ligada: valor ?? padrao, podeLigar: valor === false || padrao, setLigada };
 }
