@@ -49,6 +49,23 @@ export function toggleOpcaoGrupo<T extends { nome: string }>(
   return { selecao: [...atual, opcao], bloqueado: false };
 }
 
+/**
+ * Opções já escolhidas (carrinho) que pertencem a este grupo, para reabrir a
+ * edição. Casa pelo grupo E pelo nome: a mesma opção pode existir em dois
+ * grupos ("Burrito 4 Quesos" no 1º e no 2º burrito) e casar só pelo nome
+ * duplicava a escolha ao salvar (pedido P0510260015 saiu com 3 burritos).
+ * Sem grupoNome (carrinho antigo) cai no casamento só pelo nome.
+ */
+export function opcoesDoGrupoNoCarrinho<S extends { nome: string; grupoNome?: string | null }>(
+  selecionadas: S[],
+  grupo: { grupo: string; itens: { nome: string }[] },
+): S[] {
+  return selecionadas.filter((sel) =>
+    (!sel.grupoNome || sel.grupoNome === grupo.grupo) &&
+    grupo.itens.some((it) => it.nome === sel.nome),
+  );
+}
+
 /** Primeiro grupo que ainda não atingiu o mínimo (ou null se todos ok). */
 export function primeiroGrupoFaltando<G extends GrupoSelecaoRegra>(
   grupos: G[] | undefined,
