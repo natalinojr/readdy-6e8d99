@@ -522,8 +522,9 @@ async function aceiteAutomatico(admin: Admin, c: Ctx, row: any) {
 
 // ── NFC-e dos pedidos do iFood (IFOOD-PEDIDOS-FUNIL.md, etapa 5) ──
 // Só com a chave da loja order_emit_nfce (+ fiscal da loja ligado; a fiscal-write confere e calcula o valor da venda).
-// Pago no app / cobrado pelo entregador do iFood (orders.ifood_repasse): a nota sai quando o pedido fica pronto, sai
-// para entrega ou conclui — o que vier primeiro. Cobrado pela loja: sai quando o caixa recebe (order-write).
+// A nota sai só com o pedido CONCLUÍDO no iFood e pago (decisão do dono, 05/10: depois da conclusão não há mais risco
+// de cancelamento) — o que acontecer por último: pago no app já nasce pago, então sai no CONCLUDED; cobrado pela loja
+// sai no CONCLUDED se o caixa já recebeu, ou quando o caixa receber (order-write → fiscal-write confere a conclusão).
 // A chamada à fiscal-write não segura o polling (até 70 s do provedor; trava de 90 s da loja): roda em segundo plano.
 function emSegundoPlano(p: Promise<unknown>) {
   // deno-lint-ignore no-explicit-any
@@ -542,9 +543,9 @@ async function chamarFiscal(body: Record<string, unknown>) {
 }
 
 async function notaFiscalIfood(admin: Admin, cfg: any, row: any) {
-  if (cfg.order_emit_nfce !== true || !row.order_id || row.is_test === true || !['ready', 'dispatched', 'concluded'].includes(row.status)) return;
-  const { data: o } = await admin.from('orders').select('id, is_paid, is_draft, ifood_repasse, status, is_training').eq('id', row.order_id).maybeSingle();
-  if (!o || !o.is_paid || !o.ifood_repasse || o.is_draft || o.status === 'cancelled' || o.is_training) return;
+  if (cfg.order_emit_nfce !== true || !row.order_id || row.is_test === true || row.status !== 'concluded') return;
+  const { data: o } = await admin.from('orders').select('id, is_paid, is_draft, status, is_training').eq('id', row.order_id).maybeSingle();
+  if (!o || !o.is_paid || o.is_draft || o.status === 'cancelled' || o.is_training) return;
   // Uma tentativa automática só: qualquer documento já criado (autorizado, em andamento, rejeitado, erro, cancelado à
   // mão) fica com a tela Notas Fiscais. Erro de tempo esgotado pode ter sido autorizado na SEFAZ — reenviar sozinho
   // geraria uma 2ª nota.
@@ -607,7 +608,6 @@ async function funnelAfterEvent(admin: Admin, c: Ctx, rowId: string) {
     return;
   }
   if (!row.order_id && funnelOn(c.cfg)) await criarPedidoFunil(admin, c, row);
-  else if (row.order_id) await notaFiscalIfood(admin, c.cfg, row);
 }
 
 /** A cada polling da loja no funil: pedidos que não entraram (ex.: caixa fechado), confirmações pendentes e avisos. */

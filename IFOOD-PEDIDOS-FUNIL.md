@@ -159,10 +159,13 @@ d95420e); foi **desfeita** no mesmo dia porque o dono escolheu este desenho. Apr
   com descrição **"iFood - online"** (pedido do dono). Emissão automática de pedido do iFood só com
   `ifood_pdv_config.order_emit_nfce` (trava também o cobrado na entrega, que o order-write dispara ao receber no
   caixa). Emissão manual (Notas Fiscais, force) não depende da chave.
-- **Quando sai:** pago no app/entregador do iFood (`ifood_repasse`) → no 1º evento READY_TO_PICKUP, DISPATCHED ou
-  CONCLUDED (o que vier primeiro), em segundo plano (não segura o polling). **Uma tentativa automática só**: qualquer
+- **Quando sai (decisão do dono, 05/10): só com o pedido CONCLUÍDO no iFood e pago** — o que acontecer por último
+  (depois da conclusão não há mais risco de cancelamento). Pago no app → no CONCLUDED; cobrado pela loja → no CONCLUDED
+  se o caixa já recebeu, senão quando o caixa receber (a fiscal-write recusa pedido do iFood não concluído). Tempos
+  vistos: entregador do iFood conclui na validação do código (#1631: 23 min); entrega pela loja ~30 min; consumo no
+  local ~4 h. Roda em segundo plano (não segura o polling). **Uma tentativa automática só**: qualquer
   documento já criado (erro, rejeição, cancelado à mão) fica para a tela Notas Fiscais — erro de tempo esgotado pode
-  ter sido autorizado na SEFAZ e reenviar sozinho geraria 2ª nota. Cobrado pela loja → quando o caixa recebe.
+  ter sido autorizado na SEFAZ e reenviar sozinho geraria 2ª nota.
   Pedido do iFood decide só pela chave do iFood (não pelas chaves por canal); pedido de teste do iFood (`is_test`)
   nunca vira nota. Revisão Opus 05/10: 0 P1; 4 P2 + 4 P3 corrigidos.
 - **Cancelado pelo iFood depois da nota:** cancela a NFC-e (justificativa fixa); se a SEFAZ recusar (prazo), fica o

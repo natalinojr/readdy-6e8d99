@@ -214,7 +214,7 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
                           <label className="flex items-start gap-2 text-xs text-zinc-600 cursor-pointer pl-5">
                             <input type="checkbox" className="mt-0.5" checked={cfg.order_emit_nfce} disabled={!!busy}
                               onChange={(e) => run('ord-nfce', 'set_options', { order_emit_nfce: e.target.checked }, e.target.checked ? 'NFC-e dos pedidos do iFood ligada.' : 'NFC-e dos pedidos do iFood desligada.')} />
-                            <span>Emitir NFC-e dos pedidos do iFood — valor da venda (itens + entrega da loja − desconto da loja); pago no app sai como "iFood - online" quando o pedido fica pronto. Precisa do fiscal da loja ligado.</span>
+                            <span>Emitir NFC-e dos pedidos do iFood — valor da venda (itens + entrega da loja − desconto da loja); sai quando o iFood conclui o pedido (sem risco de cancelamento); pago no app sai como "iFood - online". Precisa do fiscal da loja ligado.</span>
                           </label>
                         )}
                       </div>
