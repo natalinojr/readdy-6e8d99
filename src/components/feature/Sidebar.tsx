@@ -73,7 +73,7 @@ const navSections: NavSection[] = [
       { label: 'Pedidos',               icon: ClipboardList,   path: '/pedidos',       permissao: 'gestao_pedidos' },
       // Área iFood (2026-10-05): só em loja com iFood ligado na API.
       { label: 'iFood',                 icon: ShoppingBag,     path: '/ifood',         permissao: ['rel_ifood', 'fin_ifood', 'gestao_pedidos', 'gestao_delivery'], precisaIfood: true },
-      { label: 'Delivery',              icon: Truck,           path: '/config-delivery', permissao: 'gestao_delivery' },
+      { label: 'Delivery próprio',      icon: Truck,           path: '/config-delivery', permissao: 'gestao_delivery' },
       { label: 'Relatórios',            icon: BarChart3,       path: '/relatorios',    permissao: REL_KEYS },
       { label: 'Tráfego Pago',          icon: Megaphone,       path: '/trafego-pago',  permissao: 'relatorio_financeiro' },
       { label: 'Estúdio de Criação',    icon: Palette,         path: '/estudio',       permissao: 'marketing_estudio' },

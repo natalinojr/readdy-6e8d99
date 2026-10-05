@@ -266,7 +266,7 @@ export default function ConfigDeliveryPage() {
               <i className="ri-truck-line text-white text-base md:text-lg" />
             </div>
             <div className="min-w-0 flex-1">
-              <h1 className="text-base md:text-lg font-bold text-zinc-800">Delivery</h1>
+              <h1 className="text-base md:text-lg font-bold text-zinc-800">Delivery próprio</h1>
               <p className="text-xs text-zinc-400 hidden sm:block">Seu delivery próprio: área, entregadores, divulgação e WhatsApp</p>
             </div>
             {situacao && (

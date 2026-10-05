@@ -17,7 +17,7 @@ const ROTULO_BARRA: Record<string, string> = {
   receber: 'Recebimentos',
   'gestor-pedidos': 'Cozinha',
   'gestor-entregas': 'Entregas',
-  'config-delivery': 'Delivery',
+  'config-delivery': 'Delivery próprio',
   'pdv-garcom': 'Garçom',
   'pdv-delivery': 'Telefone',
   autoatendimento: 'Totem',
