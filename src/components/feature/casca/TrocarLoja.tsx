@@ -198,7 +198,6 @@ function ConteudoTroca({ onFechar }: { onFechar: () => void }) {
               <div className="text-[11.5px] text-white/60 mt-1 tabular-nums">
                 {total.pedidos} {total.pedidos === 1 ? 'pedido' : 'pedidos'}
                 {total.pedidos > 0 && <> · tíquete {brl(total.ticket)}</>}
-                {' · '}{total.abertas} {total.abertas === 1 ? 'aberta' : 'abertas'}
                 {juntas[0] && <> · {rotuloComparacao('hoje', juntas[0])}</>}
               </div>
             </button>
