@@ -6,6 +6,7 @@ import { usePermissoes } from '@/hooks/usePermissoes';
 import { useDeliveryTela } from '../DeliveryTela';
 import { faixasOrdenadas, inicioDosUltimos30Dias } from '../config';
 import AcertoRegraCard from '../AcertoRegraCard';
+import { MODOS_COM_DIARIA, MODOS_FAIXA_KM } from '../acertoCfg';
 import { contaPorFaixa, resumoDoPeriodo, type PedidoConta } from '../acertoConta';
 import { btn, brl, Cartao, Colunas, Manchete, Nota, PaginaDelivery, SecaoTitulo } from '../ui';
 
@@ -112,10 +113,10 @@ export default function AcertoAba() {
                   </table>
                 )}
 
-                {acerto.modo === 'diaria_mais_entrega' && acerto.diaria > 0 && (
+                {MODOS_COM_DIARIA.includes(acerto.modo) && acerto.diaria > 0 && (
                   <p className="text-xs text-zinc-500 mt-2">Mais a diária de <b>{brl(acerto.diaria)}</b> por dia trabalhado (não entra na conta de cada entrega).</p>
                 )}
-                {acerto.modo === 'faixa_km' && (
+                {MODOS_FAIXA_KM.includes(acerto.modo) && (
                   <p className="text-xs text-zinc-500 mt-2">Cada faixa de entrega usa o valor da faixa de km do acerto que cobre a sua distância.</p>
                 )}
 

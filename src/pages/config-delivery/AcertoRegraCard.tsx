@@ -4,13 +4,14 @@
 // Visual novo da tela Delivery (2026-10-05): interruptor, "Como paga?" em chips e a regra escrita em frase,
 // com o valor dentro da frase (campo que aceita vírgula, como "6,50").
 
-import { type AcertoCfg, type ModoAcerto } from './acertoCfg';
+import { MODOS_FAIXA_KM, type AcertoCfg, type ModoAcerto } from './acertoCfg';
 import { Cartao, CampoNumero, LinhaInterruptor, Nota } from './ui';
 
 const MODOS: { key: ModoAcerto; label: string; dica: string }[] = [
   { key: 'por_entrega', label: 'Valor fixo por entrega', dica: 'Cada entrega paga o mesmo valor.' },
   { key: 'faixa_km', label: 'Por faixa de km', dica: 'O valor depende da distância da loja até o cliente.' },
   { key: 'diaria_mais_entrega', label: 'Diária + por entrega', dica: 'Uma diária por dia trabalhado, mais um valor por entrega.' },
+  { key: 'diaria_mais_faixa_km', label: 'Diária + por faixa de km', dica: 'Uma diária por dia trabalhado, mais um valor por entrega que depende da distância.' },
   { key: 'percentual_taxa', label: '% da taxa', dica: 'O entregador fica com parte da taxa cobrada do cliente.' },
 ];
 
@@ -69,6 +70,14 @@ export default function AcertoRegraCard({ value, onChange }: { value: AcertoCfg;
               </p>
             )}
 
+            {value.modo === 'diaria_mais_faixa_km' && (
+              <p className="text-[14px] leading-[2.4] text-zinc-700 border-b border-zinc-100 pb-2 mb-2.5">
+                Cada dia trabalhado paga{' '}
+                <CampoNumero prefixo="R$" valor={value.diaria} onChange={(n) => set({ diaria: n })} rotulo="Diária" placeholder="0,00" />
+                {' '}e cada entrega paga mais, conforme a distância:
+              </p>
+            )}
+
             {value.modo === 'percentual_taxa' && (
               <p className="text-[14px] leading-[2.4] text-zinc-700">
                 O entregador fica com{' '}
@@ -78,7 +87,7 @@ export default function AcertoRegraCard({ value, onChange }: { value: AcertoCfg;
               </p>
             )}
 
-            {value.modo === 'faixa_km' && (
+            {MODOS_FAIXA_KM.includes(value.modo) && (
               <div className="space-y-2.5">
                 {value.faixas.length === 0 && (
                   <p className="text-[13px] text-zinc-500">Nenhuma faixa ainda. Toque em &quot;Adicionar faixa&quot; para dizer quanto paga até cada distância.</p>
