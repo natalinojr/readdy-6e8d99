@@ -36,9 +36,9 @@ function CartaoLoja({ l, cor, precisam }: { l: LojaComparada; cor: string; preci
   const faltam = l.meta ? l.meta - l.atual.faturamento : 0;
   return (
     <div className="bg-white border border-[#EEE6DA] rounded-[18px] p-4 min-w-0">
-      <div className="flex items-center gap-2 min-w-0">
+      <div className="flex items-center gap-x-2 gap-y-1 flex-wrap min-w-0">
         <PontoLoja cor={cor} />
-        <b className="text-[15px] font-extrabold text-[#1F1A14] truncate">{l.nome}</b>
+        <b className="text-[15px] font-extrabold text-[#1F1A14] leading-tight">{l.nome}</b>
         <EtiquetaDia loja={l} />
         {precisam > 0 && (
           <span className="ml-auto text-[11px] font-bold rounded-full px-2 py-0.5 bg-red-50 text-red-600 whitespace-nowrap">
