@@ -39,7 +39,7 @@ async function vendasDoDiaLoja(tenantId: string, dia: string): Promise<Record<st
         .select('created_at, total_amount')
         .eq('tenant_id', tenantId)
         .in('session_id', doDia)
-        .eq('is_paid', true).neq('status', 'cancelled')
+        .eq('is_paid', true).neq('status', 'cancelled').eq('ifood_repasse', false)
         .eq('is_training', false).eq('is_draft', false)
         .order('created_at', { ascending: true })
         .range(a, b)),
@@ -48,7 +48,7 @@ async function vendasDoDiaLoja(tenantId: string, dia: string): Promise<Record<st
       .select('created_at, total_amount')
       .eq('tenant_id', tenantId)
       .is('session_id', null)
-      .eq('is_paid', true).neq('status', 'cancelled')
+      .eq('is_paid', true).neq('status', 'cancelled').eq('ifood_repasse', false)
       .eq('is_training', false).eq('is_draft', false)
       .gte('created_at', ini).lt('created_at', fimDia)
       .order('created_at', { ascending: true })

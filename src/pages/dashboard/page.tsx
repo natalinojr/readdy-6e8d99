@@ -213,7 +213,10 @@ export default function Dashboard() {
   const horaAgoraNum = horaDoDia(new Date(), diaLoja);
   const vendasPorHora = (() => {
     const pdv: Record<string, number> = {};
-    for (const h of m?.vendas_por_hora ?? []) pdv[h.hora.slice(0, 2)] = (pdv[h.hora.slice(0, 2)] ?? 0) + Number(h.valor);
+    for (const h of m?.vendas_por_hora ?? []) {
+      const hh = h.hora.split(':')[0];
+      pdv[hh] = (pdv[hh] ?? 0) + Number(h.valor);
+    }
     const ifoodHora: Record<string, number> = {};
     for (const [h, v] of Object.entries(ifDia?.porHora ?? {})) {
       const hh = String(h).padStart(2, '0');

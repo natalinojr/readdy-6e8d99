@@ -6,6 +6,8 @@
 --   • Dia atual da loja = dia em que abriu a sessão aberta mais recente; sem sessão aberta, a data de hoje.
 --   • iFood (não passa pelo PDV) entra no dia da sessão que estava aberta na hora do pedido; fora de sessão,
 --     pela data do pedido. A conta do iFood é no front (src/lib/diaLoja.ts) com as janelas de fn_loja_janelas.
+-- Venda = pedido pago, sem cancelado/treino/rascunho e SEM o pedido do iFood pago pelo repasse (ifood_repasse: esse
+-- já entra pelo iFood — regra de 20260927250000; antes o Dashboard o contava duas vezes).
 -- Vale para o Dashboard (fn_get_dashboard_metrics / fn_get_dashboard_painel — "Hoje"), para a tela Hoje e para
 -- o comparativo de lojas (fn_lojas_comparar). O modo "Sessão" do Dashboard (p_desde) continua como era.
 
@@ -49,20 +51,31 @@ as $$
 $$;
 
 -- ── Janelas das sessões que tocam os dias [d1, d2] (para encaixar o iFood no dia certo) ──
--- Inclui a sessão de antes que ainda estava aberta no começo de d1 (o iFood dela é do dia dela, não de d1).
+-- Inclui a sessão de antes que ainda estava aberta no começo de d1 (o iFood dela é do dia dela, não de d1) e a
+-- sessão aberta depois de d2 enquanto uma de d2 ainda estava aberta (com duas abertas vale a mais recente: sem ela,
+-- o mesmo pedido do iFood cairia em d2 aqui e no dia seguinte na consulta do dia seguinte).
 create or replace function public.fn_loja_janelas(p_tenant uuid, p_d1 date, p_d2 date)
 returns jsonb
 language sql
 stable
 set search_path = public
 as $$
+  with ate as (
+    select greatest(
+             (p_d2 + 1)::timestamp at time zone 'America/Sao_Paulo',
+             coalesce(max(coalesce(s.closed_at, now())), '-infinity'::timestamptz)) as fim
+      from sessions s
+     where s.tenant_id = p_tenant and not coalesce(s.is_training, false)
+       and s.opened_at >= (p_d1::timestamp at time zone 'America/Sao_Paulo')
+       and s.opened_at <  ((p_d2 + 1)::timestamp at time zone 'America/Sao_Paulo')
+  )
   select coalesce(jsonb_agg(jsonb_build_object(
            'dia', (s.opened_at at time zone 'America/Sao_Paulo')::date,
            'ini', s.opened_at,
            'fim', s.closed_at) order by s.opened_at), '[]'::jsonb)
-    from sessions s
+    from sessions s, ate
    where s.tenant_id = p_tenant and not coalesce(s.is_training, false)
-     and s.opened_at < ((p_d2 + 1)::timestamp at time zone 'America/Sao_Paulo')
+     and s.opened_at < ate.fim
      and coalesce(s.closed_at, now()) > (p_d1::timestamp at time zone 'America/Sao_Paulo');
 $$;
 
@@ -138,20 +151,20 @@ begin
     -- Faturamento REALIZADO: pedidos pagos e não cancelados
     'faturamento_hoje', coalesce((
       select sum(o.total_amount) from orders o
-      where o.id = any(v_hoje) and o.is_paid = true and o.status != 'cancelled' and not o.is_training and not o.is_draft
+      where o.id = any(v_hoje) and o.is_paid = true and o.status != 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
     ), 0),
     'faturamento_ontem', coalesce((
       select sum(o.total_amount) from orders o
-      where o.id = any(v_ontem) and o.is_paid = true and o.status != 'cancelled' and not o.is_training and not o.is_draft
+      where o.id = any(v_ontem) and o.is_paid = true and o.status != 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
     ), 0),
     -- Pedidos pagos hoje
     'pedidos_hoje', coalesce((
       select count(*) from orders o
-      where o.id = any(v_hoje) and o.is_paid = true and o.status != 'cancelled' and not o.is_training and not o.is_draft
+      where o.id = any(v_hoje) and o.is_paid = true and o.status != 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
     ), 0),
     'pedidos_ontem', coalesce((
       select count(*) from orders o
-      where o.id = any(v_ontem) and o.is_paid = true and o.status != 'cancelled' and not o.is_training and not o.is_draft
+      where o.id = any(v_ontem) and o.is_paid = true and o.status != 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
     ), 0),
     -- Pedidos EM ANDAMENTO hoje (não pagos, não cancelados, não rascunhos)
     'pedidos_andamento_hoje', coalesce((
@@ -175,12 +188,12 @@ begin
     -- Ticket médio dos pagos hoje
     'ticket_medio', coalesce((
       select avg(o.total_amount) from orders o
-      where o.id = any(v_hoje) and o.is_paid = true and o.status != 'cancelled' and not o.is_training and not o.is_draft
+      where o.id = any(v_hoje) and o.is_paid = true and o.status != 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
         and o.total_amount > 0
     ), 0),
     'ticket_medio_ontem', coalesce((
       select avg(o.total_amount) from orders o
-      where o.id = any(v_ontem) and o.is_paid = true and o.status != 'cancelled' and not o.is_training and not o.is_draft
+      where o.id = any(v_ontem) and o.is_paid = true and o.status != 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
         and o.total_amount > 0
     ), 0),
     'mesas_ocupadas', coalesce((select count(*) from tables where tenant_id = p_tenant_id and status = 'occupied'), 0),
@@ -203,21 +216,21 @@ begin
     ), 0),
     'pedidos_delivered_today', coalesce((
       select count(*) from orders
-      where id = any(v_hoje) and is_paid = true and status != 'cancelled' and not is_training and not is_draft
+      where id = any(v_hoje) and is_paid = true and status != 'cancelled' and not is_training and not is_draft and not ifood_repasse
     ), 0),
     -- Vendas por hora (pagos). Hora contada desde a 0h do dia da loja: depois da meia-noite vira 24, 25…
     'vendas_por_hora', coalesce((
       select jsonb_agg(h order by (h->>'ordem')::int)
       from (
         select jsonb_build_object(
-          'hora', lpad(x.hh::text, 2, '0') || ':00',
+          'hora', lpad(x.hh::text, greatest(2, length(x.hh::text)), '0') || ':00',
           'ordem', x.hh,
           'valor', round(sum(x.total_amount)::numeric, 2)
         ) as h
         from (
           select floor(extract(epoch from (o.created_at - v_ini)) / 3600)::int as hh, o.total_amount
           from orders o
-          where o.id = any(v_hoje) and o.is_paid = true and o.status != 'cancelled' and not o.is_training and not o.is_draft
+          where o.id = any(v_hoje) and o.is_paid = true and o.status != 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
         ) x
         group by x.hh
       ) sub
@@ -332,7 +345,7 @@ begin
     cross join lateral (select v_dia - 7 * k as dia) d
     cross join lateral public.fn_loja_pedidos_dias(p_tenant_id, d.dia, d.dia) x
     join orders o on o.id = x.order_id
-      and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft
+      and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
     group by k
   ) z
   where total > 0;
@@ -343,7 +356,7 @@ begin
     'dia_semana', extract(dow from v_dia)::int,
     'atraso_min', v_atraso_min,
     -- Sessões que tocam o dia da loja (o front encaixa o iFood no dia certo com elas)
-    'janelas', case when p_desde is null then public.fn_loja_janelas(p_tenant_id, v_dia, v_dia) else '[]'::jsonb end,
+    'janelas', public.fn_loja_janelas(p_tenant_id, v_dia, v_dia),
 
     'canais', coalesce((
       select jsonb_agg(jsonb_build_object('origem', origem, 'valor', valor, 'pedidos', pedidos) order by valor desc)
@@ -353,7 +366,7 @@ begin
         where o.tenant_id = p_tenant_id
           and (case when p_desde is null then o.id = any(v_ids)
                     else o.created_at >= p_desde and o.created_at < v_now end)
-          and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft
+          and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
         group by o.origin_type
       ) c
     ), '[]'::jsonb),
@@ -368,19 +381,19 @@ begin
       'faturamento', coalesce((
         select round(sum(o.total_amount)::numeric, 2) from orders o
         where o.id = any(v_sp_ids) and o.created_at < v_corte
-          and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft
+          and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
       ), 0),
       'pedidos', coalesce((
         select count(*)::int from orders o
         where o.id = any(v_sp_ids) and o.created_at < v_corte
-          and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft
+          and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
       ), 0),
       'canais', coalesce((
         select jsonb_object_agg(origem, valor) from (
           select o.origin_type::text as origem, round(sum(o.total_amount)::numeric, 2) as valor
           from orders o
           where o.id = any(v_sp_ids) and o.created_at < v_corte
-            and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft
+            and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
           group by o.origin_type
         ) c
       ), '{}'::jsonb)
@@ -391,13 +404,13 @@ begin
         select round(sum(o.total_amount)::numeric, 2) from orders o
         where o.tenant_id = p_tenant_id
           and o.created_at >= p_desde - interval '7 days' and o.created_at < v_now - interval '7 days'
-          and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft
+          and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
       ), 0),
       'pedidos', coalesce((
         select count(*)::int from orders o
         where o.tenant_id = p_tenant_id
           and o.created_at >= p_desde - interval '7 days' and o.created_at < v_now - interval '7 days'
-          and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft
+          and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
       ), 0),
       'canais', coalesce((
         select jsonb_object_agg(origem, valor) from (
@@ -405,7 +418,7 @@ begin
           from orders o
           where o.tenant_id = p_tenant_id
             and o.created_at >= p_desde - interval '7 days' and o.created_at < v_now - interval '7 days'
-            and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft
+            and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
           group by o.origin_type
         ) c
       ), '{}'::jsonb)
@@ -526,7 +539,7 @@ begin
       select x.dia, o.created_at, o.total_amount, o.origin_type::text as origem
         from public.fn_loja_pedidos_dias(r.id, v_d1, v_d2) x
         join orders o on o.id = x.order_id
-       where o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft
+       where o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
     )
     select jsonb_build_object(
       'faturamento', coalesce(round(sum(p.total_amount)::numeric, 2), 0),
@@ -549,7 +562,7 @@ begin
       select x.dia, o.created_at, o.total_amount
         from public.fn_loja_pedidos_dias(r.id, v_c1, v_c2) x
         join orders o on o.id = x.order_id
-       where o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft
+       where o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft and not o.ifood_repasse
          and (v_corte is null or x.dia < v_c2 or o.created_at < v_corte)
     )
     select jsonb_build_object(
@@ -601,9 +614,13 @@ begin
       'janelas_anterior', public.fn_loja_janelas(r.id, v_c1, v_c2),
       'metas', coalesce((select jsonb_agg(jsonb_build_object('dia_semana', m.dia_semana, 'faturamento', m.faturamento) order by m.dia_semana)
                            from dashboard_metas m where m.tenant_id = r.id and m.faturamento > 0), '[]'::jsonb),
-      -- Desde quando a loja tem venda no sistema (comparação "sem base" antes disso)
-      'primeiro_dia', least(
-        (select min((s.opened_at at time zone v_tz)::date) from sessions s where s.tenant_id = r.id and not coalesce(s.is_training, false)),
+      -- Desde quando a loja vende pelo sistema (comparação "sem base" antes disso): o primeiro pedido pago do PDV
+      -- (sessão de teste sem venda não conta; loja que já vendia no iFood antes do PDV não ganha alta inflada);
+      -- loja só de iFood: a primeira venda do iFood.
+      'primeiro_dia', coalesce(
+        (select min((o.created_at at time zone v_tz)::date) from orders o
+          where o.tenant_id = r.id and o.is_paid and not o.is_training and not o.is_draft and o.status <> 'cancelled'
+            and not o.ifood_repasse),
         (select min((f.sale_created_at at time zone v_tz)::date) from fin_ifood_sales f where f.tenant_id = r.id)),
       'vendeu_30d', exists (select 1 from orders o where o.tenant_id = r.id and o.created_at > v_now - interval '30 days'
                               and o.is_paid and not o.is_training and o.status <> 'cancelled')

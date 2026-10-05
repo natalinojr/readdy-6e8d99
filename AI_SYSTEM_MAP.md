@@ -306,6 +306,16 @@ Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme
 - **Pegadinhas:** sessão esquecida aberta por dias faz o "hoje" da loja ficar naquele dia (é a regra; o rótulo mostra
   "dia dd/mm" e o caixa aberto desde quando). `availableTenants` fica vazio depois de escolher a loja — para saber se a
   pessoa tem várias lojas use `canSwitchTenant`. Protótipo aprovado: `docs/prototipos/lojas-agora-proposta.html`.
+- **Revisão (05/10):** venda = pago, sem cancelado/treino/rascunho **e sem `ifood_repasse`** (pedido do funil do iFood
+  pago no app já entra pelo iFood — regra de 20260927250000; o Dashboard antigo o contava duas vezes). `fn_loja_janelas`
+  pega também a sessão aberta depois de d2 enquanto a de d2 seguia aberta (senão o mesmo iFood caía em dois dias).
+  Hora do gráfico pode passar de 99 (sessão esquecida): ler `hora.split(':')[0]`. Tela Hoje recarrega o painel junto
+  (dia/janelas). Comparativo: recarga por aviso no máximo a cada 15 s; "Ontem" não fica ao vivo; a faixa da /modulos
+  desliga avisos/iFood com menos de 2 lojas. `primeiro_dia` = primeiro pedido pago do PDV (sem PDV, o 1º do iFood).
+- **Pendente (edges não publicadas nesta mudança):** `assistente-cron` `medirVendas` soma o iFood por calendário
+  (`localDate()` 0h) com o PDV no dia da loja — com sessão esquecida mistura dias; o aviso está desligado, corrigir
+  (encaixar com `pn.dia`/`pn.janelas` ou pular quando `pn.dia` ≠ hoje) antes de ligar. `assistente-brain` `resumo_loja`:
+  `faturamento_hoje` agora é do dia da loja (vem o campo `dia`); a descrição da ferramenta ainda diz "hoje e ontem".
 
 ### 2026-10-04 — Pedidos (/pedidos): números errados corrigidos (antes do layout novo)
 - **Total 0 é real.** `useOrdersHistory` só soma os itens quando `total_amount` vem **nulo**; antes `0` (cortesia, 100% de desconto) virava o valor cheio dos itens e entrava no Faturamento/Ticket/CSV (P2209260004 Paranaguá, P0107260007 Vila Leste).

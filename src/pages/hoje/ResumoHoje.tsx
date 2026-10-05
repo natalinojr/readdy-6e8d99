@@ -22,15 +22,19 @@ export function VendasHoje() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { data: m, reload } = useDashboardMetrics();
-  const { data: painel } = useDashboardPainel(null);
+  const { data: painel, reload: reloadPainel } = useDashboardPainel(null);
   const [k, setK] = useState(0);
   // Dia da loja: as sessões de caixa abertas hoje (a que passa da meia-noite conta no dia em que abriu).
   const { data: ifDia } = useIfoodDiaLoja(user?.tenantId, painel?.dia, painel?.janelas, null, k);
   // Confere de novo a cada 5 min com a tela visível (o Dashboard é que acompanha pedido a pedido).
+  // O painel (dia da loja + sessões) vem junto: o dia vira quando a sessão fecha ou a tela volta no dia seguinte.
   useEffect(() => {
-    const t = setInterval(() => { if (!document.hidden) { reload(); setK((x) => x + 1); } }, 5 * 60 * 1000);
-    return () => clearInterval(t);
-  }, [reload]);
+    const atualizar = () => { reload(); reloadPainel(true); setK((x) => x + 1); };
+    const t = setInterval(() => { if (!document.hidden) atualizar(); }, 5 * 60 * 1000);
+    const aoVoltar = () => { if (!document.hidden) atualizar(); };
+    document.addEventListener('visibilitychange', aoVoltar);
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', aoVoltar); };
+  }, [reload, reloadPainel]);
   const valor = (m?.faturamento_hoje ?? 0) + (ifDia?.total ?? 0);
   const diaSemana = painel?.dia_semana ?? new Date().getDay();
   const meta = (painel?.metas ?? []).find((x) => x.dia_semana === diaSemana && (x.faturamento > 0 || x.pedidos > 0 || x.ticket > 0)) ?? null;

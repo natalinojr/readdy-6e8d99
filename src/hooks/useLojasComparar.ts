@@ -6,16 +6,18 @@ import { janelaDeBusca, type PedidoValor } from '@/lib/diaLoja';
 import { montarLoja, type LinhaLojasRpc, type LojaComparada, type PeriodoLojas } from '@/lib/lojasComparar';
 import { useOrdersPingLojas } from '@/hooks/useOrdersPing';
 
-// Lojas em que a pessoa vê o Dashboard, lado a lado (fn_lojas_comparar + iFood). Ao vivo: cada pedido de qualquer
-// loja recarrega o PDV em ~3 s (canal orders-ping de cada loja, uma consulta só para todas); o iFood é relido a
-// cada 5 min e, nos períodos que incluem hoje, a API de Vendas do iFood é sincronizada (no máximo a cada 10 min
-// por loja, como o Dashboard faz ao abrir). `ativo` false = não busca nada (ex.: quem só tem uma loja).
+// Lojas em que a pessoa vê o Dashboard, lado a lado (fn_lojas_comparar + iFood). Ao vivo (períodos com hoje): pedido
+// de qualquer loja recarrega o PDV em ~3 s, no máximo uma vez a cada 15 s (canal orders-ping de cada loja, uma
+// consulta só para todas); o iFood é relido a cada 5 min e a API de Vendas do iFood é sincronizada no máximo a cada
+// 10 min por loja (como o Dashboard faz ao abrir). `ativo` false = não busca nada; com menos de `minLojas` lojas
+// (a faixa da /modulos some) para tudo depois da primeira consulta.
 
 const PREF_OCULTAR = 'comparar_lojas_ocultar';
 const SYNC_MIN_MS = 10 * 60 * 1000;
+const RECARGA_MIN_MS = 15 * 1000;
 const ultimoSync = new Map<string, number>();
 
-export function useLojasComparar(periodo: PeriodoLojas, ativo = true) {
+export function useLojasComparar(periodo: PeriodoLojas, ativo = true, minLojas = 1) {
   const { user } = useAuth();
   const [linhas, setLinhas] = useState<LinhaLojasRpc[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -24,10 +26,12 @@ export function useLojasComparar(periodo: PeriodoLojas, ativo = true) {
   const [ifood, setIfood] = useState<Record<string, PedidoValor[]>>({});
   const [ifoodTick, setIfoodTick] = useState(0);
   const req = useRef(0);
+  const ultimaCarga = useRef(0);
 
   const carregar = useCallback(async () => {
     if (!ativo) return;
     const minha = ++req.current;
+    ultimaCarga.current = Date.now();
     const { data, error } = await supabase.rpc('fn_lojas_comparar', { p_periodo: periodo });
     if (minha !== req.current) return;
     if (error) { console.error('[useLojasComparar]', error); setErro(error.message); return; }
@@ -39,20 +43,26 @@ export function useLojasComparar(periodo: PeriodoLojas, ativo = true) {
   // Troca de período: zera e busca de novo
   useEffect(() => { setLinhas(null); carregar(); }, [carregar]);
 
+  // Vale a pena acompanhar? Só com lojas suficientes para mostrar e período que inclui hoje.
+  const temLojas = (linhas?.length ?? 0) >= minLojas;
+  const aoVivo = ativo && temLojas && periodo !== 'ontem';
+
   // Recarga leve a cada 2 min (o "agora": atrasados, caixa) e o iFood a cada 5 min, só com a tela visível
   useEffect(() => {
-    if (!ativo) return;
+    if (!aoVivo) return;
     const t1 = setInterval(() => { if (!document.hidden) carregar(); }, 2 * 60 * 1000);
     const t2 = setInterval(() => { if (!document.hidden) setIfoodTick((k) => k + 1); }, 5 * 60 * 1000);
     return () => { clearInterval(t1); clearInterval(t2); };
-  }, [ativo, carregar]);
+  }, [aoVivo, carregar]);
 
-  // Tempo real: pedido novo/pago em qualquer loja mostrada → recarrega (debounce 3 s para agrupar rajadas)
+  // Tempo real: pedido novo/pago em qualquer loja mostrada → recarrega 3 s depois, no máximo uma vez a cada 15 s
+  // (no pico, com várias lojas, o aviso não fica empurrando a recarga para depois).
   const visiveis = useMemo(() => (linhas ?? []).filter((l) => !l.oculta).map((l) => l.tenant_id), [linhas]);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useOrdersPingLojas(ativo ? visiveis : [], () => {
-    if (debounce.current) clearTimeout(debounce.current);
-    debounce.current = setTimeout(() => { carregar(); }, 3000);
+  useOrdersPingLojas(aoVivo ? visiveis : [], () => {
+    if (debounce.current) return;
+    const espera = Math.max(3000, RECARGA_MIN_MS - (Date.now() - ultimaCarga.current));
+    debounce.current = setTimeout(() => { debounce.current = null; carregar(); }, espera);
   });
   useEffect(() => () => { if (debounce.current) clearTimeout(debounce.current); }, []);
 
@@ -60,7 +70,7 @@ export function useLojasComparar(periodo: PeriodoLojas, ativo = true) {
   // As janelas para encaixar no dia são as da última resposta (montarLoja), então uma sessão que fecha não exige busca.
   const buscados = useRef<string>('');
   useEffect(() => {
-    if (!ativo || !linhas) return;
+    if (!ativo || !linhas || !temLojas) return;
     const alvo = linhas.filter((l) => l.tem_ifood && !l.oculta);
     const chave = `${periodo}|${ifoodTick}|${alvo.map((l) => l.tenant_id).join(',')}`;
     if (buscados.current === chave) return;
@@ -77,11 +87,11 @@ export function useLojasComparar(periodo: PeriodoLojas, ativo = true) {
         })
         .catch((e) => console.error('[useLojasComparar] iFood', l.nome, e));
     }
-  }, [ativo, linhas, periodo, ifoodTick]);
+  }, [ativo, linhas, temLojas, periodo, ifoodTick]);
 
   // API de Vendas do iFood só atualiza quando alguém pede: sincroniza as lojas com iFood ligado (períodos com hoje)
   useEffect(() => {
-    if (!ativo || !linhas || periodo === 'ontem') return;
+    if (!aoVivo || !linhas) return;
     const agora = Date.now();
     const alvo = linhas.filter((l) => l.sincroniza_ifood && !l.oculta && agora - (ultimoSync.get(l.tenant_id) ?? 0) > SYNC_MIN_MS);
     if (alvo.length === 0) return;
@@ -89,7 +99,7 @@ export function useLojasComparar(periodo: PeriodoLojas, ativo = true) {
     Promise.all(alvo.map((l) => invokeWithAuth('ifood-financial', { body: { action: 'sync_sales', tenant_id: l.tenant_id, days: 2 } })
       .catch(() => null)))
       .then(() => setIfoodTick((k) => k + 1));
-  }, [ativo, linhas, periodo]);
+  }, [aoVivo, linhas]);
 
   const lojas: LojaComparada[] = useMemo(() => (linhas ?? []).map((l) => montarLoja(
     l,

@@ -30,7 +30,7 @@ function Mini({ loja, cor }: { loja: LojaComparada; cor: string }) {
 
 export default function LojasAgora() {
   const { canSwitchTenant } = useAuth();
-  const { lojas, carregando, setOculta } = useLojasComparar('hoje', canSwitchTenant);
+  const { lojas, carregando, setOculta } = useLojasComparar('hoje', canSwitchTenant, 2);
   const abrirLoja = useAbrirLoja();
   const navigate = useNavigate();
   const [verParadas, setVerParadas] = useState(false);
