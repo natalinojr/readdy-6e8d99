@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useCallback } from 'react';
 import { BarChart3, Download, RefreshCw } from 'lucide-react';
 import ModoFaturamentoToggle from '@/components/feature/ModoFaturamentoToggle';
 import FiltroRelatorio from './components/FiltroRelatorio';
@@ -18,6 +18,9 @@ import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
 import type { SessionInfo } from '@/hooks/useSessions';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { relKeyDaAba } from '@/constants/permissoesAbas';
+import { useToast } from '@/contexts/ToastContext';
+import { baixarCsvRelatorio, type ExportadorRelatorio } from '@/lib/exportRelatorio';
+import type { RegistrarExport } from './useRegistrarExport';
 
 type Tab = 'geral' | 'caixa' | 'produtos' | 'cmv' | 'sla' | 'origem' | 'delivery' | 'ifood' | 'cancelamentos' | 'clientes' | 'calendario';
 
@@ -35,6 +38,9 @@ const tabs: { id: Tab; label: string; icon: string; shortLabel: string }[] = [
   { id: 'clientes',       label: 'Clientes / CRM',        shortLabel: 'Clientes',     icon: 'ri-user-heart-line' },
 ];
 
+/** Abas que sabem gerar planilha (CSV) para o botão "Baixar" do topo. */
+const ABAS_COM_PLANILHA: Tab[] = ['produtos', 'cmv', 'cancelamentos'];
+
 export default function RelatoriosPage() {
   const [periodo, setPeriodo] = useState('Hoje');
   // ?aba=delivery (atalho da tela Delivery › Início) abre direto na aba; aba sem permissão cai na 1ª liberada.
@@ -51,6 +57,14 @@ export default function RelatoriosPage() {
   // muda a `key` do conteúdo, a aba remonta e busca os dados de novo.
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
+  const toast = useToast();
+  // A aba aberta registra aqui a função que monta a planilha com os dados que ela já carregou.
+  const exportadorRef = useRef<ExportadorRelatorio | null>(null);
+  const [temPlanilha, setTemPlanilha] = useState(false);
+  const registrarExport = useCallback<RegistrarExport>((fn) => {
+    exportadorRef.current = fn;
+    setTemPlanilha(!!fn);
+  }, []);
 
   const { modo } = useModoFaturamento();
   const isSessao = modo === 'sessao';
@@ -67,6 +81,15 @@ export default function RelatoriosPage() {
     }
     return periodo;
   }, [isSessao, selectedSession, periodo]);
+
+  const handleBaixar = () => {
+    const r = exportadorRef.current?.();
+    if (!r || r.linhas.length === 0) {
+      toast.info('Nada para baixar', 'Não há dados nesta aba para o período escolhido.');
+      return;
+    }
+    baixarCsvRelatorio(r, periodoEfetivo);
+  };
 
   const handleRefresh = () => {
     setRefreshKey((k) => k + 1);
@@ -89,12 +112,16 @@ export default function RelatoriosPage() {
         </div>
       </button>
 
-      <button className="flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3 py-1.5 md:py-2 bg-amber-500 text-white text-xs font-semibold rounded-lg hover:bg-amber-600 transition-colors whitespace-nowrap cursor-pointer flex-shrink-0">
+      <button
+        onClick={handleBaixar}
+        disabled={!tab || !ABAS_COM_PLANILHA.includes(tab) || !temPlanilha}
+        title={tab && ABAS_COM_PLANILHA.includes(tab) ? 'Baixar esta aba em planilha (CSV)' : 'Esta aba ainda não tem planilha para baixar'}
+        className="flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3 py-1.5 md:py-2 bg-amber-500 text-white text-xs font-semibold rounded-lg hover:bg-amber-600 transition-colors whitespace-nowrap cursor-pointer flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-amber-500"
+      >
         <div className="w-3.5 h-3.5 flex items-center justify-center">
           <Download size={12} />
         </div>
-        <span className="hidden sm:inline">Exportar</span>
-        <span className="sm:hidden">Export</span>
+        <span>Baixar</span>
       </button>
     </>
   );
@@ -195,13 +222,13 @@ export default function RelatoriosPage() {
           )}
           {tab === 'calendario'    && <CalendarioFaturamentoTab />}
           {tab === 'caixa'         && <CaixaTab />}
-          {tab === 'produtos'      && <ProdutosTab periodo={periodoEfetivo} externalSession={selectedSession} />}
-          {tab === 'cmv'           && <CMVTab periodo={periodoEfetivo} />}
+          {tab === 'produtos'      && <ProdutosTab periodo={periodoEfetivo} externalSession={selectedSession} onExport={registrarExport} />}
+          {tab === 'cmv'           && <CMVTab periodo={periodoEfetivo} onExport={registrarExport} />}
           {tab === 'sla'           && <SLACozinhaTab periodo={periodoEfetivo} />}
           {tab === 'origem'        && <OrigemTab periodo={periodoEfetivo} externalSession={selectedSession} />}
           {tab === 'delivery'      && <DeliveryTab periodo={periodoEfetivo} />}
           {tab === 'ifood'         && <IfoodTab periodo={periodoEfetivo} />}
-          {tab === 'cancelamentos' && <CancelamentosTab periodo={periodoEfetivo} />}
+          {tab === 'cancelamentos' && <CancelamentosTab periodo={periodoEfetivo} onExport={registrarExport} />}
           {tab === 'clientes'      && <ClientesTab periodo={periodoEfetivo} />}
         </div>
       </div>

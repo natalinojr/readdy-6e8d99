@@ -35,6 +35,8 @@ interface ViewGanttProps {
   dependencias: Dependencia[];
   usuarios: UsuarioOption[];
   meuId: string | null;
+  /** Origem "Minhas": a tarefa criada aqui já nasce com o próprio usuário como responsável (senão some do filtro). */
+  criarComoMinha?: boolean;
   /** Escopo das preferências salvas (agrupamento, grupos recolhidos). */
   chave: string;
   write: Escrever;
@@ -92,7 +94,7 @@ function iniciais(nome: string | null | undefined): string | null {
  * a carga do dia fica na própria linha; no celular é tocar e ajustar.
  */
 export default function ViewGantt({
-  list, lists, tasks, todas, dependencias, usuarios, meuId, chave, write, onOpenTask, padraoDe,
+  list, lists, tasks, todas, dependencias, usuarios, meuId, criarComoMinha, chave, write, onOpenTask, padraoDe,
 }: ViewGanttProps) {
   const toast = useToast();
   const celular = useIsMobile();
@@ -590,7 +592,10 @@ export default function ViewGantt({
     const title = novoTitulo.trim();
     setNovoTitulo('');
     if (!title) { setNovaEm(null); return; }
-    const res = await write('create_task', { list_id: listId, title });
+    const res = await write('create_task', {
+      list_id: listId, title,
+      ...(criarComoMinha && meuId ? { assignee_ids: [meuId] } : {}),
+    });
     if (!res.success) toast.error('Erro ao criar tarefa', res.error);
   };
 

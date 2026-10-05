@@ -46,10 +46,14 @@ interface ImpressorasContextType {
   clearImpressoraEstacao: (estacao: string) => void;
   updatePrintTemplate: (stationKey: string, data: Partial<PrintTemplate>) => void;
   resetPrintTemplate: (stationKey: string) => void;
-  salvarImpressoras: () => Promise<void>;
-  salvarTemplates: () => Promise<void>;
+  salvarImpressoras: () => Promise<ResultadoSalvar>;
+  salvarTemplates: () => Promise<ResultadoSalvar>;
   salvando: boolean;
+  /** Mensagem do último salvamento que falhou (manual ou automático). null = tudo gravado. */
+  erroSalvar: string | null;
 }
+
+export interface ResultadoSalvar { success: boolean; error: string | null }
 
 const ImpressorasContext = createContext<ImpressorasContextType | null>(null);
 
@@ -133,6 +137,12 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
   const [mapaEstacoes, setMapaEstacoes] = useState<MapaEstacoes>({});
   const [printTemplates, setPrintTemplates] = useState<PrintTemplatesMap>({});
   const [salvando, setSalvando] = useState(false);
+  const [erroSalvar, setErroSalvar] = useState<string | null>(null);
+  // Sobe a cada falha do auto-save para ele tentar de novo sozinho (ver efeito abaixo).
+  const [tentarDeNovo, setTentarDeNovo] = useState(0);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tentativasRef = useRef(0);
+  const lojaAtualRef = useRef<string | undefined>(undefined);
   // Guarda a ultima config do banco pra saber quando sincronizar (evita sobrescrever edicoes locais)
   const lastDbConfigRef = useRef<string>('');
   // Guarda o ultimo tenantId pra detectar troca de loja
@@ -158,6 +168,7 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
       initializedRef.current = false;
       dirtyRef.current = false;
       lastDbConfigRef.current = '';
+      setErroSalvar(null);
     }
   }, [tenantId]);
 
@@ -223,47 +234,46 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
     initializedRef.current = true;
   }, [settings, settingsLoading, tenantId, user?.tenantKind]);
 
-  const salvarImpressoras = useCallback(async () => {
-    if (!tenantId) return;
-    setSalvando(true);
+  // Grava no banco e devolve o resultado de verdade. A cópia local (backup) é feita sempre,
+  // para não perder a edição se o banco estiver fora; quem chama só deve dizer "salvo" se success.
+  const gravarConfig = useCallback(async (): Promise<ResultadoSalvar> => {
+    if (!tenantId) return { success: false, error: 'Nenhuma loja selecionada.' };
+    let resultado: ResultadoSalvar;
     try {
-      await salvar({
+      resultado = await salvar({
         printers_config: { impressoras, mapaEstacoes, printTemplates },
       });
-      // Salva backup local tambem
-      salvarLocalStorage(tenantId, {
-        impressoras,
-        mapaEstacoes,
-        printTemplates,
-        savedAt: new Date().toISOString(),
-      });
-      console.log('[ImpressorasContext] Configuracoes salvas com sucesso no Supabase + localStorage para tenant:', tenantId);
     } catch (e) {
-      console.error('[ImpressorasContext] Erro ao salvar no Supabase, salvando no localStorage:', e);
-      salvarLocalStorage(tenantId, {
-        impressoras,
-        mapaEstacoes,
-        printTemplates,
-        savedAt: new Date().toISOString(),
-      });
+      resultado = { success: false, error: e instanceof Error ? e.message : String(e) };
     }
-    setSalvando(false);
-  }, [impressoras, mapaEstacoes, printTemplates, salvar, tenantId]);
-
-  const salvarTemplates = useCallback(async () => {
-    if (!tenantId) return;
-    setSalvando(true);
-    await salvar({
-      printers_config: { impressoras, mapaEstacoes, printTemplates },
-    });
     salvarLocalStorage(tenantId, {
       impressoras,
       mapaEstacoes,
       printTemplates,
       savedAt: new Date().toISOString(),
     });
-    setSalvando(false);
+    if (resultado.success) {
+      setErroSalvar(null);
+    } else {
+      console.error('[ImpressorasContext] Erro ao salvar no Supabase:', resultado.error);
+      setErroSalvar(resultado.error || 'Não foi possível salvar.');
+    }
+    return resultado;
   }, [impressoras, mapaEstacoes, printTemplates, salvar, tenantId]);
+
+  const salvarManual = useCallback(async (): Promise<ResultadoSalvar> => {
+    setSalvando(true);
+    // Mesmo esquema do auto-save: limpa o "sujo" antes e devolve se falhar.
+    // Edição feita durante o salvamento marca sujo de novo e não é perdida.
+    dirtyRef.current = false;
+    const r = await gravarConfig();
+    if (!r.success) dirtyRef.current = true;
+    setSalvando(false);
+    return r;
+  }, [gravarConfig]);
+
+  const salvarImpressoras = salvarManual;
+  const salvarTemplates = salvarManual;
 
   // ── Auto-save com debounce: sempre que impressoras, mapaEstacoes ou printTemplates mudar ──
   useEffect(() => {
@@ -281,27 +291,25 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
       clearTimeout(autoSaveTimerRef.current);
     }
     autoSaveTimerRef.current = setTimeout(() => {
+      // Um salvamento manual pode já ter gravado tudo nesse meio tempo.
+      if (!dirtyRef.current) return;
       console.log('[ImpressorasContext] Auto-save disparado (debounce 2s) para tenant:', tenantId);
       dirtyRef.current = false;
-      salvar({
-        printers_config: { impressoras, mapaEstacoes, printTemplates },
-      }).then(() => {
-        salvarLocalStorage(tenantId, {
-          impressoras,
-          mapaEstacoes,
-          printTemplates,
-          savedAt: new Date().toISOString(),
-        });
-        console.log('[ImpressorasContext] Auto-save concluido');
-      }).catch((e) => {
-        console.error('[ImpressorasContext] Auto-save falhou:', e);
-        // Fallback: salva no localStorage mesmo assim
-        salvarLocalStorage(tenantId, {
-          impressoras,
-          mapaEstacoes,
-          printTemplates,
-          savedAt: new Date().toISOString(),
-        });
+      const lojaDoDisparo = tenantId;
+      gravarConfig().then((r) => {
+        // Trocou de loja enquanto gravava: o resultado é da loja anterior, ignora.
+        if (lojaDoDisparo !== lojaAtualRef.current) return;
+        if (r.success) {
+          tentativasRef.current = 0;
+          console.log('[ImpressorasContext] Auto-save concluido');
+          return;
+        }
+        // Não gravou: continua "sujo" e tenta de novo em 20s, no máximo 3 vezes (falha fixa não fica tentando para sempre).
+        dirtyRef.current = true;
+        tentativasRef.current += 1;
+        if (tentativasRef.current >= 3) return;
+        if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = setTimeout(() => setTentarDeNovo((n) => n + 1), 20000);
       });
     }, 2000);
 
@@ -310,7 +318,16 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
         clearTimeout(autoSaveTimerRef.current);
       }
     };
-  }, [impressoras, mapaEstacoes, printTemplates, salvar, tenantId, settings.tenant_id, podeSalvarConfig]);
+  }, [impressoras, mapaEstacoes, printTemplates, gravarConfig, tenantId, settings.tenant_id, podeSalvarConfig, tentarDeNovo]);
+
+  // Limpa o timer de nova tentativa ao sair / trocar de loja.
+  useEffect(() => {
+    lojaAtualRef.current = tenantId;
+    tentativasRef.current = 0;
+    return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    };
+  }, [tenantId]);
 
   const getImpressoraParaEstacao = useCallback(
     (estacao: string): Impressora | undefined => {
@@ -430,7 +447,7 @@ export function ImpressorasProvider({ children }: { children: React.ReactNode })
       addImpressora, updateImpressora, removeImpressora,
       setImpressoraEstacao, clearImpressoraEstacao,
       updatePrintTemplate, resetPrintTemplate,
-      salvarImpressoras, salvarTemplates, salvando,
+      salvarImpressoras, salvarTemplates, salvando, erroSalvar,
     }}>
       {children}
     </ImpressorasContext.Provider>

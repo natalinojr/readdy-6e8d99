@@ -16,6 +16,13 @@ import { useKioskAuth } from '@/contexts/KioskAuthContext';
 
 // ── Types (re-exportados para compatibilidade) ────────────────────────────────
 
+/** O erro do invoke às vezes traz o corpo JSON cru ({"success":false,"error":"…"}): mostra só o texto. */
+function mensagemLegivel(msg?: string): string {
+  if (!msg) return 'Erro ao salvar';
+  try { const j = JSON.parse(msg); if (j && typeof j.error === 'string' && j.error) return j.error; } catch { /* não é JSON */ }
+  return msg;
+}
+
 export interface SectorConfig {
   id: string;
   nome: string;
@@ -182,6 +189,8 @@ export const DEFAULT_SETTINGS: SystemSettings = {
 interface SystemSettingsContextValue {
   settings: SystemSettings;
   loading: boolean;
+  /** Mensagem quando a LEITURA das configurações desta loja falhou (e nunca deu certo). null = ok. */
+  loadError: string | null;
   carregar: () => Promise<void>;
   salvar: (updates: Partial<SystemSettings>) => Promise<{ success: boolean; error: string | null }>;
 }
@@ -189,6 +198,7 @@ interface SystemSettingsContextValue {
 const SystemSettingsContext = createContext<SystemSettingsContextValue>({
   settings: DEFAULT_SETTINGS,
   loading: true,
+  loadError: null,
   carregar: async () => undefined,
   salvar: async () => ({ success: false, error: 'Provider not mounted' }),
 });
@@ -273,6 +283,10 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
   const { kioskSession } = useKioskAuth();
   const [settings, setSettings] = useState<SystemSettings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Loja cuja leitura das configurações JÁ deu certo ao menos uma vez. Sem isso a tela
+  // mostra o padrão e um "Salvar" gravaria o padrão por cima do valor real do banco.
+  const loadedTenantRef = useRef<string | null>(null);
   // Tenant cujas settings estão (ou estão sendo) carregadas no estado.
   // Impede que as settings de uma loja "vazem" para outra ao trocar de loja.
   const activeTenantRef = useRef<string | null>(null);
@@ -283,17 +297,22 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
     // Trocou de loja: descarta imediatamente as settings da loja anterior
     if (activeTenantRef.current !== tenantId) {
       activeTenantRef.current = tenantId;
+      loadedTenantRef.current = null;
+      setLoadError(null);
       setSettings({ ...DEFAULT_SETTINGS });
     }
     setLoading(true);
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('system_settings')
         .select('*')
         .eq('tenant_id', tenantId)
         .maybeSingle();
       // Resposta chegou depois de nova troca de loja → ignora
       if (activeTenantRef.current !== tenantId) return;
+      if (error) throw error;
+      loadedTenantRef.current = tenantId;
+      setLoadError(null);
       // Sem linha no banco: usa defaults, mas marca o tenant para que os
       // consumidores (ex.: ImpressorasContext) saibam que a carga terminou.
       setSettings(data
@@ -301,6 +320,12 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
         : { ...DEFAULT_SETTINGS, tenant_id: tenantId });
     } catch (e) {
       console.error('[SystemSettings] load error:', e);
+      // Só vira erro de tela se esta loja nunca foi lida: se já temos os valores reais
+      // de uma leitura anterior, uma falha ao atualizar não invalida o que está na tela.
+      if (activeTenantRef.current === tenantId && loadedTenantRef.current !== tenantId) {
+        const msg = e instanceof Error ? e.message : (e as { message?: string } | null)?.message;
+        setLoadError(msg || 'Falha na leitura');
+      }
     } finally {
       if (activeTenantRef.current === tenantId) setLoading(false);
     }
@@ -351,6 +376,13 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
     async (updates: Partial<SystemSettings>): Promise<{ success: boolean; error: string | null }> => {
       const tenantId = user?.tenantId ?? kioskSession?.tenantId;
       if (!tenantId) return { success: false, error: 'Usuário sem tenant' };
+      // Nunca grava se não leu o valor real: a tela estaria mostrando o padrão.
+      if (loadedTenantRef.current !== tenantId) {
+        return {
+          success: false,
+          error: 'Não consegui carregar as configurações desta loja, então não vou gravar por cima. Atualize a página e tente de novo.',
+        };
+      }
       try {
         // Usa o token do kiosk quando disponível (modo totem por token)
         // Isso evita o erro Unauthorized quando o kiosk não tem sessão Supabase Auth
@@ -359,7 +391,7 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
           body: { action: 'upsert_system_settings', tenant_id: tenantId, ...updates },
           externalToken,
         });
-        if (error) return { success: false, error: error.message || 'Erro ao salvar' };
+        if (error) return { success: false, error: mensagemLegivel(error.message) };
         if (!data?.success) return { success: false, error: data?.error || 'Operação falhou' };
         // Atualiza estado local imediatamente para evitar stale data enquanto
         // o Realtime não chega. Faz merge parcial mantendo normalização.
@@ -380,7 +412,7 @@ export function SystemSettingsProvider({ children }: { children: ReactNode }) {
   );
 
   return (
-    <SystemSettingsContext.Provider value={{ settings, loading, carregar, salvar }}>
+    <SystemSettingsContext.Provider value={{ settings, loading, loadError, carregar, salvar }}>
       {children}
     </SystemSettingsContext.Provider>
   );

@@ -59,7 +59,7 @@ const MODULOS: Modulo[] = [
       { nome: 'Abrir mesa', descricao: 'Identificação de clientes (nome ou senha), número de pessoas e atribuição de mesa.', perfis: ['Garçom'] },
       { nome: 'Adicionar itens', descricao: 'Navegar pelo cardápio, adicionar observações, selecionar opções obrigatórias e enviar para o KDS.', perfis: ['Garçom'] },
       { nome: 'Editar pedido', descricao: 'Remover ou alterar itens de pedidos que ainda não foram confirmados pela cozinha.', perfis: ['Garçom'] },
-      { nome: 'Transferir mesa', descricao: 'Mover um pedido aberto de uma mesa para outra em caso de realocação do cliente.', perfis: ['Garçom'] },
+      { nome: 'Transferir mesa', descricao: 'Mover um pedido aberto de uma mesa para outra. Ainda não grava no sistema (em breve).', perfis: ['Garçom'] },
       { nome: 'Fechar conta', descricao: 'Encerrar o atendimento de uma mesa e enviar para pagamento no caixa.', perfis: ['Garçom'] },
       { nome: 'Chamados dos clientes', descricao: 'Lista de solicitações enviadas pelo QR Code das mesas (chamar garçom, pedir conta).', perfis: ['Garçom'] },
       { nome: 'Status da cozinha', descricao: 'Ver quais pedidos estão em preparo, prontos e o tempo de espera de cada mesa.', perfis: ['Garçom'] },
@@ -107,7 +107,7 @@ const MODULOS: Modulo[] = [
     funcionalidades: [
       { nome: 'Mapa do salão', descricao: 'Visualização gráfica de todas as mesas por setor com status: livre, ocupada, aguardando pagamento.', perfis: ['Supervisor', 'Admin'] },
       { nome: 'Detalhes da mesa', descricao: 'Clique em qualquer mesa para ver pedidos ativos, total da conta e tempo de ocupação.', perfis: ['Supervisor', 'Admin'] },
-      { nome: 'Juntar mesas', descricao: 'Unir duas ou mais mesas para grupos grandes. Os pedidos são consolidados.', perfis: ['Supervisor', 'Admin', 'Garçom'] },
+      { nome: 'Juntar mesas', descricao: 'Unir mesas para grupos grandes. Ainda não grava no sistema (em breve), por isso está desligado por enquanto.', perfis: ['Supervisor', 'Admin', 'Garçom'] },
       { nome: 'Nova mesa rápida', descricao: 'Adicionar uma mesa temporária ao mapa sem precisar ir às configurações.', perfis: ['Supervisor', 'Admin'] },
     ],
   },

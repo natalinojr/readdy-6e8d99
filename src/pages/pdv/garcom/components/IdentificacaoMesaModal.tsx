@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { Mesa } from '@/types/pdv';
 import { useAuth } from '../../../../contexts/AuthContext';
 import { usePermissoes } from '@/hooks/usePermissoes';
+import { JUNTAR_MOVER_MESA_DISPONIVEL, AVISO_JUNTAR_MOVER_MESA } from '@/lib/mesaAcoes';
 
 interface IdentificacaoData {
   garcomNome: string;
@@ -126,13 +127,19 @@ export default function IdentificacaoMesaModal({ mesa, mesasOcupadas, onConfirma
           </button>
 
           {mesasOcupadas.length > 0 && hasPermissao('garcom_transferir_mesa') && (
-            <button
-              onClick={onTransferir}
-              className="w-full py-2.5 border border-zinc-200 hover:bg-zinc-50 text-zinc-600 font-semibold rounded-xl transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2 text-sm"
-            >
-              <i className="ri-arrow-left-right-line text-base text-amber-500" />
-              Transferir de outra mesa
-            </button>
+            <>
+              <button
+                onClick={onTransferir}
+                disabled={!JUNTAR_MOVER_MESA_DISPONIVEL}
+                className="w-full py-2.5 border border-zinc-200 hover:bg-zinc-50 text-zinc-600 font-semibold rounded-xl transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent whitespace-nowrap flex items-center justify-center gap-2 text-sm"
+              >
+                <i className="ri-arrow-left-right-line text-base text-amber-500" />
+                Transferir de outra mesa
+              </button>
+              {!JUNTAR_MOVER_MESA_DISPONIVEL && (
+                <p className="text-[11px] text-amber-700 text-center leading-snug">{AVISO_JUNTAR_MOVER_MESA}</p>
+              )}
+            </>
           )}
 
           <button

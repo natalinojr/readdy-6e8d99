@@ -487,6 +487,10 @@ function useTarefasReal() {
         const lista = lists.find((l) => l.id === listId);
         const statusId = (payload.status_id as string | undefined) ?? lista?.statuses[0]?.id ?? null;
         const status = lista?.statuses.find((s) => s.id === statusId) ?? null;
+        // Mesma regra do servidor: assignee_ids (vários) ou assignee_id (um só); o primeiro é o principal.
+        const idsResp: string[] = Array.isArray(payload.assignee_ids)
+          ? [...new Set((payload.assignee_ids as unknown[]).filter((x): x is string => typeof x === 'string' && !!x))]
+          : payload.assignee_id ? [String(payload.assignee_id)] : [];
         const otimista: TaskRow = {
           id: data.id,
           list_id: listId,
@@ -497,8 +501,9 @@ function useTarefasReal() {
           status_id: statusId,
           status_category: status?.category ?? null,
           priority: Number(payload.priority ?? 0),
-          assignee_id: (payload.assignee_id as string | undefined) ?? null,
+          assignee_id: idsResp[0] ?? null,
           assignee_name: null,
+          assignees: idsResp.map((id) => ({ id, name: null })),
           start_date: (payload.start_date as string | undefined) ?? null,
           due_date: (payload.due_date as string | undefined) ?? null,
           due_has_time: Boolean(payload.due_has_time),

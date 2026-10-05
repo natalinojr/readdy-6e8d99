@@ -4,15 +4,17 @@ import {
   AreaChart, Area,
 } from 'recharts';
 import { useCancelamentosReport } from '@/hooks/useCancelamentosReport';
+import { useRegistrarExport, type RegistrarExport } from '../useRegistrarExport';
+import { reais } from '@/lib/exportRelatorio';
 
-interface Props { periodo: string; }
+interface Props { periodo: string; onExport?: RegistrarExport; }
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
 
 type SubTab = 'cancelamentos' | 'estornos' | 'descontos' | 'gorjetas';
 
-export default function CancelamentosTab({ periodo }: Props) {
+export default function CancelamentosTab({ periodo, onExport }: Props) {
   const [sub, setSub] = useState<SubTab>('cancelamentos');
   const { dados, loading } = useCancelamentosReport(periodo);
 
@@ -80,6 +82,17 @@ export default function CancelamentosTab({ periodo }: Props) {
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  // Baixar (topo da página): cancelamentos + estornos + descontos do período, numa planilha só.
+  useRegistrarExport(onExport, () => {
+    if (loading) return null;
+    const linhas: (string | number)[][] = [];
+    cancelamentos.forEach(c => linhas.push(['Cancelamento', String(c.pedido ?? ''), String(c.mesa ?? ''), String(c.motivo ?? ''), reais(c.valor as number), String(c.hora ?? '')]));
+    estornos.forEach(e => linhas.push(['Estorno', String(e.pedido ?? ''), String(e.cliente ?? ''), String(e.motivo ?? ''), reais(e.valor as number), String(e.hora ?? '')]));
+    descontos.forEach(d => linhas.push(['Desconto', String(d.pedido ?? ''), String(d.mesa ?? ''), `${d.pct}%`, reais(d.valor as number), String(d.hora ?? '')]));
+    if (linhas.length === 0) return null;
+    return { base: 'cancelamentos', cabecalho: ['Tipo', 'Pedido', 'Destino/Cliente', 'Motivo', 'Valor (R$)', 'Hora'], linhas };
+  });
 
   if (loading) {
     return (

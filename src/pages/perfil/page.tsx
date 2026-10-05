@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { createClient } from '@supabase/supabase-js';
 import { useAuth } from '../../contexts/AuthContext';
+import { invokeWithAuth, SUPABASE_ANON_KEY, SUPABASE_URL } from '@/lib/supabase';
+import { SENHA_MINIMA, entraSoPorPin, validarTrocaDeSenha } from '@/lib/senhaPerfil';
 
 // ─── Modal Criar Loja com Código ──────────────────────────────────────────────
 function CriarLojaModal({ onClose }: { onClose: () => void }) {
@@ -101,21 +104,51 @@ export default function PerfilPage() {
     return null;
   }
 
+  const semSenha = entraSoPorPin(user.email);
+
   const handleAlterarSenha = async () => {
     setErro('');
     setSucesso('');
-    if (!senhaAtual) { setErro('Digite a senha atual.'); return; }
-    if (!novaSenha) { setErro('Digite a nova senha.'); return; }
-    if (novaSenha.length < 4) { setErro('A nova senha deve ter no mínimo 4 caracteres.'); return; }
-    if (novaSenha !== confirmarSenha) { setErro('As senhas não coincidem.'); return; }
+    const msg = validarTrocaDeSenha(senhaAtual, novaSenha, confirmarSenha);
+    if (msg) { setErro(msg); return; }
+    if (!user.email) { setErro('Não foi possível identificar o seu e-mail. Saia e entre de novo.'); return; }
 
     setSalvando(true);
-    await new Promise((r) => setTimeout(r, 800));
-    setSalvando(false);
-    setSucesso('Senha alterada com sucesso!');
-    setSenhaAtual('');
-    setNovaSenha('');
-    setConfirmarSenha('');
+    try {
+      // 1) Confere a senha atual. Usa um cliente descartável (sem guardar sessão), para não
+      //    mexer no login que está aberto neste aparelho.
+      const verificador = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: 'erpos-confere-senha' },
+      });
+      const { error: loginErr } = await verificador.auth.signInWithPassword({ email: user.email, password: senhaAtual });
+      void verificador.auth.signOut({ scope: 'local' }).catch(() => undefined);
+      if (loginErr) {
+        const status = (loginErr as { status?: number }).status;
+        if (status === 429) setErro('Muitas tentativas. Espere alguns minutos e tente de novo.');
+        else if (!status || status >= 500) setErro('Sem conexão com o servidor. Tente de novo.');
+        else setErro('A senha atual está errada.');
+        return;
+      }
+
+      // 2) Grava a nova senha (a própria pessoa pode trocar a sua; o servidor confere o login).
+      const { data, error: fnError } = await invokeWithAuth<{ error?: string }>('user-write', {
+        body: { action: 'reset_password', user_id: user.id, nova_senha: novaSenha },
+      });
+      if (fnError || data?.error) {
+        console.error('[Perfil] reset_password falhou:', data?.error ?? fnError);
+        setErro('Não foi possível alterar a senha agora. Tente de novo em instantes.');
+        return;
+      }
+      setSucesso('Senha alterada com sucesso! Use a nova senha no próximo login.');
+      setSenhaAtual('');
+      setNovaSenha('');
+      setConfirmarSenha('');
+    } catch (e) {
+      console.error('[Perfil] alterar senha:', e);
+      setErro('Não foi possível alterar a senha agora. Tente de novo em instantes.');
+    } finally {
+      setSalvando(false);
+    }
   };
 
   const perfilStyle = PERFIL_COLOR[user.perfil] ?? 'text-zinc-600 bg-zinc-50 border-zinc-100';
@@ -187,7 +220,6 @@ export default function PerfilPage() {
             { label: 'Nome completo', value: user.nome, icon: 'ri-user-line' },
             { label: 'Loja / Estabelecimento', value: user.loja, icon: 'ri-store-line' },
             { label: 'Perfil de acesso', value: PERFIL_LABEL[user.perfil] ?? user.perfil, icon: 'ri-shield-user-line' },
-            { label: 'ID de sessão', value: user.id, icon: 'ri-fingerprint-line' },
           ].map((info) => (
             <div key={info.label} className="flex items-center gap-4 p-4 bg-white border border-zinc-100 rounded-xl">
               <div className="w-9 h-9 flex items-center justify-center bg-zinc-50 rounded-lg border border-zinc-100 flex-shrink-0">
@@ -238,7 +270,22 @@ export default function PerfilPage() {
       {showCriarLoja && <CriarLojaModal onClose={() => setShowCriarLoja(false)} />}
 
       {/* Tab: Senha */}
-      {abaSelecionada === 'senha' && (
+      {abaSelecionada === 'senha' && semSenha && (
+        <div className="p-4 bg-zinc-50 border border-zinc-100 rounded-xl">
+          <div className="flex items-start gap-3">
+            <i className="ri-key-2-line text-zinc-500 text-lg flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-bold text-zinc-800 mb-0.5">Você entra com matrícula e PIN</p>
+              <p className="text-xs text-zinc-600 leading-relaxed">
+                Esta conta não tem senha de e-mail para trocar. Para mudar o seu PIN, peça a quem administra a loja
+                (em Usuários, a pessoa define um PIN novo).
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {abaSelecionada === 'senha' && !semSenha && (
         <div className="space-y-4">
           <div className="p-4 bg-amber-50 border border-amber-100 rounded-xl">
             <div className="flex items-start gap-3">
@@ -281,7 +328,7 @@ export default function PerfilPage() {
                   type={showNova ? 'text' : 'password'}
                   value={novaSenha}
                   onChange={(e) => setNovaSenha(e.target.value)}
-                  placeholder="Mínimo 4 caracteres"
+                  placeholder="Mínimo 6 caracteres"
                   className="w-full text-sm border border-zinc-200 rounded-xl px-3.5 py-2.5 pr-10 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent"
                 />
                 <button
@@ -294,9 +341,7 @@ export default function PerfilPage() {
               {novaSenha && (
                 <div className="flex items-center gap-1.5 mt-1.5">
                   {[
-                    { ok: novaSenha.length >= 4, label: 'Mín. 4 chars' },
-                    { ok: /[A-Z]/.test(novaSenha), label: 'Maiúscula' },
-                    { ok: /[0-9]/.test(novaSenha), label: 'Número' },
+                    { ok: novaSenha.length >= SENHA_MINIMA, label: `Mínimo ${SENHA_MINIMA} caracteres` },
                   ].map((c) => (
                     <span key={c.label} className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${c.ok ? 'bg-emerald-100 text-emerald-700' : 'bg-zinc-100 text-zinc-400'}`}>
                       {c.ok ? '✓' : '○'} {c.label}

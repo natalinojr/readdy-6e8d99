@@ -399,6 +399,14 @@ export default function PedidosPage() {
     emiteNota: fiscal.canais ? (p: PedidoRecente) => fiscal.canais![canalFiscal(p)] : undefined,
   }), [agoraMs, hoje, fiscal.enabled, fiscal.erroLeitura, fiscal.carregado, fiscal.byOrder, fiscal.canais]);
 
+  // Bolinha vermelha da aba "Notas fiscais": notas recusadas ou com erro (mesma regra do grupo "problema"
+  // da lista de notas). byOrder repete a nota de grupo em vários pedidos, então conta por id da nota.
+  const notasProblema = useMemo(() => {
+    const ids = new Set<string>();
+    fiscal.byOrder.forEach((d) => { if (d.status === 'rejected' || d.status === 'error') ids.add(d.id); });
+    return ids.size;
+  }, [fiscal.byOrder]);
+
   const contagemChips = useMemo(() => {
     const n = {} as Record<FiltroChip, number>;
     (['todos', 'cozinha', 'naopago', 'semnota', 'cancelados'] as FiltroChip[]).forEach((c) => {
@@ -503,6 +511,7 @@ export default function PedidosPage() {
         onAbrirPeriodo={() => setPeriodoAberto(true)}
         // Na aba Notas o ⋯ é o da própria aba (emitir, XMLs, reprocessar)
         menu={abaAtiva === 'notas' ? [] : menu}
+        notasProblema={notasProblema}
       />
 
       {abaAtiva === 'notas' && (

@@ -9,6 +9,7 @@ import MapaSalao from './components/MapaSalao';
 import MesaDetalhes from './components/MesaDetalhes';
 import NovaMesaModal from './components/NovaMesaModal';
 import JuntarMesasModal from './components/JuntarMesasModal';
+import { JUNTAR_MOVER_MESA_DISPONIVEL, AVISO_JUNTAR_MOVER_MESA } from '@/lib/mesaAcoes';
 import HistoricoMesas from './components/HistoricoMesas';
 import ReservasTab from './components/ReservasTab';
 import NotificacoesMesaPanel from './components/NotificacoesMesaPanel';
@@ -53,7 +54,7 @@ export default function MesasPage() {
   const { criarMesa, editarMesa, excluirMesa: excluirMesaDB } = useTablesConfig();
   const { settings } = useSystemSettings();
   const { pedidos: todosPedidos } = useKDS();
-  const { success: toastSuccess, error: toastError } = useToast();
+  const { success: toastSuccess, error: toastError, warning: toastAviso } = useToast();
 
   const mesaKDSMap = useMemo(() => {
     const map: Record<number, { prontos: number; emPreparo: number; novos: number }> = {};
@@ -282,8 +283,13 @@ export default function MesasPage() {
             </button>
             {mesa && mesa.status === 'ocupada' && (
               <button
-                onClick={() => setJuntarModal(true)}
-                className="flex items-center gap-1.5 text-sm font-semibold text-amber-700 border border-amber-300 bg-amber-50 hover:bg-amber-100 px-3 py-2 rounded-lg cursor-pointer whitespace-nowrap transition-colors"
+                onClick={() => {
+                  if (!JUNTAR_MOVER_MESA_DISPONIVEL) { toastAviso('Juntar mesas indisponível', AVISO_JUNTAR_MOVER_MESA); return; }
+                  setJuntarModal(true);
+                }}
+                aria-disabled={!JUNTAR_MOVER_MESA_DISPONIVEL}
+                title={JUNTAR_MOVER_MESA_DISPONIVEL ? undefined : AVISO_JUNTAR_MOVER_MESA}
+                className={`flex items-center gap-1.5 text-sm font-semibold text-amber-700 border border-amber-300 bg-amber-50 hover:bg-amber-100 px-3 py-2 rounded-lg whitespace-nowrap transition-colors ${JUNTAR_MOVER_MESA_DISPONIVEL ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
               >
                 <i className="ri-merge-cells-horizontal" />
                 Juntar

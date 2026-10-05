@@ -105,10 +105,7 @@ export default function StatusPicker({ list, anchorRect, onEscolher, onClose }: 
           <button
             key={o.key}
             type="button"
-            onClick={() => {
-              onEscolher(list ? { status_id: o.key } : { status_category: o.key });
-              onClose();
-            }}
+            onClick={() => escolher(o.key)}
             className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs text-left hover:bg-slate-50"
           >
             <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: o.color }} />

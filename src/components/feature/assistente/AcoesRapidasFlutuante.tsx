@@ -103,7 +103,7 @@ export default function AcoesRapidasFlutuante({ variant }: { variant: 'floating'
   if (!aberto) {
     return (
       <button {...fab.props}
-        className={`fixed z-[55] ${fab.classePosicao} w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center transition-[opacity,transform] duration-200 ${escondido ? 'opacity-0 scale-50 pointer-events-none' : ''} ${fab.arrastando ? 'cursor-grabbing scale-110' : 'cursor-pointer'} select-none`}
+        className={`fab-assistente fixed z-[55] ${fab.classePosicao} w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center transition-[opacity,transform] duration-200 ${escondido ? 'opacity-0 scale-50 pointer-events-none' : ''} ${fab.arrastando ? 'cursor-grabbing scale-110' : 'cursor-pointer'} select-none`}
         aria-hidden={escondido || undefined}
         tabIndex={escondido ? -1 : undefined}
         aria-label={naoLidas ? 'Conversas e ações: mensagem nova' : 'Conversas e ações rápidas'}>

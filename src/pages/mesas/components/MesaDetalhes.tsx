@@ -3,6 +3,7 @@ import QRCodeImport from 'react-qr-code';
 const QRCode = ((QRCodeImport as unknown as { default: typeof QRCodeImport }).default || QRCodeImport) as typeof QRCodeImport;
 import type { Mesa } from '../../../contexts/MesasContext';
 import { useKDS } from '@/contexts/KDSContext';
+import { JUNTAR_MOVER_MESA_DISPONIVEL, AVISO_JUNTAR_MOVER_MESA } from '@/lib/mesaAcoes';
 import type { KDSPedido, KDSItem } from '@/types/kds';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -845,7 +846,15 @@ export default function MesaDetalhes({ mesa, todasMesas, onClose, onUpdate, onTr
         )}
 
         {/* ── ABA TRANSFERIR ── */}
-        {aba === 'transferir' && (
+        {aba === 'transferir' && !JUNTAR_MOVER_MESA_DISPONIVEL && (
+          <div className="p-3">
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm text-amber-800">
+              <i className="ri-information-line mr-1.5 text-amber-500" />
+              {AVISO_JUNTAR_MOVER_MESA}
+            </div>
+          </div>
+        )}
+        {aba === 'transferir' && JUNTAR_MOVER_MESA_DISPONIVEL && (
           <div className="p-3 space-y-4">
             <div className="bg-zinc-50 rounded-xl p-3 text-sm text-zinc-600">
               <i className="ri-information-line mr-1.5 text-amber-500" />

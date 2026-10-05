@@ -6,6 +6,7 @@ import { useCardapio, type EstacaoCozinha } from '@/contexts/CardapioContext';
 import { usePaymentMethods, type PaymentMethod } from '@/hooks/usePaymentMethods';
 import { useUsuarios } from '@/hooks/useUsuarios';
 import { useToast } from '@/contexts/ToastContext';
+import { confirmar } from '@/components/base/Dialogos';
 import { subscribeReload } from '@/lib/reloadSignal';
 import { TPAG_OPTIONS, TPAG_AUTO } from '@/lib/fiscal';
 import MercadoPagoConfigModal from './MercadoPagoConfigModal';
@@ -401,7 +402,14 @@ export default function EstacoesPagamentosTab() {
     recarregarEstacoes();
   };
 
-  const excluirEstacao = async (id: string) => {
+  const excluirEstacao = async (id: string, nome: string) => {
+    const ok = await confirmar({
+      titulo: `Excluir a estação "${nome}"?`,
+      mensagem: 'Os operadores ligados a ela são desligados dela e os itens do cardápio que usam essa estação deixam de ir para ela. Não dá para desfazer.',
+      confirmarLabel: 'Excluir estação',
+      perigo: true,
+    });
+    if (!ok) return;
     setLoadingEstacao(prev => ({ ...prev, [`del_${id}`]: true }));
     const { data, error } = await invokeWithAuth<{ success: boolean; error?: string }>('config-write', {
       body: { action: 'delete_kitchen_station', tenant_id: user?.tenantId, id },
@@ -429,7 +437,14 @@ export default function EstacoesPagamentosTab() {
     recarregarFormas();
   };
 
-  const excluirForma = async (id: string) => {
+  const excluirForma = async (id: string, nome: string) => {
+    const ok = await confirmar({
+      titulo: `Excluir a forma de pagamento "${nome}"?`,
+      mensagem: 'Ela some do caixa, do garçom e dos demais pontos de venda. Os pagamentos já feitos com ela continuam no histórico.',
+      confirmarLabel: 'Excluir forma de pagamento',
+      perigo: true,
+    });
+    if (!ok) return;
     setLoadingForma(prev => ({ ...prev, [`del_${id}`]: true }));
     const { data, error } = await invokeWithAuth<{ success: boolean; error?: string }>('config-write', {
       body: { action: 'delete_payment_method', tenant_id: user?.tenantId, id },
@@ -545,7 +560,7 @@ export default function EstacoesPagamentosTab() {
                     <i className="ri-pencil-line text-sm" />
                   </button>
                   <button
-                    onClick={() => excluirEstacao(e.id)}
+                    onClick={() => excluirEstacao(e.id, e.nome)}
                     disabled={loadingEstacao[`del_${e.id}`]}
                     className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-400 cursor-pointer transition-colors disabled:opacity-50">
                     {loadingEstacao[`del_${e.id}`]
@@ -681,7 +696,7 @@ export default function EstacoesPagamentosTab() {
                     <i className="ri-pencil-line text-sm" />
                   </button>
                   <button
-                    onClick={() => excluirForma(f.id)}
+                    onClick={() => excluirForma(f.id, f.nome)}
                     disabled={loadingForma[`del_${f.id}`]}
                     className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 text-zinc-400 hover:text-red-400 cursor-pointer transition-colors disabled:opacity-50">
                     {loadingForma[`del_${f.id}`]

@@ -9,6 +9,7 @@ import MesasConfigTab from './components/MesasConfigTab';
 import ImpressorasTab from './components/ImpressorasTab';
 import ModelosImpressaoTab from './components/ModelosImpressaoTab';
 import { usePermissoes } from '@/hooks/usePermissoes';
+import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { cfgKeyDaAba, CFG_MAQUININHA_KEY } from '@/constants/permissoesAbas';
 import MaquininhaTab from './components/MaquininhaTab';
 
@@ -34,6 +35,9 @@ export default function ConfiguracoesPage() {
   // Mesmo padrão do Financeiro e dos Relatórios: a tela continua exigindo
   // `configuracoes_editar`, e aqui filtramos aba a aba.
   const { hasPermissao, loading: carregandoPermissoes } = usePermissoes();
+  // Se a leitura das configurações falhou, essas abas mostrariam o padrão — e um Salvar
+  // gravaria o padrão por cima do valor real. O aviso trava o Salvar até a leitura dar certo.
+  const { loadError, loading: carregandoSettings, carregar } = useSystemSettings();
   // A Maquininha tem chave própria (`cfg_maquininha_mp`) e não é uma aba de verdade:
   // ela só aparece sozinha para quem NÃO tem Estações & Pagamentos — quem tem a aba
   // inteira continua configurando a máquina lá dentro, onde ela sempre esteve.
@@ -94,6 +98,21 @@ export default function ConfiguracoesPage() {
         </div>
       </div>
       <div className="flex-1 overflow-y-auto p-6">
+        {loadError && ['mesas', 'impressoras', 'modelos-impressao', 'operacao'].includes(tab) && (
+          <div className="flex flex-wrap items-center gap-3 px-4 py-3 mb-5 max-w-4xl bg-red-50 border border-red-200 rounded-xl">
+            <i className="ri-error-warning-line text-red-500 text-base" />
+            <p className="flex-1 min-w-[200px] text-xs font-semibold text-red-700">
+              Não consegui carregar as configurações. Os valores abaixo NÃO são os da loja, e por isso o Salvar está bloqueado.
+            </p>
+            <button
+              onClick={() => { void carregar(); }}
+              disabled={carregandoSettings}
+              className="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-xs font-bold rounded-lg cursor-pointer whitespace-nowrap"
+            >
+              {carregandoSettings ? 'Tentando...' : 'Tentar de novo'}
+            </button>
+          </div>
+        )}
         {tab === 'loja' && podeAba('loja') && <LojaTab />}
         {tab === 'fiscal' && podeAba('fiscal') && <FiscalTab />}
         {tab === 'mesas' && podeAba('mesas') && <MesasConfigTab />}

@@ -3,6 +3,7 @@
 // localStorage: posição como FRAÇÃO da tela (centro do botão), vira arrasto só depois de 8 px e o
 // click que o navegador dispara ao soltar não abre nada.
 import { useRef, useState, type CSSProperties, type PointerEvent } from 'react';
+import { alturaBarraCasca } from '@/lib/cascaBarra';
 
 const FAB_KEY = 'erpos-assistente-fab';
 const FAB_R = 28; // metade dos 56 px do botão
@@ -18,7 +19,8 @@ function lerPosFab(): PosFab | null {
 // Centro em px, sempre inteiro dentro da tela (a tela pode ter encolhido desde que foi salvo).
 function centroFab(x: number, y: number) {
   const w = window.innerWidth, h = window.innerHeight, min = FAB_R + FAB_MARGEM;
-  return { x: Math.min(Math.max(x, min), w - min), y: Math.min(Math.max(y, min), h - min) };
+  // Casca nova no celular: a barra de baixo ocupa o rodapé (alturaBarraCasca = 0 sem ela).
+  return { x: Math.min(Math.max(x, min), w - min), y: Math.min(Math.max(y, min), h - min - alturaBarraCasca()) };
 }
 
 export function useFabArrastavel(onClique: () => void) {

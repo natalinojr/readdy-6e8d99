@@ -64,3 +64,12 @@ input, textarea, select {
     display: none;                  /* Chrome / Safari / Android */
   }
 }
+
+/* Casca nova (2026-10-05): no celular a barra de baixo ocupa o rodapé — o balão do assistente
+ * (AssistenteChat / AcoesRapidasFlutuante, no canto de sempre) sobe acima dela. A marca no <html> é
+ * posta pela BarraInferior e some com o teclado aberto. */
+@media (max-width: 767px) {
+  html[data-casca-barra] .fab-assistente.bottom-5 {
+    bottom: calc(74px + env(safe-area-inset-bottom));
+  }
+}

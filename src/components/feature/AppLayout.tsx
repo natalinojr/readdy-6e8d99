@@ -10,6 +10,8 @@ import RotaProtegida from './RotaProtegida';
 import InstallPWA from './InstallPWA';
 import AssistenteChat from './AssistenteChat';
 import ConviteAvisos from './ConviteAvisos';
+import CascaLayout from './casca/CascaLayout';
+import { useCascaNova } from '@/hooks/useCascaNova';
 
 // Fallback leve enquanto o chunk da página (lazy) carrega — mantém a moldura
 // (sidebar/topbar) visível em vez de piscar a tela inteira.
@@ -38,6 +40,8 @@ export default function AppLayout() {
   const { mode, setMode } = useAppMode();
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Casca nova (menu em 6 grupos + barra no celular), por pessoa. Desligada = o layout de sempre.
+  const casca = useCascaNova();
 
   // Close sidebar on route change
   useEffect(() => {
@@ -170,6 +174,11 @@ export default function AppLayout() {
         {location.pathname.startsWith('/tarefas') && <ConviteAvisos />}
       </div>
     );
+  }
+
+  // Casca nova: só a moldura muda; terminais, telas cheias e rotas sem loja seguem como acima.
+  if (casca.ligada) {
+    return <CascaLayout carregando={<PageLoader />} onDesligarCasca={() => { void casca.setLigada(false); }} />;
   }
 
   // Modo Gestao — sidebar filtrada + topbar + pagina

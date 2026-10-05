@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useImpressoras } from '@/contexts/ImpressorasContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
+import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { supabase } from '@/lib/supabase';
 import { confirmar } from '@/components/base/Dialogos';
 
@@ -61,10 +62,12 @@ export default function ModelosImpressaoTab() {
     resetPrintTemplate,
     salvarTemplates,
     salvando,
+    erroSalvar,
   } = useImpressoras();
+  const { loadError } = useSystemSettings();
 
   const { user } = useAuth();
-  const { success: toastSuccess } = useToast();
+  const { success: toastSuccess, error: toastError } = useToast();
   const [stations, setStations] = useState<KitchenStation[]>([]);
   const [stationsLoading, setStationsLoading] = useState(true);
   const [selectedStation, setSelectedStation] = useState<string | null>(null);
@@ -103,7 +106,12 @@ export default function ModelosImpressaoTab() {
   };
 
   const handleSalvar = async () => {
-    await salvarTemplates();
+    const r = await salvarTemplates();
+    if (!r.success) {
+      setSalvo(false);
+      toastError('Não salvou os modelos', r.error || 'Não foi possível gravar. Tente de novo.');
+      return;
+    }
     setSalvo(true);
     toastSuccess('Modelos salvos!', 'Templates de impressão atualizados com sucesso.');
     setTimeout(() => setSalvo(false), 2500);
@@ -162,6 +170,14 @@ export default function ModelosImpressaoTab() {
 
   return (
     <div className="space-y-6 max-w-4xl">
+      {erroSalvar && (
+        <div className="flex items-start gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
+          <i className="ri-error-warning-line text-red-500 text-sm mt-0.5" />
+          <p className="text-xs font-semibold text-red-700">
+            NÃO foi salvo no sistema: {erroSalvar} O sistema tenta de novo sozinho; a alteração continua na tela.
+          </p>
+        </div>
+      )}
       {salvo && (
         <div className="flex items-center gap-2 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl">
           <i className="ri-check-line text-emerald-500 text-sm" />
@@ -202,7 +218,7 @@ export default function ModelosImpressaoTab() {
       <div className="flex justify-end pb-4">
         <button
           onClick={handleSalvar}
-          disabled={salvando}
+          disabled={salvando || !!loadError}
           className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 text-white text-sm font-bold rounded-lg hover:bg-amber-600 disabled:opacity-60 cursor-pointer transition-colors whitespace-nowrap"
         >
           {salvando ? (

@@ -7,7 +7,7 @@ import { useSessao } from '../../contexts/SessaoContext';
 import { podeSair } from '../../lib/guardaSaida';
 
 // ─── Modal Criar Nova Loja ────────────────────────────────────────────────────
-function CriarLojaModal({ onClose }: { onClose: () => void }) {
+export function CriarLojaModal({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate();
   const [codigo, setCodigo] = useState('');
 

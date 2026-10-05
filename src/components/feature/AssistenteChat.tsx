@@ -27,6 +27,7 @@ import { FazerRapido, LinhaNovidade, LinhaNumeroHoje, MenuMais, Novidades, Titul
 import { maisUsadas, PADRAO_DONO, registrarUsoAcao } from '@/components/feature/assistente/acoes/maisUsadas';
 import { AvatarPessoa } from '@/components/feature/equipe/ConversaEquipe';
 import { horaCurta } from '@/components/feature/equipe/api';
+import { alturaBarraCasca } from '@/lib/cascaBarra';
 
 export const ASSISTENTE_OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -236,7 +237,8 @@ function lerPosFab(): PosFab | null {
 // Centro em px, sempre inteiro dentro da tela (a tela pode ter encolhido desde que foi salvo).
 function centroFab(x: number, y: number) {
   const w = window.innerWidth, h = window.innerHeight, min = FAB_R + FAB_MARGEM;
-  return { x: Math.min(Math.max(x, min), w - min), y: Math.min(Math.max(y, min), h - min) };
+  // Casca nova no celular: a barra de baixo ocupa o rodapé (alturaBarraCasca = 0 sem ela).
+  return { x: Math.min(Math.max(x, min), w - min), y: Math.min(Math.max(y, min), h - min - alturaBarraCasca()) };
 }
 
 function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: 'ok' | 'no' | 'st' | 're' | 'rc') => void | Promise<void> }) {
@@ -2034,7 +2036,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
         setModo('full');
       }}
       style={centro ? { left: centro.x - FAB_R, top: centro.y - FAB_R, touchAction: 'none' } : { touchAction: 'none' }}
-      className={`fixed z-[55] ${centro ? '' : 'bottom-5 right-5'} w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center transition-[opacity,transform] duration-200 ${escondido ? 'opacity-0 scale-50 pointer-events-none' : ''} ${arrastandoFab ? 'cursor-grabbing scale-110' : 'cursor-pointer'} select-none`}
+      className={`fab-assistente fixed z-[55] ${centro ? '' : 'bottom-5 right-5'} w-14 h-14 rounded-full bg-violet-600 hover:bg-violet-500 text-white shadow-lg flex items-center justify-center transition-[opacity,transform] duration-200 ${escondido ? 'opacity-0 scale-50 pointer-events-none' : ''} ${arrastandoFab ? 'cursor-grabbing scale-110' : 'cursor-pointer'} select-none`}
       aria-hidden={escondido || undefined}
       tabIndex={escondido ? -1 : undefined}
       aria-label={bolinha ? 'Assistente: tem novidade para você' : 'Falar com o assistente'}

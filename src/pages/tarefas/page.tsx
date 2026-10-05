@@ -451,7 +451,14 @@ export default function TarefasPage() {
   // Cria a tarefa e já abre o drawer completo pra configurar tudo (data,
   // responsável, prioridade, checklist, descrição…).
   const criarTarefaEmPasta = async (listId: string) => {
-    const res = await write('create_task', { list_id: listId, title: 'Nova tarefa' });
+    // Em "Minhas" a lista só mostra tarefas em que eu sou responsável: sem isto a tarefa
+    // nascia sem ninguém e sumia (o servidor não põe o criador como responsável).
+    // "Atribuídas" exige outra pessoa e "Compartilhadas" exige outro criador — não dá para
+    // satisfazer nenhuma das duas só com o clique, então nelas o responsável fica vazio
+    // (o drawer abre logo em seguida para escolher).
+    const payload: Record<string, unknown> = { list_id: listId, title: 'Nova tarefa' };
+    if (origem === 'minhas' && meuId) payload.assignee_ids = [meuId];
+    const res = await write('create_task', payload);
     if (!res.success) {
       toast.error('Erro ao criar tarefa', res.error);
       return;
@@ -578,6 +585,7 @@ export default function TarefasPage() {
               dependencias={dependencias}
               usuarios={usuariosAtivos}
               meuId={meuId}
+              criarComoMinha={origem === 'minhas'}
               chave={origem === 'pasta' ? selectedList?.id ?? 'nenhuma' : origem}
               write={write}
               onOpenTask={setOpenTaskId}
