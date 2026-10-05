@@ -35,14 +35,15 @@ export function Variacao({ pct, escuro = false, titulo }: { pct: number | null; 
   );
 }
 
-export function AoVivo() {
+/** `soPontoNoCelular`: no celular só a bolinha (o texto não cabe ao lado do título). */
+export function AoVivo({ soPontoNoCelular = false }: { soPontoNoCelular?: boolean }) {
   return (
-    <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700">
+    <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-emerald-700 whitespace-nowrap" title="Ao vivo">
       <span className="relative flex w-2 h-2">
         <span className="absolute inline-flex w-full h-full rounded-full bg-emerald-400 opacity-60 animate-ping" />
         <span className="relative inline-flex w-2 h-2 rounded-full bg-emerald-500" />
       </span>
-      ao vivo
+      <span className={soPontoNoCelular ? 'hidden sm:inline' : ''}>ao vivo</span>
     </span>
   );
 }
