@@ -1,7 +1,11 @@
 // Regra do acerto dos entregadores (delivery_config.acerto_motoboy) — tipos e leitura/normalização.
 // O valor de cada entrega é calculado e congelado pelo banco (gatilho trg_delivery_driver_ledger).
 
-export type ModoAcerto = 'por_entrega' | 'faixa_km' | 'diaria_mais_entrega' | 'percentual_taxa';
+// diaria_mais_faixa_km (2026-10-05, pedido do dono): diária por dia trabalhado + valor da entrega pela faixa de km.
+export type ModoAcerto = 'por_entrega' | 'faixa_km' | 'diaria_mais_entrega' | 'diaria_mais_faixa_km' | 'percentual_taxa';
+/** Modos que pagam a entrega pela faixa de km / que pagam diária. */
+export const MODOS_FAIXA_KM: ModoAcerto[] = ['faixa_km', 'diaria_mais_faixa_km'];
+export const MODOS_COM_DIARIA: ModoAcerto[] = ['diaria_mais_entrega', 'diaria_mais_faixa_km'];
 
 export interface AcertoCfg {
   ativo: boolean;
@@ -20,7 +24,7 @@ const num = (v: unknown) => { const n = Number(String(v ?? '').replace(',', '.')
 export function lerAcertoCfg(raw: unknown): AcertoCfg {
   if (!raw || typeof raw !== 'object') return { ...ACERTO_PADRAO };
   const r = raw as Record<string, unknown>;
-  const modos: ModoAcerto[] = ['por_entrega', 'faixa_km', 'diaria_mais_entrega', 'percentual_taxa'];
+  const modos: ModoAcerto[] = ['por_entrega', 'faixa_km', 'diaria_mais_entrega', 'diaria_mais_faixa_km', 'percentual_taxa'];
   return {
     ativo: r.ativo === true,
     modo: modos.includes(r.modo as ModoAcerto) ? (r.modo as ModoAcerto) : 'por_entrega',
