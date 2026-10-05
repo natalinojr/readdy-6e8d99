@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { diasEntre, metaDoPeriodo, montarLoja, totalLojas, rotuloComparacao, type LinhaLojasRpc } from '../../lib/lojasComparar';
+import { diasEntre, metaDoPeriodo, montarLoja, ordenarPorFaturamento, totalLojas, rotuloComparacao, type LinhaLojasRpc } from '../../lib/lojasComparar';
 
 const base = (over: Partial<LinhaLojasRpc> = {}): LinhaLojasRpc => ({
   tenant_id: 't1', nome: 'Loja', dia: '2026-10-04',
@@ -98,5 +98,20 @@ describe('rotuloComparacao', () => {
     const l = montarLoja(base(), [], []);
     expect(rotuloComparacao('hoje', l, new Date('2026-10-04T23:04:00-03:00'))).toBe('vs dom passado até 23h04');
     expect(rotuloComparacao('mes', { periodo: { d1: '2026-10-01', d2: '2026-10-04', c1: '2026-09-01', c2: '2026-09-04', corte: null } })).toBe('vs 1 a 4/09');
+  });
+});
+
+describe('ordenarPorFaturamento', () => {
+  const zerado = { faturamento: 0, pedidos: 0, canais: {}, serie: {} };
+  it('maior faturamento primeiro; empate pelos últimos 30 dias; depois o nome', () => {
+    const lojas = [
+      montarLoja(base({ tenant_id: 'vb', nome: 'Vila burguer', atual: zerado, fat_30d: 900 }), [], []),
+      montarLoja(base({ tenant_id: 'vl', nome: 'Vila Leste', atual: zerado, fat_30d: 11000 }), [], []),
+      montarLoja(base({ tenant_id: 'pg', nome: 'Paranaguá', atual: zerado, fat_30d: 17000 }), [], []),
+      montarLoja(base({ tenant_id: 'aa', nome: 'Alfa', atual: zerado }), [], []),
+    ];
+    expect(ordenarPorFaturamento(lojas).map((l) => l.tenantId)).toEqual(['pg', 'vl', 'vb', 'aa']);
+    const comVenda = [...lojas, montarLoja(base({ tenant_id: 'x', nome: 'Nova', fat_30d: 10 }), [], [])];
+    expect(ordenarPorFaturamento(comVenda)[0].tenantId).toBe('x'); // vendeu hoje passa à frente
   });
 });

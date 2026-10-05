@@ -1,7 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLojasComparar } from '@/hooks/useLojasComparar';
-import { corDaLoja, rotuloComparacao, totalLojas, ROTULO_PERIODO, type LojaComparada, type PeriodoLojas } from '@/lib/lojasComparar';
+import { corDaLoja, ordenarPorFaturamento, rotuloComparacao, totalLojas, ROTULO_PERIODO, type LojaComparada, type PeriodoLojas } from '@/lib/lojasComparar';
 import { cliqueParaNovaAba } from '@/lib/novaJanela';
 import GraficoLojas, { CanaisLojas } from './components/GraficoLojas';
 import { AgoraTexto, AoVivo, brl, EscolherLojasModal, EtiquetaDia, MetaBarra, MetaTexto, PontoLoja, Variacao, useAbrirLoja } from './components/ui';
@@ -97,7 +97,9 @@ export default function LojasPage() {
   const chaveOrdem: Record<Ordem, (l: LojaComparada) => number> = {
     fat: (l) => l.atual.faturamento, var: (l) => l.variacao ?? -1e9, ticket: (l) => l.atual.ticket, ped: (l) => l.atual.pedidos,
   };
-  const mostradas = lojas.filter((l) => !l.oculta && !l.parada).sort((a, b) => chaveOrdem[ordem](b) - chaveOrdem[ordem](a));
+  // Ordem escolhida; empate (ex.: tudo em R$ 0 de madrugada) pela ordem de faturamento (últimos 30 dias)
+  const mostradas = ordenarPorFaturamento(lojas.filter((l) => !l.oculta && !l.parada))
+    .sort((a, b) => chaveOrdem[ordem](b) - chaveOrdem[ordem](a));
   const paradas = lojas.filter((l) => !l.oculta && l.parada);
   const ocultas = lojas.filter((l) => l.oculta);
   const total = totalLojas(mostradas);

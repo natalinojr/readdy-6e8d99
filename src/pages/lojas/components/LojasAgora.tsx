@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLojasComparar } from '@/hooks/useLojasComparar';
-import { corDaLoja, rotuloComparacao, totalLojas, type LojaComparada } from '@/lib/lojasComparar';
+import { corDaLoja, ordenarPorFaturamento, rotuloComparacao, totalLojas, type LojaComparada } from '@/lib/lojasComparar';
 import { cliqueParaNovaAba } from '@/lib/novaJanela';
 import { AgoraTexto, AoVivo, brl, EscolherLojasModal, EtiquetaDia, MetaBarra, MetaTexto, PontoLoja, Variacao, useAbrirLoja } from './ui';
 
@@ -37,7 +37,8 @@ export default function LojasAgora() {
   const [escolher, setEscolher] = useState(false);
 
   const cores = useMemo(() => Object.fromEntries(lojas.map((l, i) => [l.tenantId, corDaLoja(i)])), [lojas]);
-  const mostradas = lojas.filter((l) => !l.oculta && !l.parada).sort((a, b) => b.atual.faturamento - a.atual.faturamento);
+  // Maior faturamento primeiro (empate: últimos 30 dias)
+  const mostradas = ordenarPorFaturamento(lojas.filter((l) => !l.oculta && !l.parada));
   const paradas = lojas.filter((l) => !l.oculta && l.parada);
   const ocultas = lojas.filter((l) => l.oculta);
   const total = totalLojas(mostradas);
