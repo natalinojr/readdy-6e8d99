@@ -44,6 +44,8 @@ export interface IfoodVendas {
   pedidos: number;
   /** Pedidos que vieram da API do iFood (Vendas ou módulo Pedidos) por ainda não estarem na conciliação importada */
   pedidosAoVivo: number;
+  /** Um item por pedido (hora do pedido e valor das vendas) — para encaixar no dia da loja (src/lib/diaLoja.ts) */
+  lista: Array<{ at: string; valor: number; aoVivo: boolean }>;
   error: string | null;
 }
 
@@ -63,10 +65,10 @@ export async function fetchIfoodVendas(tenantId: string, fromISO: string, toISO:
     .lte('order_created_at', toISO)
     .order('order_created_at', { ascending: true })
     .range(from, to));
-  const vazio: IfoodVendas = { porDia: {}, porHora: {}, total: 0, pedidos: 0, pedidosAoVivo: 0, error: res.error?.message ?? null };
+  const vazio: IfoodVendas = { porDia: {}, porHora: {}, total: 0, pedidos: 0, pedidosAoVivo: 0, lista: [], error: res.error?.message ?? null };
   if (res.error) return vazio;
 
-  const porPedido = new Map<string, { at: string; valor: number }>();
+  const porPedido = new Map<string, { at: string; valor: number; aoVivo?: boolean }>();
   for (const r of res.rows ?? []) {
     if (!r.order_id || !r.order_created_at) continue;
     const p = porPedido.get(r.order_id) ?? { at: r.order_created_at, valor: 0 };
@@ -83,7 +85,7 @@ export async function fetchIfoodVendas(tenantId: string, fromISO: string, toISO:
   for (const p of api) {
     if (p.cancelado) { canceladosApi.add(p.id); continue; }
     if (porPedido.has(p.id)) continue;
-    porPedido.set(p.id, { at: p.at.toISOString(), valor: p.vendas });
+    porPedido.set(p.id, { at: p.at.toISOString(), valor: p.vendas, aoVivo: true });
     pedidosAoVivo += 1;
   }
 
@@ -102,12 +104,13 @@ export async function fetchIfoodVendas(tenantId: string, fromISO: string, toISO:
   for (const o of vivos.rows ?? []) {
     if (!o.ordered_at || o.status === 'cancelled' || porPedido.has(o.ifood_order_id) || canceladosApi.has(o.ifood_order_id)) continue;
     const valor = Number(o.total?.subTotal ?? 0) + (o.delivered_by === 'MERCHANT' ? Number(o.total?.deliveryFee ?? 0) : 0);
-    porPedido.set(o.ifood_order_id, { at: o.ordered_at, valor });
+    porPedido.set(o.ifood_order_id, { at: o.ordered_at, valor, aoVivo: true });
     pedidosAoVivo += 1;
   }
 
-  const out: IfoodVendas = { porDia: {}, porHora: {}, total: 0, pedidos: 0, pedidosAoVivo, error: null };
+  const out: IfoodVendas = { porDia: {}, porHora: {}, total: 0, pedidos: 0, pedidosAoVivo, lista: [], error: null };
   for (const p of porPedido.values()) {
+    out.lista.push({ at: p.at, valor: p.valor, aoVivo: !!p.aoVivo });
     const quando = new Date(p.at);
     const dia = quando.toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
     const hora = quando.toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });

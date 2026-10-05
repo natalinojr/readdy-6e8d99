@@ -33,7 +33,8 @@ export default function InventarioTab() {
   const { inventarioSessions } = useEstoque();
   const { user } = useAuth();
   const { hasPermissao } = usePermissoes();
-  const { situacao, recarregarSituacao, contar, abrirFicha, abrirProgramar, podeConfigurar, podeContar } = useEstoqueTela();
+  const { situacao, recarregarSituacao, contar, abrirFicha, abrirProgramar, podeConfigurar, podeContar, duvidas } = useEstoqueTela();
+  const duvidasLista = (situacao?.insumos ?? []).filter((i) => duvidas.has(i.id));
   const podeInventariar = hasPermissao('estoque_inventario');
   const [view, setView] = useState<View>('historico');
   const [sessionDetalhe, setSessionDetalhe] = useState<InventarioSession | null>(null);
@@ -153,6 +154,17 @@ export default function InventarioTab() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
         {/* Esquerda: o que contar agora */}
         <div className="space-y-3">
+          {duvidasLista.length > 0 && (
+            <CartaoAcao tom="prop" icone="ri-flag-fill" titulo={`${duvidasLista.length} ${plural(duvidasLista.length, 'item em dúvida', 'itens em dúvida')}`}
+              acoes={podeContar ? (
+                <button onClick={() => contar(duvidasLista, 'Em dúvida')} className={`${btn('dark')} w-full`}>
+                  <i className="ri-scales-3-line" />Contar {duvidasLista.length === 1 ? 'esse' : `os ${duvidasLista.length}`} de novo
+                </button>
+              ) : undefined}>
+              A contagem deixou para decidir depois: {duvidasLista.slice(0, 6).map((i) => i.nome).join(', ')}{duvidasLista.length > 6 ? '…' : ''}. Contando, a marca sai sozinha.
+            </CartaoAcao>
+          )}
+
           {conferir.length > 0 && (
             <CartaoAcao tom="alerta" icone="ri-error-warning-line" titulo={tituloConferir}
               direita={<Etiqueta tom="amber">~{minutosPara(conferir.length)} min</Etiqueta>}

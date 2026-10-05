@@ -47,6 +47,10 @@ export interface DashboardPedido {
 }
 
 export interface DashboardMetrics {
+  /** Dia da loja ('YYYY-MM-DD'): "hoje" = soma das sessões de caixa abertas nele (src/lib/diaLoja.ts) */
+  dia?: string;
+  /** Abertura do primeiro caixa do dia da loja */
+  dia_inicio?: string | null;
   faturamento_hoje: number;
   faturamento_ontem: number;
   pedidos_hoje: number;

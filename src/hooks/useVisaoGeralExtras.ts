@@ -42,7 +42,8 @@ function porItem(items: { item_name: string | null; item_price: number | null; q
   return [...m.values()].sort((a, b) => b.total_qty - a.total_qty || b.total_revenue - a.total_revenue);
 }
 
-export function useVisaoGeralExtras(periodo: string) {
+/** `intervalo` (ISO) substitui o período — ex.: o dia da loja no Dashboard (sessões abertas no dia). */
+export function useVisaoGeralExtras(periodo: string, intervalo?: { from: string; to: string } | null) {
   const { user } = useAuth();
   const [data, setData] = useState<VisaoGeralExtrasData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -53,7 +54,7 @@ export function useVisaoGeralExtras(periodo: string) {
     try {
       // Usa getPeriodDates para respeitar o período selecionado (Hoje, Ontem, 7 dias, etc.)
       // Retorna strings ISO com timezone Brasília já prontas para o Supabase
-      const { from: fromTs, to: toTs } = getPeriodDates(periodo);
+      const { from: fromTs, to: toTs } = intervalo ?? getPeriodDates(periodo);
 
       const { data: orders, error: ordersErr } = await supabase
         .from('orders')
@@ -133,7 +134,7 @@ export function useVisaoGeralExtras(periodo: string) {
     } finally {
       setLoading(false);
     }
-  }, [user?.tenantId, periodo]);
+  }, [user?.tenantId, periodo, intervalo?.from, intervalo?.to]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
 

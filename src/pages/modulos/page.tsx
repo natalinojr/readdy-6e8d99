@@ -12,6 +12,7 @@ import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import { GESTAO_ENTRADA_KEYS, primeiraRotaGestao } from '@/constants/permissoesGestao';
 import { ChefHat, LogOut, Monitor, Store } from 'lucide-react';
 import OnboardingShareModal from '@/pages/modulos/components/OnboardingShareModal';
+import LojasAgora from '@/pages/lojas/components/LojasAgora';
 import { abrirNovaJanela, cliqueParaNovaAba } from '@/lib/novaJanela';
 
 
@@ -786,6 +787,9 @@ export default function ModulosPage() {
 
       {/* ── GRID DE MÓDULOS ── */}
       <div className="relative z-10 flex-1 px-5 md:px-10 pb-12 max-w-5xl w-full">
+
+        {/* Suas lojas agora: faturamento ao vivo de cada loja (quem vê o Dashboard em 2+ lojas) */}
+        <LojasAgora />
 
         {!cargaPronta ? (
           <div className="flex justify-center py-20">
