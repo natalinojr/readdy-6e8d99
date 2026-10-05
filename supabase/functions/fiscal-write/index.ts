@@ -21,6 +21,29 @@
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { calcularValores, completarPagamentoIfood } from './valores.ts';
 import { valorVendaIfood, type ValorIfood } from '../_shared/ifood-valores.ts';
+import { dadosNotaIfood } from '../_shared/ifood-nota.ts';
+
+// Código IBGE do município do endereço de entrega (NFC-e de entrega exige o endereço do cliente). CEP → ViaCEP; se
+// falhar, nome da cidade na lista do IBGE da UF. Cache por instância.
+const ibgeCache = new Map<string, number | null>();
+const semAcento = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+async function codigoIbge(cep: string, cidade: string, uf: string): Promise<number | null> {
+  const chave = `${cep}|${semAcento(cidade)}|${uf}`;
+  if (ibgeCache.has(chave)) return ibgeCache.get(chave)!;
+  let cod: number | null = null;
+  const comPrazo = (url: string) => fetch(url, { signal: AbortSignal.timeout(5000) }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  if (/^\d{8}$/.test(cep)) {
+    const v = await comPrazo(`https://viacep.com.br/ws/${cep}/json/`);
+    if (v && !v.erro && String(v.uf ?? '').toUpperCase() === uf && /^\d{7}$/.test(String(v.ibge ?? ''))) cod = Number(v.ibge);
+  }
+  if (!cod && /^[A-Z]{2}$/.test(uf) && cidade) {
+    const lista = await comPrazo(`https://servicodados.ibge.gov.br/api/v1/localidades/estados/${uf}/municipios`);
+    const m = Array.isArray(lista) ? lista.find((x: any) => semAcento(String(x?.nome ?? '')) === semAcento(cidade)) : null;
+    if (m && /^\d{7}$/.test(String(m.id))) cod = Number(m.id);
+  }
+  if (cod) ibgeCache.set(chave, cod);
+  return cod;
+}
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -226,12 +249,13 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
   // são serviço do iFood (despesa), não abatimento da nota. orders.total_amount do cobrado pela loja é o que o cliente
   // paga (já sem o cupom do iFood), por isso os valores vêm do pedido do iFood e não do orders.
   const ifoodPorId = new Map<string, ValorIfood>();
+  const ifoodRows: any[] = [];
   const ifoodIds = [...new Set(ordersValidos.map((o) => o.ifood_order_id).filter(Boolean))] as string[];
   if (ifoodIds.length > 0) {
-    const { data: ifs, error: ifErr } = await admin.from('ifood_orders').select('ifood_order_id, order_type, delivered_by, total, benefits')
+    const { data: ifs, error: ifErr } = await admin.from('ifood_orders').select('ifood_order_id, order_type, delivered_by, total, benefits, merchant_id, address, customer_name')
       .eq('tenant_id', tenantId).in('ifood_order_id', ifoodIds);
     if (ifErr) throw new Error(`ifood_orders: ${ifErr.message}`);
-    for (const r of ifs ?? []) ifoodPorId.set(String(r.ifood_order_id), valorVendaIfood(r));
+    for (const r of ifs ?? []) { ifoodPorId.set(String(r.ifood_order_id), valorVendaIfood(r)); ifoodRows.push(r); }
     if (ifoodPorId.size < ifoodIds.length) throw new Error('Pedido do iFood sem os dados do iFood (ifood_orders)');
   }
   const orders = ordersValidos.map((o) => {
@@ -454,6 +478,20 @@ async function buildNote(admin: Admin, settings: FiscalSettings, tenantId: strin
   };
   if (settings.serie) payload.Serie = Number(settings.serie);
   if (customerCpf) payload.Cliente = { CpfCnpj: customerCpf, NmCliente: customerName ?? undefined, IndicadorIe: 9 };
+  // Pedido do iFood (contadora, 05/10): não presencial (entrega a domicílio, indPres 4, com o endereço do cliente) e o
+  // iFood como intermediador — só dá com o CPF do cliente (homologação 05/10); sem CPF e na retirada sai presencial.
+  // Ver _shared/ifood-nota.ts.
+  if (ifoodRows.length > 0) {
+    const r = ifoodRows.find((x) => String(x.order_type ?? 'DELIVERY') === 'DELIVERY') ?? ifoodRows[0];
+    const a = r.address ?? {};
+    const uf = String(a.state ?? '').trim().toUpperCase();
+    const cod = String(r.order_type ?? 'DELIVERY') === 'DELIVERY' && customerCpf ? await codigoIbge(String(a.postalCode ?? '').replace(/\D/g, ''), String(a.city ?? ''), uf) : null;
+    const nota = dadosNotaIfood(r, cod, customerCpf);
+    payload.IndicadorPresenca = nota.indicadorPresenca;
+    if (nota.intermediador) payload.Intermediador = nota.intermediador;
+    if (nota.cliente) payload.Cliente = { ...nota.cliente, ...(customerName ? { NmCliente: customerName.slice(0, 60) } : {}) };
+    if (nota.motivoPresencial) log('INFO', 'nfce-ifood', 'presencial', { sourceId, motivo: nota.motivoPresencial });
+  }
 
   const danfe = {
     tipo: 'danfe_nfce',

@@ -75,3 +75,35 @@ describe('completarPagamentoIfood', () => {
     expect(f.completarPagamentoIfood(pg, 42.99)).toEqual(pg);
   });
 });
+
+const NOTA = pathToFileURL(resolve(__dirname, '../../../supabase/functions/_shared/ifood-nota.ts')).href;
+describe('dadosNotaIfood (contadora 05/10: não presencial + iFood intermediador; homologação 05/10)', () => {
+  let n: any;
+  beforeAll(async () => { n = await import(/* @vite-ignore */ NOTA); });
+  const end = { city: 'Paranaguá', state: 'PR', postalCode: '83203300', streetName: 'R. José Antônio Temporão', streetNumber: '91', complement: 'Clinica', neighborhood: 'Centro Histórico' };
+  const merchant = '33d5eb7c-77d9-419d-a664-f1ebb046910f';
+
+  it('entrega com CPF: indPres 4, iFood intermediador, destinatário com endereço (formato autorizado em homologação)', () => {
+    const r = n.dadosNotaIfood({ order_type: 'DELIVERY', merchant_id: merchant, customer_name: 'Maria', address: end }, 4118204, '52998224725');
+    expect(r.motivoPresencial).toBeNull();
+    expect(r.indicadorPresenca).toBe(4);
+    expect(r.intermediador).toEqual({ Cnpj: '14380200000121', IdCadIntTran: merchant });
+    expect(r.cliente).toEqual({ CpfCnpj: '52998224725', NmCliente: 'Maria', IndicadorIe: 9, Endereco: { Cep: '83203300', Logradouro: 'R. José Antônio Temporão', Numero: '91', Complemento: 'Clinica', Bairro: 'Centro Histórico', Municipio: 'Paranaguá', CodMunicipio: 4118204, Uf: 'PR', CodPais: 1058 } });
+  });
+
+  it('entrega sem CPF (#1631): presencial, sem intermediador (sem CPF o Brasil NFe não manda o destinatário → 787)', () => {
+    const r = n.dadosNotaIfood({ order_type: 'DELIVERY', merchant_id: merchant, customer_name: 'Maria', address: end }, 4118204, null);
+    expect(r).toMatchObject({ indicadorPresenca: 1, intermediador: null, cliente: null });
+    expect(r.motivoPresencial).toMatch(/sem CPF/);
+  });
+
+  it('retirada/consumo no local: presencial, sem intermediador (Brasil NFe recusa intermediador com indPres 1)', () => {
+    expect(n.dadosNotaIfood({ order_type: 'TAKEOUT', merchant_id: merchant }, null, '52998224725'))
+      .toEqual({ indicadorPresenca: 1, intermediador: null, cliente: null, motivoPresencial: null });
+  });
+
+  it('entrega com CPF mas endereço incompleto: presencial com o motivo', () => {
+    expect(n.dadosNotaIfood({ order_type: 'DELIVERY', merchant_id: merchant, address: end }, null, '52998224725').motivoPresencial).toMatch(/código do município/);
+    expect(n.dadosNotaIfood({ order_type: 'DELIVERY', merchant_id: merchant, address: { ...end, streetName: '' } }, 4118204, '52998224725').motivoPresencial).toMatch(/rua/);
+  });
+});

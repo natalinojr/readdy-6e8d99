@@ -172,8 +172,14 @@ d95420e); foi **desfeita** no mesmo dia porque o dono escolheu este desenho. Apr
   aviso em `ifood_orders.funnel_error`.
 - **Chave:** Gestor de Entregas › iFood Entrega › Pedidos do iFood › "Emitir NFC-e dos pedidos do iFood" (aparece no
   modo "Pedido entra no ERPOS").
-- **Pendente com a contadora:** NFC-e hoje sai "presencial" (indPres 1) sem intermediador; venda por marketplace
-  talvez precise de indPres 4 + intermediador iFood (CNPJ 14.380.200/0001-21, o mesmo que vem como adquirente no Pix).
-  Emissão em produção NÃO testada (Testes PDV sem fiscal); valores e pagamentos cobertos em
-  `src/test/edge/ifoodValores.test.ts`.
+- **Presença e intermediador (contadora 05/10: "não presencial" + iFood como intermediador)** — `_shared/ifood-nota.ts`.
+  NFC-e só aceita indPres 1, 4 ou 5 (rejeição 717); "não presencial" na NFC-e = 4 (entrega a domicílio), que exige
+  destinatário com endereço (787/788; Ajuste SINIEF 09/2026) e indIntermed (434). **Teste em homologação na SEFAZ-PR
+  (05/10, conta Brasil NFe da Paranaguá, autorizado pelo dono):** entrega + CPF + endereço + intermediador (CNPJ iFood
+  14.380.200/0001-21 + merchant id como idCadIntTran) → **AUTORIZADA**; entrega **sem CPF** → 787 (o Brasil NFe não
+  manda o grupo dest sem documento); retirada (indPres 1) + intermediador → o Brasil NFe recusa ("só com indPres 2, 3,
+  4 ou 9"). **Regra:** entrega com CPF (o cliente pediu CPF na nota) → indPres 4 + intermediador + destinatário com
+  endereço (código IBGE pelo CEP: ViaCEP, depois lista do IBGE); entrega sem CPF, endereço incompleto, retirada e
+  consumo no local → presencial sem intermediador (como o delivery da loja). O iFood esconde o CPF, então a maioria
+  sai presencial. Para mudar isso: perguntar ao Brasil NFe se aceitam destinatário sem documento (idEstrangeiro vazio).
 - **Regra do dono (05/10):** a loja só abre no iFood depois de abrir o caixa no ERPOS.
