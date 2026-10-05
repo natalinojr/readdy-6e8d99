@@ -17,34 +17,49 @@ export function useFiscalDocs(orderIds: string[]) {
   const tenantId = user?.tenantId;
   const [docs, setDocs] = useState<FiscalDocumentRow[]>([]);
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  // Chaves por canal (fiscal_settings.emit_on_*): canal desligado não conta como "sem nota".
+  const [canais, setCanais] = useState<{ delivery: boolean; mesa: boolean; balcao: boolean } | null>(null);
+  // Leitura das notas falhou: sem saber o que tem nota, nada vira "sem nota" (senão o lote emitiria em dobro).
+  const [erroLeitura, setErroLeitura] = useState(false);
+  // Ids cujas notas já chegaram: antes disso, nada é "sem nota" (todo pago aparecia sem nota na abertura).
+  const [carregadoKey, setCarregadoKey] = useState<string | null>(null);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const idsKey = useMemo(() => [...new Set(orderIds)].sort().join(','), [orderIds]);
   const idsRef = useRef<string[]>([]);
   idsRef.current = idsKey ? idsKey.split(',') : [];
 
   const carregar = useCallback(async () => {
-    if (!tenantId || idsRef.current.length === 0) { setDocs([]); return; }
+    const chave = idsKey;
+    if (!tenantId || idsRef.current.length === 0) { setDocs([]); setCarregadoKey(chave); return; }
     const rows: FiscalDocumentRow[] = [];
+    let falhou = false;
     // PostgREST limita o tamanho do IN; busca em lotes.
     for (let i = 0; i < idsRef.current.length; i += 200) {
       const chunk = idsRef.current.slice(i, i + 200);
-      // Nota do próprio pedido OU de um grupo de pagamento que inclui o pedido (order_ids).
-      const [{ data: byId }, { data: byGroup }] = await Promise.all([
+      // Nota do próprio pedido OU qualquer nota que cubra o pedido em order_ids (grupo de pagamento,
+      // sessão de mesa). Antes só olhava grupo: pedido coberto por nota de mesa aparecia "sem nota".
+      const [{ data: byId, error: e1 }, { data: byGroup, error: e2 }] = await Promise.all([
         supabase.from('fiscal_documents').select(COLS).eq('tenant_id', tenantId).eq('source_type', 'order').in('source_id', chunk).order('created_at', { ascending: false }).limit(1000),
-        supabase.from('fiscal_documents').select(COLS).eq('tenant_id', tenantId).eq('source_type', 'payment_group').overlaps('order_ids', chunk).order('created_at', { ascending: false }).limit(1000),
+        supabase.from('fiscal_documents').select(COLS).eq('tenant_id', tenantId).overlaps('order_ids', chunk).order('created_at', { ascending: false }).limit(1000),
       ]);
+      if (e1 || e2) falhou = true;
       if (byId) rows.push(...(byId as unknown as FiscalDocumentRow[]));
       if (byGroup) rows.push(...(byGroup as unknown as FiscalDocumentRow[]));
     }
     setDocs(rows);
+    setErroLeitura(falhou);
+    setCarregadoKey(chave);
   }, [tenantId, idsKey]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
   useEffect(() => {
     if (!tenantId) return;
-    supabase.from('fiscal_settings').select('enabled').eq('tenant_id', tenantId).maybeSingle()
-      .then(({ data }) => setEnabled(data ? Boolean(data.enabled) : null));
+    supabase.from('fiscal_settings').select('enabled, emit_on_delivery, emit_on_counter, emit_on_table_close').eq('tenant_id', tenantId).maybeSingle()
+      .then(({ data }) => {
+        setEnabled(data ? Boolean(data.enabled) : null);
+        setCanais(data ? { delivery: data.emit_on_delivery !== false, mesa: data.emit_on_table_close !== false, balcao: data.emit_on_counter !== false } : null);
+      });
     const ch = supabase.channel(`fiscal-docs-pedidos-${tenantId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'fiscal_documents', filter: `tenant_id=eq.${tenantId}` }, () => carregar())
       .subscribe();
@@ -58,7 +73,9 @@ export function useFiscalDocs(orderIds: string[]) {
     for (const d of docs) {
       if (seen.has(d.id)) continue; // a mesma nota de grupo pode vir em mais de um lote
       seen.add(d.id);
-      const keys = d.source_type === 'payment_group' ? (d.order_ids ?? []) : [d.source_id];
+      const keys = d.order_ids?.length
+        ? [...new Set([...d.order_ids, ...(d.source_type === 'order' ? [d.source_id] : [])])]
+        : [d.source_id];
       for (const k of keys) {
         const cur = map.get(k);
         if (!cur || rank(d.status) > rank(cur.status) || (rank(d.status) === rank(cur.status) && d.created_at > cur.created_at)) map.set(k, d);
@@ -116,5 +133,5 @@ export function useFiscalDocs(orderIds: string[]) {
     } finally { mark(doc.source_id, false); }
   }, [call]);
 
-  return { byOrder, enabled, busy, emitir, abrirDanfe, imprimir, recarregar: carregar };
+  return { byOrder, enabled, canais, erroLeitura, carregado: carregadoKey === idsKey, busy, emitir, abrirDanfe, imprimir, recarregar: carregar };
 }

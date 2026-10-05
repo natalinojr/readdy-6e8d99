@@ -78,6 +78,15 @@ export interface DBOrder {
   session_number?: string | null;
   participant_token?: string | null;
   participant_name?: string | null;
+  /** Telefone do cliente (orders.destination_phone, só dígitos) */
+  destination_phone?: string | null;
+  delivery_address?: string | null;
+  /** Cortesia (orders.is_cortesia). A RPC não devolve: fica undefined nos pedidos que vêm dela. */
+  is_cortesia?: boolean;
+  cancelled_by?: string | null;
+  /** Nome de quem cancelou (users.name de cancelled_by). Só o modo direto resolve. */
+  cancelled_by_name?: string | null;
+  out_for_delivery_at?: string | null;
   itens: DBOrderItem[];
   pagamentos: DBPayment[];
   payment_group_id?: string | null;
@@ -146,6 +155,9 @@ interface RPCOrder {
   session_number?: string | null;
   participant_token?: string | null;
   participant_name?: string | null;
+  destination_phone?: string | null;
+  delivery_address?: string | null;
+  out_for_delivery_at?: string | null;
   items?: RPCItem[] | null;
   payments?: RPCPayment[] | null;
 }
@@ -179,7 +191,7 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
     if (!user?.tenantId) return;
 
     const seq = ++seqRef.current;
-    const filtro = `${from ?? ''}|${to ?? ''}|${sid ?? ''}`;
+    const filtro = `${user.tenantId}|${from ?? ''}|${to ?? ''}|${sid ?? ''}`;
     // Só mostra "carregando" na 1ª carga ou quando o filtro muda. O ping do realtime
     // recarrega por baixo sem trocar a lista pelo spinner (perdia o scroll e fechava
     // a janela de emitir NF no meio do CPF).
@@ -231,6 +243,11 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
               destination_name,
               cancel_reason,
               cancelled_at,
+              destination_phone,
+              delivery_address,
+              is_cortesia,
+              cancelled_by,
+              out_for_delivery_at,
               table_number,
               created_at,
               updated_at,
@@ -289,9 +306,9 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
                 const enrichedMap = new Map(enriched.map((o) => [o.id, o]));
                 finalRpc = rpcMapped.map((o) => enrichedMap.get(o.id) ?? o);
               }
-              setOrders([...finalRpc, ...mappedMissing].sort((a, b) =>
+              setOrders(await completarCanceladosCortesia([...finalRpc, ...mappedMissing].sort((a, b) =>
                 new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-              ));
+              ), user.tenantId));
               return;
             }
           }
@@ -350,6 +367,11 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
               destination_name,
               cancel_reason,
               cancelled_at,
+              destination_phone,
+              delivery_address,
+              is_cortesia,
+              cancelled_by,
+              out_for_delivery_at,
               table_number,
               created_at,
               updated_at,
@@ -501,6 +523,11 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
             destination_name,
             cancel_reason,
             cancelled_at,
+            destination_phone,
+            delivery_address,
+            is_cortesia,
+            cancelled_by,
+            out_for_delivery_at,
             table_number,
             created_at,
             updated_at,
@@ -563,9 +590,9 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
         const enriched = await enrichWithPayments(needsEnrich, user.tenantId);
         const enrichedMap = new Map(enriched.map((o) => [o.id, o]));
         const final = mapped.map((o) => enrichedMap.get(o.id) ?? o);
-        setOrders(final);
+        setOrders(await completarCanceladosCortesia(final, user.tenantId));
       } else {
-        setOrders(mapped);
+        setOrders(await completarCanceladosCortesia(mapped, user.tenantId));
       }
 
     } catch (e) {
@@ -577,6 +604,9 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
 
   // Debounce para evitar chamadas múltiplas quando filtros mudam juntos
   useEffect(() => {
+    // Filtro novo: "carregando" já agora — nos 150 ms do debounce a tela mostrava os pedidos do filtro
+    // anterior como se fossem do novo ("Ontem: nenhum pedido", "Tudo certo").
+    if (user?.tenantId && filtroRef.current !== `${user.tenantId}|${dateFrom ?? ''}|${dateTo ?? ''}|${sessionId ?? ''}`) setLoading(true);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       load(dateFrom, dateTo, sessionId);
@@ -584,12 +614,51 @@ export function useOrdersHistory(dateFrom?: string, dateTo?: string, sessionId?:
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [load, dateFrom, dateTo, sessionId]);
+  }, [load, dateFrom, dateTo, sessionId, user?.tenantId]);
 
   return { orders, loading, truncated, reload: load };
 }
 
 // ─── Mappers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Modo Turno/"agora" (RPC fn_get_kds_orders): a RPC não traz quem cancelou, quando, nem cortesia.
+ * Completa só esses pedidos (cancelados e de total 0) — poucas linhas por carga. Antes a tela dizia
+ * "quem cancelou não foi registrado" e a cortesia saía como "PAGO" no resumo impresso.
+ */
+async function completarCanceladosCortesia(list: DBOrder[], tenantId: string): Promise<DBOrder[]> {
+  const ids = list.filter((o) => o.status === 'cancelled' || (Number(o.total) || 0) === 0).map((o) => o.id);
+  if (ids.length === 0) return list;
+  try {
+    const { data } = await supabase
+      .from('orders')
+      .select('id, cancelled_at, cancelled_by, is_cortesia')
+      .eq('tenant_id', tenantId)
+      .in('id', ids.slice(0, 500));
+    if (!data || data.length === 0) return list;
+    const linhas = data as { id: string; cancelled_at: string | null; cancelled_by: string | null; is_cortesia: boolean | null }[];
+    const quem = [...new Set(linhas.map((d) => d.cancelled_by).filter((x): x is string => !!x))];
+    let nomes: Record<string, string> = {};
+    if (quem.length > 0) {
+      const { data: us } = await supabase.from('users').select('id, name').in('id', quem);
+      nomes = Object.fromEntries(((us ?? []) as { id: string; name: string }[]).map((u) => [u.id, u.name]));
+    }
+    const porId = new Map(linhas.map((d) => [d.id, d]));
+    return list.map((o) => {
+      const d = porId.get(o.id);
+      if (!d) return o;
+      return {
+        ...o,
+        cancelled_at: d.cancelled_at ?? o.cancelled_at ?? null,
+        cancelled_by: d.cancelled_by ?? null,
+        cancelled_by_name: d.cancelled_by ? (nomes[d.cancelled_by] ?? null) : null,
+        is_cortesia: d.is_cortesia ?? false,
+      };
+    });
+  } catch {
+    return list; // só completa: sem isso a tela segue com o que a RPC trouxe
+  }
+}
 
 function mapRPCOrders(rpcOrders: RPCOrder[], _tenantId: string): DBOrder[] {
   return rpcOrders.map((o) => {
@@ -644,10 +713,13 @@ function mapRPCOrders(rpcOrders: RPCOrder[], _tenantId: string): DBOrder[] {
       paid_by_pdv: null,
       payment_group_id: p.payment_group_id ?? null,
     }));
+    // Pago = o banco diz que quitou (is_paid). Sem o campo, a soma dos pagamentos válidos cobre o total.
+    // Antes bastava um pagamento qualquer: pedido com parte paga ia para "Recebido" e para o lote de NFC-e.
+    const somaPagamentos = rpcPayments.filter((p) => !p.is_refunded).reduce((a, p) => a + (Number(p.amount) || 0), 0);
     const isPaid = o.status !== 'cancelled' && (
-      rpcPayments.length > 0
-        ? rpcPayments.some((p) => !p.is_refunded)
-        : (o.is_paid ?? false)
+      o.is_paid != null
+        ? o.is_paid === true
+        : somaPagamentos > 0 && somaPagamentos >= (Number(o.total_amount) || 0) - 0.01
     );
 
     // Fallback: soma os itens só se total_amount vier nulo. Total 0 é real (cortesia,
@@ -684,6 +756,12 @@ function mapRPCOrders(rpcOrders: RPCOrder[], _tenantId: string): DBOrder[] {
       session_number: (o as RPCOrder & { session_number?: string | null }).session_number ?? null,
       participant_token: o.participant_token ?? null,
       participant_name: o.participant_name ?? null,
+      destination_phone: o.destination_phone ?? null,
+      delivery_address: o.delivery_address ?? null,
+      out_for_delivery_at: o.out_for_delivery_at ?? null,
+      // A RPC não devolve is_cortesia nem quem cancelou (ver fn_get_kds_orders)
+      cancelled_by: null,
+      cancelled_by_name: null,
       itens: items,
       pagamentos,
     };
@@ -744,6 +822,11 @@ interface DirectQueryOrder {
   destination_name?: string | null;
   cancel_reason?: string | null;
   cancelled_at?: string | null;
+  destination_phone?: string | null;
+  delivery_address?: string | null;
+  is_cortesia?: boolean | null;
+  cancelled_by?: string | null;
+  out_for_delivery_at?: string | null;
   table_number?: number | null;
   created_at: string;
   updated_at?: string | null;
@@ -766,6 +849,7 @@ async function mapDirectQueryOrders(data: DirectQueryOrder[], tenantId: string):
 
   data.forEach((o) => {
     if (o.origin_user_id) userIdSet.add(o.origin_user_id);
+    if (o.cancelled_by) userIdSet.add(o.cancelled_by);
     (o.order_items ?? []).forEach((oi) => {
       if (oi.operator_id) userIdSet.add(oi.operator_id);
       if (oi.station_id) stationIdSet.add(oi.station_id);
@@ -904,6 +988,12 @@ async function mapDirectQueryOrders(data: DirectQueryOrder[], tenantId: string):
       paid_by_pdv: o.paid_by_pdv ?? null,
       session_id: o.session_id ?? null,
       session_number: (o as any).session?.number ?? null,
+      destination_phone: o.destination_phone ?? null,
+      delivery_address: o.delivery_address ?? null,
+      is_cortesia: o.is_cortesia ?? false,
+      cancelled_by: o.cancelled_by ?? null,
+      cancelled_by_name: o.cancelled_by ? (userMap[o.cancelled_by] ?? null) : null,
+      out_for_delivery_at: o.out_for_delivery_at ?? null,
       itens: items,
       pagamentos,
     };
