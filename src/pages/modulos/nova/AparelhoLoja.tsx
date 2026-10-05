@@ -15,6 +15,7 @@ import { useUsuarios } from '@/hooks/useUsuarios';
 import { invokeWithAuth } from '@/lib/supabase';
 import { TELAS, telaVisivel } from '@/constants/telas';
 import { loginCompartilhado } from '@/pages/hoje/rotina/loginCompartilhado';
+import { abrirTrocarLoja } from '@/components/feature/casca/trocaLojaEstado';
 import { Bolinha, useEstadoLoja } from '@/components/feature/casca/partes';
 import { btn, Vazio } from '@/components/kit';
 import {
@@ -205,7 +206,7 @@ function CartaoTerminal({ t, fixo, onFixar }: { t: TerminalAparelho; fixo: boole
 }
 
 export default function AparelhoLoja() {
-  const { user, logout, canSwitchTenant, switchTenant } = useAuth();
+  const { user, logout, canSwitchTenant } = useAuth();
   const { hasPermissao } = usePermissoes();
   const { hasModule } = useModuleAccess();
   const navigate = useNavigate();
@@ -231,7 +232,8 @@ export default function AparelhoLoja() {
   const nome = user?.nome ?? '';
 
   const sair = () => { logout(); navigate('/login'); };
-  const trocarLoja = () => { switchTenant(); navigate('/selecionar-loja'); };
+  // Folha por cima desta página (TrocarLoja.tsx), sem passar por /selecionar-loja.
+  const trocarLoja = abrirTrocarLoja;
 
   return (
     <>

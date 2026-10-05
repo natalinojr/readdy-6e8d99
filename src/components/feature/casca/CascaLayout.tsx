@@ -14,6 +14,8 @@ import BarraInferior from './BarraInferior';
 import IrPara from './IrPara';
 import MaisFolha from './MaisFolha';
 import { useTelasVisiveis } from './useCasca';
+import TrocarLojaFolha from './TrocarLoja';
+import { useTrocaLoja } from './trocaLojaEstado';
 
 interface Props {
   carregando: ReactNode;
@@ -22,6 +24,7 @@ interface Props {
 
 export default function CascaLayout({ carregando, onDesligarCasca }: Props) {
   const location = useLocation();
+  const { trocando } = useTrocaLoja();
   const { isModoTreino } = useModoTreino();
   const { telas, produtos } = useTelasVisiveis();
   // O mesmo número do topo antigo e da tela Hoje (hojeStore) — não recalcula.
@@ -75,11 +78,21 @@ export default function CascaLayout({ carregando, onDesligarCasca }: Props) {
         )}
         <TopoNovo telas={telas} numeroHoje={numeroHoje} onIrPara={() => setIrPara(true)} onDesligarCasca={onDesligarCasca} />
         <main className="flex-1 overflow-y-auto p-4 md:p-6">
-          <RotaProtegida>
-            <Suspense fallback={carregando}>
-              <Outlet />
-            </Suspense>
-          </RotaProtegida>
+          {/* Trocando de loja pela folha: a tela da loja anterior sai (desmonta) e só volta depois de ir para '/',
+              então rascunho, lista e canal ao vivo da página começam do zero na loja nova. Sem key por loja de
+              propósito: a Hoje troca de loja e segue na mesma tela (ex.: abrir a produção de outra loja). */}
+          {trocando ? (
+            <div className="w-full h-full flex flex-col items-center justify-center gap-3 py-20 text-[13px] font-bold text-[#9A9086]">
+              <div className="w-7 h-7 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+              Entrando na {trocando.nome}…
+            </div>
+          ) : (
+            <RotaProtegida>
+              <Suspense fallback={carregando}>
+                <Outlet />
+              </Suspense>
+            </RotaProtegida>
+          )}
         </main>
         <BarraInferior telas={telas} numeroHoje={numeroHoje} maisAberto={mais} onMais={() => setMais((v) => !v)} />
       </div>
@@ -88,6 +101,7 @@ export default function CascaLayout({ carregando, onDesligarCasca }: Props) {
         <MaisFolha telas={telas} produtos={produtos} numeroHoje={numeroHoje} onFechar={fecharMais} onDesligarCasca={onDesligarCasca} />
       )}
       {irPara && <IrPara telas={telas} produtos={produtos} onFechar={fecharIrPara} />}
+      <TrocarLojaFolha />
 
       {/* Convite para instalar na tela inicial (só aparece no celular) */}
       <InstallPWA />

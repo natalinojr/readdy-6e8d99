@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSessao } from '@/contexts/SessaoContext';
 import { podeSair } from '@/lib/guardaSaida';
 import { abrirNovaJanela } from '@/lib/novaJanela';
+import { abrirTrocarLoja } from './trocaLojaEstado';
 import type { Produto, Tela } from '@/constants/telas';
 
 export const perfilLabel: Record<string, string> = {
@@ -75,7 +76,7 @@ export function Bolinha({ aberta }: { aberta: boolean }) {
 
 /** Ações da conta (o menu do avatar e a parte "Sua conta" do Mais) — as mesmas do topo antigo. */
 export function useAcoesConta(onDesligarCasca: () => void) {
-  const { logout, canSwitchTenant, switchTenant } = useAuth();
+  const { logout, canSwitchTenant } = useAuth();
   const navigate = useNavigate();
   return {
     canSwitchTenant,
@@ -83,7 +84,8 @@ export function useAcoesConta(onDesligarCasca: () => void) {
     atualizar: () => window.location.reload(),
     outraJanela: () => abrirNovaJanela(window.location.pathname + window.location.search),
     ajuda: () => navigate('/ajuda'),
-    trocarLoja: async () => { if (!(await podeSair())) return; switchTenant(); },
+    // Folha por cima da tela (TrocarLoja.tsx); o "algo sem salvar?" é perguntado ao tocar em Entrar.
+    trocarLoja: async () => { abrirTrocarLoja(); },
     menuAntigo: onDesligarCasca,
     sair: async () => { if (!(await podeSair())) return; logout(); navigate('/login'); },
   };

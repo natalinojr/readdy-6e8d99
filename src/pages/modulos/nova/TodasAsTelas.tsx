@@ -10,6 +10,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useUsuarios } from '@/hooks/useUsuarios';
 import { GRUPOS, ADMIN_MASTER_EMAIL, type Tela } from '@/constants/telas';
 import { useTelasVisiveis } from '@/components/feature/casca/useCasca';
+import { abrirTrocarLoja } from '@/components/feature/casca/trocaLojaEstado';
 import { Bolinha, perfilLabel, useEstadoLoja } from '@/components/feature/casca/partes';
 import { Folha, MenuMais } from '@/components/kit';
 import OnboardingShareModal from '@/pages/modulos/components/OnboardingShareModal';
@@ -90,7 +91,7 @@ function FolhaTotens({ onFechar }: { onFechar: () => void }) {
 }
 
 export default function TodasAsTelas() {
-  const { user, logout, canSwitchTenant, switchTenant } = useAuth();
+  const { user, logout, canSwitchTenant } = useAuth();
   const navigate = useNavigate();
   const loja = useEstadoLoja();
   const { telas, produtos } = useTelasVisiveis();
@@ -113,7 +114,8 @@ export default function TodasAsTelas() {
   const ehDono = (user?.email ?? '').toLowerCase() === ADMIN_MASTER_EMAIL;
   const podeVerTotens = user?.perfil === 'admin' || user?.perfil === 'gerente';
   const sair = () => { logout(); navigate('/login'); };
-  const trocarLoja = () => { switchTenant(); navigate('/selecionar-loja'); };
+  // Folha por cima desta página (TrocarLoja.tsx), sem passar por /selecionar-loja.
+  const trocarLoja = abrirTrocarLoja;
   const alternarTelaCheia = () => {
     if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {});
     else document.exitFullscreen().catch(() => {});

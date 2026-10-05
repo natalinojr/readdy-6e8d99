@@ -11,6 +11,7 @@ import { Moldura } from './partes';
 import AparelhoLoja from './AparelhoLoja';
 import SoProduto from './SoProduto';
 import TodasAsTelas from './TodasAsTelas';
+import TrocarLojaFolha from '@/components/feature/casca/TrocarLoja';
 
 export default function ModulosNova() {
   const { user, hasNoTenants } = useAuth();
@@ -28,6 +29,8 @@ export default function ModulosNova() {
   return (
     <Moldura>
       {cara === 'aparelho' ? <AparelhoLoja /> : <TodasAsTelas />}
+      {/* "Trocar de loja" do ⋯ / do aparelho: a mesma folha da casca nova, por cima desta página. */}
+      <TrocarLojaFolha />
     </Moldura>
   );
 }
