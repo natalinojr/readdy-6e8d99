@@ -69,7 +69,8 @@ Rotas dentro do layout autenticado:
 - `/` (índice): `src/pages/hoje/InicioPorPerfil.tsx` — manda cada perfil para o seu trabalho (2026-10-03)
 - `/hoje`: `src/pages/hoje/page.tsx` — tela inicial que conduz (pendências por bloco, tarefas de hoje, resumo)
 - `/hoje/rotina`: `src/pages/hoje/rotina/ConfigRotina.tsx` — rotina da loja por papel (só admin muda) (2026-10-03)
-- `/modulos`: `src/pages/modulos/page.tsx`
+- `/modulos`: `src/pages/modulos/page.tsx` (faixa "Suas lojas agora": `src/pages/lojas/components/LojasAgora.tsx`)
+- `/lojas`: `src/pages/lojas/page.tsx` — Comparar lojas, ao vivo (tela cheia, fora do menu da loja) (2026-10-04)
 - `/dashboard`: `src/pages/dashboard/page.tsx`
 - `/cardapio`: `src/pages/cardapio/page.tsx`
 - `/pdv/caixa`: `src/pages/pdv/caixa/page.tsx` (abrir/fechar a loja: `components/loja/` — `AbrirLojaView`, `FecharLojaModal`, `ContagemGaveta`, `SeloCeu`)
@@ -272,6 +273,39 @@ Quando o usuario pedir "muda X":
 ## Historico de solucoes e criterios
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
+
+### 2026-10-04 — Dia da loja (soma das sessões) + "Suas lojas agora" (/modulos) + Comparar lojas (/lojas)
+- **Regra do dono:** o número do dia é a SOMA DAS SESSÕES DE CAIXA ABERTAS NAQUELE DIA. A sessão que passa da
+  meia-noite conta inteira no dia em que abriu (bar que fecha 0h30 não zera à meia-noite). Dia atual da loja =
+  dia em que abriu a sessão aberta mais recente (sem treino); sem sessão aberta, a data de hoje (Brasília).
+- **Um lugar só no banco** (migração `20261004120000_dia_da_loja_e_comparar_lojas.sql`): `fn_loja_dia_atual(t)`,
+  `fn_loja_pedidos_dias(t, d1, d2)` (pedidos das sessões abertas em [d1,d2]; pedido sem sessão vai pela data) e
+  `fn_loja_janelas(t, d1, d2)` (sessões que tocam os dias, inclusive a de antes que entrou pela madrugada). As três
+  e `auth_ve_dashboard` são internas (sem EXECUTE para anon/authenticated). Pedido NOVO de qualquer tela deve usar
+  `fn_loja_pedidos_dias`, não `created_at` do calendário, quando o número for "do dia".
+- **iFood** (não passa pelo PDV): entra no dia da sessão aberta na hora do pedido; fora de sessão, pela data —
+  `src/lib/diaLoja.ts` (`diaDoPedido`, `janelaDeBusca`, `somarNosDias`), com as janelas que o banco devolve.
+  `fetchIfoodVendas` ganhou `lista` (um item por pedido) para isso.
+- **Quem usa:** Dashboard "Hoje" (`fn_get_dashboard_metrics`/`fn_get_dashboard_painel` sem `p_desde`: `dia`,
+  `janelas`, `semana_passada.dia/janelas/ate`; o modo Sessão continua por horário), tela Hoje (`ResumoHoje`),
+  gráfico por hora (hora contada desde a 0h do dia da loja: madrugada = 24, 25…; rótulo `h % 24`; comparações
+  'pagos' em `useVendasHoraComparativo` também por sessão; 'relatorio' dos Relatórios segue calendário), categorias
+  e mais vendidos do Dashboard (do fim da sessão de ontem em diante). O assistente (`resumo_loja`) e o
+  `assistente-cron` (`medirVendas`) recebem o PDV já no dia da loja; o iFood deles segue por calendário (edge não mexida).
+- **Comparar lojas:** `fn_lojas_comparar(p_periodo hoje|ontem|7d|mes)` = uma consulta para todas as lojas em que a
+  pessoa vê o Dashboard (`auth_ve_dashboard`: admin; senão `user_permissions` da pessoa > `permissions` do papel >
+  padrão = só manager). Empresa `kind='financeiro'` fica de fora. Cada loja usa o SEU dia atual; anterior = 7 dias
+  antes (mês: mesmo trecho do mês passado) e, se o período inclui hoje, o último dia do anterior para na mesma hora
+  (`periodo.corte`). "Sem base" = loja começou depois do início do anterior (`primeiro_dia`) ou anterior zerado.
+  Front: `src/lib/lojasComparar.ts` (regras puras, testadas), `useLojasComparar` (ping `orders-ping` de cada loja →
+  recarga em 3 s; iFood a cada 5 min; `sync_sales` do iFood no máximo a cada 10 min por loja), telas em
+  `src/pages/lojas/` (`LojasAgora` na `/modulos` só com `canSwitchTenant` e 2+ lojas; `/lojas` em tela cheia, fora
+  do menu da loja: `FULL_SCREEN_PROTECTED` agora com Suspense). Loja sem venda em 30 dias (PDV ou iFood) fica
+  recolhida; esconder loja é por pessoa (`user_preferences` chave `comparar_lojas_ocultar`, uma linha por loja).
+  Tocar na loja = `selectTenant` + `/dashboard`. Cor da loja fixa pela ordem do nome (nunca pelo ranking).
+- **Pegadinhas:** sessão esquecida aberta por dias faz o "hoje" da loja ficar naquele dia (é a regra; o rótulo mostra
+  "dia dd/mm" e o caixa aberto desde quando). `availableTenants` fica vazio depois de escolher a loja — para saber se a
+  pessoa tem várias lojas use `canSwitchTenant`. Protótipo aprovado: `docs/prototipos/lojas-agora-proposta.html`.
 
 ### 2026-10-04 — Estoque: layout novo (5 grupos, Registrar, ficha do insumo, Arrumar a lista)
 - **Protótipo aprovado pelo dono** (`docs/prototipos/estoque-abas-proposta.html`). Regra: nenhuma aba, número ou botão sai; ids `?tab=` iguais (links antigos abrem no lugar novo).

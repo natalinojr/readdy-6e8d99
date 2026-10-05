@@ -208,7 +208,8 @@ export default function Dashboard() {
   const [comparacoes, alternarComparacao] = useComparacoesLigadas('dashboard.vendasHora.comparacoes', { semana: true });
   // Horas contadas desde a 0h do dia da loja (depois da meia-noite: 24, 25…), hoje e nas comparações.
   const diasComp = useMemo(() => diasComparacao(diaLoja), [diaLoja]);
-  const seriesComp = useVendasHoraComparativo(diasComp, comparacoes);
+  // Só depois do painel: antes dele o dia da loja ainda não é conhecido (buscaria o dia errado à toa).
+  const seriesComp = useVendasHoraComparativo(painel ? diasComp : null, comparacoes);
   const horaAgoraNum = horaDoDia(new Date(), diaLoja);
   const vendasPorHora = (() => {
     const pdv: Record<string, number> = {};
