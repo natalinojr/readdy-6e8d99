@@ -64,7 +64,7 @@ export default function PromocaoRapida({ onFechar, irPara }: AcaoProps) {
   return (
     <Roteiro titulo="Promoções ativas" icone="ri-price-tag-3-line" cor="bg-rose-50 text-rose-600" baloes={baloes}
       carregando={carregando} onFechar={onFechar}>
-      {!carregando && <Fim onFechar={onFechar} acoes={[{ label: 'Abrir Promoções', onClick: () => irPara('/clientes?aba=promocoes') }]} />}
+      {!carregando && <Fim onFechar={onFechar} acoes={[{ label: 'Abrir Promoções', onClick: () => irPara('/clientes?aba=descontos&secao=promocoes') }]} />}
     </Roteiro>
   );
 }

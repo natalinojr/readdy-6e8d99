@@ -24,6 +24,8 @@ export interface ClienteCRM {
   aceitaMarketing: boolean;
   /** Quando pediu para não receber mensagens (opt-out do CRM, customers.crm_opt_out_at). */
   optOut?: string | null;
+  /** Estágio do cliente no Funil (crm_customer_stage) — a aba Clientes filtra por ele. */
+  estagio?: string | null;
   ultimoContato: string | null;
   primeiraVisita: string;
   ultimaVisita: string;
@@ -104,6 +106,7 @@ export function useClientes() {
           manualTags: (c.manualTags as string[]) ?? [],
           aceitaMarketing: !!c.aceitaMarketing,
           optOut: (c.optOut as string) ?? null,
+          estagio: (c.estagio as string) ?? null,
           ultimoContato: (c.ultimoContato as string) ?? null,
           primeiraVisita: c.primeiraVisita as string,
           ultimaVisita: c.ultimaVisita as string,

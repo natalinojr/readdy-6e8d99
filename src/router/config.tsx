@@ -141,8 +141,8 @@ const routes: RouteObject[] = [
       { path: 'ajuda', element: <AjudaPage /> },
       { path: 'financeiro', element: <FinanceiroPage /> },
       // Promoções e Vouchers viraram abas de Clientes & Marketing.
-      { path: 'promocoes', element: <Navigate to="/clientes?aba=promocoes" replace /> },
-      { path: 'vouchers', element: <Navigate to="/clientes?aba=vouchers" replace /> },
+      { path: 'promocoes', element: <Navigate to="/clientes?aba=descontos&secao=promocoes" replace /> },
+      { path: 'vouchers', element: <Navigate to="/clientes?aba=descontos&secao=vouchers" replace /> },
       { path: 'imprimir-qrcodes', element: <ImprimirQRCodesPage /> },
       { path: 'admin-master', element: <AdminMasterPage /> },
       { path: 'contratacao', element: <ContratacaoPage /> },

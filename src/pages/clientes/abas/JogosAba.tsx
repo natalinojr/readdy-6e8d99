@@ -1,11 +1,10 @@
-// Aba Jogos de Clientes & Marketing — ranking semanal dos jogos "enquanto espera"
+// Seção Jogos da aba Clube (Clientes & Marketing; antes era uma aba própria, 2026-10-05) — ranking semanal dos jogos "enquanto espera"
 // (mesa QR e acompanhamento do delivery). A loja liga o ranking, escreve o prêmio do
 // 1º ao 3º lugar e, depois que a semana fecha (domingo 23:59), marca quem já recebeu.
 // A pontuação é conferida no servidor (Edge `jogos` refaz a partida); só joga valendo
 // quem é membro do clube de fidelidade e tem pedido de verdade na loja nas últimas 12h.
 // Trapaça: "Desclassificar" tira a pontuação do ranking (Edge `admin_desclassificar`).
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { invokeWithAuth } from '@/lib/supabase';
 import { confirmar } from '@/components/base/Dialogos';
@@ -56,7 +55,6 @@ export default function JogosAba() {
   const [salvoEm, setSalvoEm] = useState<number | null>(null);
   const [jogoVer, setJogoVer] = useState('voa');
   const [marcando, setMarcando] = useState<string | null>(null);
-  const [params, setParams] = useSearchParams();
 
   const carregar = useCallback(async () => {
     if (!tenantId) return;
@@ -80,12 +78,6 @@ export default function JogosAba() {
   function tentarDeNovo() {
     setErro(null);
     carregar();
-  }
-
-  function abrirFidelidade() {
-    const p = new URLSearchParams(params);
-    p.set('aba', 'fidelidade');
-    setParams(p, { replace: true });
   }
 
   async function salvar() {
@@ -144,7 +136,7 @@ export default function JogosAba() {
 
   if (!dados || !cfg) {
     return (
-      <div className="p-6">
+      <div className="py-6">
         {erro ? (
           <div className="flex flex-col items-start gap-3">
             <p className="text-sm text-red-600">{erro}</p>
@@ -184,20 +176,14 @@ export default function JogosAba() {
   }
 
   return (
-    <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-4">
+    <div className="space-y-4">
       {dados.clube_ativo === false ? (
         <div className="flex flex-wrap items-center gap-3 bg-amber-50 border border-amber-200 rounded-2xl px-4 py-3">
           <i className="ri-error-warning-line text-amber-500 text-lg shrink-0" />
           <p className="flex-1 min-w-[220px] text-sm text-amber-800">
-            Os jogos só aparecem para membros do clube de fidelidade — com o clube desligado, ninguém joga.
+            Os jogos só aparecem para membros do clube — com o clube desligado, ninguém joga. Ligue na chave
+            <b> Programa ligado</b>, no topo desta aba.
           </p>
-          <button
-            type="button"
-            onClick={abrirFidelidade}
-            className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold cursor-pointer whitespace-nowrap"
-          >
-            Abrir Fidelidade
-          </button>
         </div>
       ) : null}
 

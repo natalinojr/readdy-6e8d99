@@ -12,13 +12,16 @@ import { useAuth } from '@/contexts/AuthContext';
 import { invokeWithAuth } from '@/lib/supabase';
 import RoletaSvg, { rotacaoParaFatia } from '@/components/fidelidade/RoletaSvg';
 import { avisar, confirmar } from '@/components/base/Dialogos';
+import JogosAba from './JogosAba';
 import {
   CORES, avisosConfigPorSecao, chancesRoleta, custoPorPonto, distribuirNiveis, novoId, retornoPercentual, usosDaRecompensa,
   type AvisoConfig, type FaixaHistograma, type FidelidadeConfig, type Nivel, type Premio, type Recompensa,
   type TipoPremio, type TipoPresente, type TipoRecompensa,
 } from '@/lib/fidelidade';
 
-type Secao = 'resumo' | 'pontos' | 'recompensas' | 'trilha' | 'roleta' | 'membros';
+// 'jogos' (2026-10-05): a antiga aba Jogos virou seção do Clube — só membro do clube joga.
+export type SecaoClube = 'resumo' | 'pontos' | 'recompensas' | 'trilha' | 'roleta' | 'jogos' | 'membros';
+type Secao = SecaoClube;
 
 const SECOES: { id: Secao; label: string; icon: string }[] = [
   { id: 'resumo', label: 'Resumo', icon: 'ri-dashboard-line' },
@@ -26,6 +29,7 @@ const SECOES: { id: Secao; label: string; icon: string }[] = [
   { id: 'recompensas', label: 'Recompensas', icon: 'ri-gift-2-line' },
   { id: 'trilha', label: 'Trilha de níveis', icon: 'ri-medal-line' },
   { id: 'roleta', label: 'Roleta', icon: 'ri-donut-chart-line' },
+  { id: 'jogos', label: 'Jogos', icon: 'ri-gamepad-line' },
   { id: 'membros', label: 'Membros', icon: 'ri-team-line' },
 ];
 
@@ -177,10 +181,15 @@ function Kpi({ label, valor, sub, tom = 'zinc' }: { label: string; valor: string
   );
 }
 
-export default function FidelidadeAba() {
+interface Props {
+  /** Seção aberta ao entrar (?secao= da URL; links antigos de ?aba=jogos chegam como 'jogos'). */
+  secaoInicial?: SecaoClube;
+}
+
+export default function FidelidadeAba({ secaoInicial }: Props = {}) {
   const { user } = useAuth();
   const tenantId = user?.tenantId;
-  const [secao, setSecao] = useState<Secao>('resumo');
+  const [secao, setSecao] = useState<Secao>(secaoInicial ?? 'resumo');
   const [cfg, setCfg] = useState<FidelidadeConfig | null>(null);
   // Config como está gravada (carregada ou salva por último): serve para saber o que mudou.
   const [cfgBase, setCfgBase] = useState<FidelidadeConfig | null>(null);
@@ -1023,8 +1032,11 @@ export default function FidelidadeAba() {
         </Cartao>
       )}
 
-      {/* Barra de salvar */}
-      {editavel ? (
+      {/* ── JOGOS (seção do Clube; tem o próprio Salvar) ─────────────────────── */}
+      {secao === 'jogos' && <JogosAba />}
+
+      {/* Barra de salvar (a seção Jogos salva sozinha, então a barra some lá) */}
+      {secao === 'jogos' ? null : editavel ? (
         <div className="fixed bottom-0 inset-x-0 md:left-auto md:right-24 md:bottom-4 md:inset-x-auto z-30">
           <div className="bg-white border-t md:border md:rounded-xl border-zinc-200 shadow-lg pl-4 pr-24 md:pr-4 py-3 flex items-center gap-3">
             <div className="flex-1 md:flex-none min-w-0 md:max-w-sm">

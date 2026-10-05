@@ -16,6 +16,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.57.4";
 import { CRM_TEMPLATES, graph, renderTemplate, waConfig, WaError, waSendTemplate } from "../_shared/wa.ts";
 import { celularBR, FRASE_AUTO, lojaInfo } from "../_shared/crm-auto.ts";
 import { temPermissao } from "../_shared/permissao-servidor.ts";
+import { hojeBrasilia, naJanela, notaVoucherAniversario, proximoAniversario, type ProximoAniversario } from "./aniversario.ts";
 
 const OWNER_EMAIL = "natalinojr.engel@gmail.com";
 
@@ -281,6 +282,92 @@ Deno.serve(async (req: Request) => {
       return criada;
     }
 
+    // ── Aniversariantes dos próximos 7 dias (cartão da aba Quem chamar) ───────
+    // Hoje até hoje + 6 no calendário de Brasília, virando o ano e com 29/02 em 28/02 nos anos
+    // não bissextos (aniversario.ts). Sempre filtrado pela loja, sem cliente apagado. Traz o
+    // voucher de aniversário ATIVO do ano em que cai o aniversário (customers × vouchers.notes
+    // "Aniversário AAAA", o mesmo texto do gerador fn_generate_birthday_vouchers).
+    async function listarAniversariantes() {
+      const hoje = hojeBrasilia();
+      const doPeriodo: Array<{ c: Record<string, unknown>; p: ProximoAniversario }> = [];
+      // A base da loja é pequena (centenas), mas o PostgREST corta em 1000 linhas: lê por página.
+      const PAGINA = 1000;
+      for (let ini = 0; ; ini += PAGINA) {
+        const { data: pag, error: pagErr } = await admin
+          .from("customers")
+          .select("id, name, phone, crm_opt_out_at, birth_date")
+          .eq("tenant_id", tenantId)
+          .is("deleted_at", null)
+          .not("birth_date", "is", null)
+          .order("id", { ascending: true })
+          .range(ini, ini + PAGINA - 1);
+        if (pagErr) throw pagErr;
+        for (const c of pag ?? []) {
+          const p = proximoAniversario(c.birth_date, hoje);
+          if (naJanela(p)) doPeriodo.push({ c, p });
+        }
+        if ((pag?.length ?? 0) < PAGINA) break;
+      }
+
+      // Sem tolerar falha: se o voucher não carregar, a lista falha em vez de dizer "sem voucher"
+      // e o dono mandar só os parabéns (ou gerar outro) para quem já tem código.
+      const vouchers = new Map<string, Record<string, unknown>>();
+      if (doPeriodo.length > 0) {
+        const notas = Array.from(new Set(doPeriodo.map(({ p }) => notaVoucherAniversario(p.ano))));
+        for (const bloco of emBlocos(doPeriodo.map(({ c }) => String(c.id)))) {
+          const { data: vs, error: vErr } = await admin
+            .from("vouchers")
+            .select("customer_id, notes, code, claim_token, voucher_type, discount_type, discount_value, original_amount, min_order_amount, expires_at")
+            .eq("tenant_id", tenantId)
+            .eq("status", "active")
+            .is("deleted_at", null)
+            .in("customer_id", bloco)
+            .in("notes", notas)
+            .order("created_at", { ascending: false });
+          if (vErr) throw vErr;
+          for (const v of vs ?? []) {
+            const chave = `${v.customer_id}|${v.notes}`;
+            if (!vouchers.has(chave)) vouchers.set(chave, v); // o mais recente
+          }
+        }
+      }
+
+      const clientes = doPeriodo.map(({ c, p }) => {
+        const phone = String(c.phone ?? "");
+        const v = vouchers.get(`${c.id}|${notaVoucherAniversario(p.ano)}`);
+        return {
+          customer_id: String(c.id),
+          nome: String(c.name ?? "Cliente"),
+          phone,
+          phone_fmt: phone ? fmtPhone(phone) : "",
+          opt_out: !!c.crm_opt_out_at,
+          dias_ate: p.dias,
+          data_aniversario: p.dd_mm,
+          proximo_aniversario: p.data,
+          voucher: v
+            ? {
+              code: String(v.code),
+              claim_token: v.claim_token ? String(v.claim_token) : null,
+              voucher_type: String(v.voucher_type),
+              discount_type: v.discount_type ? String(v.discount_type) : null,
+              discount_value: v.discount_value == null ? null : Number(v.discount_value),
+              original_amount: Number(v.original_amount ?? 0),
+              min_order_amount: v.min_order_amount == null ? null : Number(v.min_order_amount),
+              expires_at: v.expires_at ?? null,
+            }
+            : null,
+        };
+      });
+      clientes.sort((a, b) => a.dias_ate - b.dias_ate || a.nome.localeCompare(b.nome, "pt-BR"));
+      return { clientes, hoje: `${hoje.y}-${String(hoje.m).padStart(2, "0")}-${String(hoje.d).padStart(2, "0")}` };
+    }
+
+    // ── Lista de aniversariantes (hoje até +6 dias) ───────────────────────────
+    if (action === "list_aniversariantes") {
+      const { clientes, hoje } = await listarAniversariantes();
+      return ok({ clientes, total: clientes.length, hoje, janela_dias: 7 });
+    }
+
     // ── Visão geral do funil ──────────────────────────────────────────────────
     if (action === "overview") {
       // Recalcula na abertura: o funil sempre reflete os pedidos de hoje.
@@ -349,7 +436,23 @@ Deno.serve(async (req: Request) => {
         if (s.converted_at) d.converteu += 1;
       }
 
+      // Cartão "Aniversariantes" (próximos 7 dias). É um extra: se falhar, o funil abre do mesmo
+      // jeito e o cartão some (null), em vez de derrubar a tela inteira.
+      let aniversariantes: number | null = null;
+      let aniversariantesComVoucher: number | null = null;
+      try {
+        const { clientes: aniv } = await listarAniversariantes();
+        aniversariantes = aniv.length;
+        // "Pronto" = voucher ativo e dentro da validade (vencido não serve para mandar).
+        const agoraMs = Date.now();
+        aniversariantesComVoucher = aniv.filter((a) => a.voucher && (!a.voucher.expires_at || new Date(String(a.voucher.expires_at)).getTime() > agoraMs)).length;
+      } catch (e) {
+        console.error("[crm-funnel] aniversariantes:", e instanceof Error ? e.message : String(e));
+      }
+
       return ok({
+        aniversariantes,
+        aniversariantes_com_voucher: aniversariantesComVoucher,
         stages: STAGE_ORDER.map((s) => ({
           stage: s,
           label: ROTULOS[s].label,

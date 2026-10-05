@@ -6,8 +6,9 @@
 // oferta do estágio. Depois do envio, registra em crm_sends (para o cooldown,
 // o teto de frequência e a medição de retorno).
 //
-// Sub-abas: Funil (quem está onde) · Ofertas (o que sugerir em cada estágio) ·
-// Critérios (quem entra em cada estágio + travas). Nada dispara sozinho.
+// Sub-abas: Quem chamar (quem está onde + cartão Aniversariantes) · Ofertas (acordeão: uma linha
+// por estágio, a primeira é o voucher de aniversário) · Critérios (quem entra em cada estágio +
+// travas). Nada dispara sozinho, a não ser o envio automático que o dono liga estágio a estágio.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -15,9 +16,12 @@ import type { ClienteCRM } from '@/hooks/useClientes';
 import type { Voucher } from '@/types/vouchers';
 import NaoPediramPanel from '../components/NaoPediramPanel';
 import PainelEnvioAutomatico, { MODELO_COM_CUPOM, MODELO_SEM_CUPOM } from '../components/EnvioAutomatico';
+import AniversarioOferta, { CabecalhoOferta, type SeloLinha } from '../components/AniversarioOferta';
+import AniversariantesLista from '../components/AniversariantesLista';
 import { confirmar } from '@/components/base/Dialogos';
 import { AVISO_OPT_OUT, abrirWhatsApp, baixarCsv, celularComDDI, montarCsv } from '../clienteUtils';
 import { MODELO_PADRAO_MENSAGEM, montarMensagem } from '../funilMensagem';
+import { voucherVale, type Aniversariante } from '../aniversarioMensagem';
 
 export type CrmStage =
   | 'carrinho_abandonado' | 'nunca_comprou' | 'primeira_compra' | 'recorrente'
@@ -153,6 +157,22 @@ function resumoOferta(r: CrmRule | undefined): string | null {
   return `${valor} por ${r.validade_dias} dia${Number(r.validade_dias) === 1 ? '' : 's'}`;
 }
 
+/** Resumo da linha do acordeão de Ofertas: "10% por 3 dias", "R$ 15 por 7 dias" ou "só mensagem".
+ *  Vale com a regra ligada ou não (o dono vê o que está configurado mesmo desligado). */
+function resumoCurtoOferta(r: CrmRule): string {
+  const n = Number(r.voucher_value);
+  if (r.voucher_type === 'nenhum' || !(n > 0)) return 'só mensagem';
+  const valor = r.voucher_type === 'valor' ? 'R$ ' + n.toLocaleString('pt-BR', { maximumFractionDigits: 2 }) : n + '%';
+  const dias = Number(r.validade_dias);
+  return `${valor} por ${dias} dia${dias === 1 ? '' : 's'}`;
+}
+
+function seloDaRegra(r: CrmRule): SeloLinha {
+  if (r.auto_send) return { texto: 'Automático', cls: 'bg-green-50 text-green-700 border-green-200' };
+  if (r.enabled) return { texto: 'Sugerindo', cls: 'bg-amber-50 text-amber-700 border-amber-200' };
+  return { texto: 'Desligado', cls: 'bg-zinc-50 text-zinc-500 border-zinc-200' };
+}
+
 function dentroDoHorario(s: CrmSettings | null, agora = new Date()): boolean {
   if (!s) return true;
   const h = agora.getHours();
@@ -188,6 +208,16 @@ export default function FunilAba(props: Props) {
   const [busca, setBusca] = useState('');
   const [sequencia, setSequencia] = useState<ClienteFunil[] | null>(null);
   const [showNaoPediram, setShowNaoPediram] = useState(false);
+  // Cartão Aniversariantes: totais do overview (null = servidor sem o campo ou falhou: o cartão some)
+  // e a lista de quem faz aniversário hoje até +6 dias (carregada ao tocar no cartão).
+  const [aniv, setAniv] = useState<{ total: number; comVoucher: number } | null>(null);
+  const [anivAberto, setAnivAberto] = useState(false);
+  const [anivCarregando, setAnivCarregando] = useState(false);
+  const [anivErro, setAnivErro] = useState('');
+  const [anivLista, setAnivLista] = useState<Aniversariante[]>([]);
+  // Ofertas (acordeão): uma linha aberta por vez, e o painel do envio automático recolhível.
+  const [ofertaAberta, setOfertaAberta] = useState<CrmStage | 'aniversario' | null>(null);
+  const [autoAberto, setAutoAberto] = useState(false);
   // Situação dos modelos na Meta (nome → APPROVED/PENDING/…), vinda do painel do envio automático.
   const [modelos, setModelos] = useState<Record<string, string>>({});
   // auto_send como veio do servidor: vai junto no salvar para uma aba antiga não religar o
@@ -200,10 +230,12 @@ export default function FunilAba(props: Props) {
   const listaRef = useRef<HTMLElement>(null);
   const rolarAoAbrir = useRef(false);
   const listaReq = useRef(0);
+  const anivReq = useRef(0);
 
   const abrirStage = useCallback(function (stage: CrmStage) {
     if (!tenantId) return;
     const req = ++listaReq.current;
+    setAnivAberto(false);
     setStageAberto(stage);
     setListaCarregando(true);
     setErroLista('');
@@ -224,26 +256,59 @@ export default function FunilAba(props: Props) {
   // Toque num cartão de estágio no celular: leva a lista para a vista (no computador
   // o cartão e a lista já aparecem juntos). Só quando o clique é do usuário.
   useEffect(function () {
-    if (!rolarAoAbrir.current || !stageAberto) return;
+    if (!rolarAoAbrir.current || (!stageAberto && !anivAberto)) return;
     rolarAoAbrir.current = false;
     if (typeof window !== 'undefined' && window.matchMedia && !window.matchMedia('(max-width: 767px)').matches) return;
     listaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [stageAberto, listaCarregando]);
+  }, [stageAberto, listaCarregando, anivAberto, anivCarregando]);
 
   function abrirStageClicado(stage: CrmStage) {
     rolarAoAbrir.current = true;
     abrirStage(stage);
   }
 
+  // Aniversariantes (hoje até +6 dias). Atualiza também os totais do cartão: o que acabou de ser
+  // gerado em Ofertas (voucher do mês) passa a contar como "voucher pronto".
+  const carregarAniv = useCallback(function () {
+    if (!tenantId) return;
+    const req = ++anivReq.current;
+    setAnivCarregando(true);
+    setAnivErro('');
+    invokeWithAuth<{ clientes?: Aniversariante[]; error?: string; message?: string }>(
+      'crm-funnel', { body: { action: 'list_aniversariantes', tenant_id: tenantId } },
+    ).then(function (res) {
+      if (req !== anivReq.current) return; // outra leitura mais nova (ou troca de loja) já respondeu
+      setAnivCarregando(false);
+      if (res.error) { setAnivErro(res.error.message); return; }
+      const d = res.data;
+      if (!d || d.error) { setAnivErro(d?.message || d?.error || 'Não foi possível carregar a lista.'); return; }
+      const lista = d.clientes ?? [];
+      setAnivLista(lista);
+      setAniv({ total: lista.length, comVoucher: lista.filter(function (a) { return voucherVale(a.voucher); }).length });
+    });
+  }, [tenantId]);
+
+  function abrirAnivClicado() {
+    rolarAoAbrir.current = true;
+    setAnivAberto(true);
+    carregarAniv();
+  }
+
   // `silencioso`: recarrega sem trocar a tela por "Calculando o funil…". Usado
   // depois de salvar, senão o formulário que o dono acabou de mexer some.
   const carregarOverview = useCallback(function (silencioso?: boolean) {
     if (!tenantId) return;
-    if (!silencioso) setCarregando(true);
+    if (!silencioso) {
+      setCarregando(true);
+      // Troca de loja (ou recálculo): a lista de aniversariantes da outra loja não pode ficar na tela.
+      anivReq.current++;
+      setAnivAberto(false); setAnivLista([]); setAnivErro(''); setAnivCarregando(false);
+    }
     setErro('');
     invokeWithAuth<{
       stages?: StageResumo[]; rules?: CrmRule[]; settings?: CrmSettings;
       criteria?: CrmCriteria; criteria_padrao?: CrmCriteria; error?: string; message?: string;
+      aniversariantes?: number | null; aniversariantes_com_voucher?: number | null;
     }>(
       'crm-funnel', { body: { action: 'overview', tenant_id: tenantId } },
     ).then(function (res) {
@@ -258,6 +323,9 @@ export default function FunilAba(props: Props) {
       setSettings(d.settings ?? null);
       setCriteria(d.criteria ?? null);
       setCriteriaPadrao(d.criteria_padrao ?? null);
+      setAniv(typeof d.aniversariantes === 'number'
+        ? { total: d.aniversariantes, comVoucher: Number(d.aniversariantes_com_voucher ?? 0) }
+        : null);
       setAlterado(false);
       // Na primeira abertura já mostra quem precisa de atenção.
       if (!silencioso) {
@@ -522,7 +590,7 @@ export default function FunilAba(props: Props) {
     if (!s) return null;
     const v = VISUAL[stage];
     const oferta = resumoOferta(regraDo(stage));
-    const ativo = stageAberto === stage;
+    const ativo = stageAberto === stage && !anivAberto;
     return (
       <button
         onClick={function () { abrirStageClicado(stage); }}
@@ -564,12 +632,51 @@ export default function FunilAba(props: Props) {
     );
   }
 
+  // Cartão rosa, o primeiro de "Precisam de atenção". Some se o servidor não mandou o total.
+  function cartaoAniversariantes() {
+    if (!aniv) return null;
+    const pronto = aniv.comVoucher > 0;
+    return (
+      <button
+        key="aniversariantes"
+        onClick={abrirAnivClicado}
+        className={'w-full h-full flex flex-col text-left bg-white rounded-xl border p-3 cursor-pointer transition-all hover:shadow-sm ' +
+          (anivAberto ? 'border-pink-400 ring-2 ring-pink-100' : 'border-zinc-200 hover:border-zinc-300')}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 text-pink-500 bg-pink-50">
+            <i className="ri-cake-3-line text-sm" />
+          </div>
+          <div className="text-right">
+            <p className="text-xl font-black text-zinc-900 leading-none">{aniv.total}</p>
+            <p className="text-[10px] text-zinc-400 mt-0.5">em 7 dias</p>
+          </div>
+        </div>
+        <p className="text-xs font-bold text-zinc-800 mt-2 leading-tight">Aniversariantes</p>
+        <p className="text-[10px] text-zinc-400 leading-snug mt-0.5 min-h-[26px]">Fazem aniversário nos próximos 7 dias</p>
+        <div className="flex items-center gap-1.5 flex-wrap mt-auto pt-2">
+          {aniv.total === 0 ? (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-zinc-50 text-zinc-500">Ninguém por enquanto</span>
+          ) : pronto ? (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-pink-50 text-pink-700">
+              <i className="ri-coupon-3-line" /> Voucher de aniversário pronto
+            </span>
+          ) : (
+            <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-pink-50 text-pink-700">
+              <i className="ri-heart-line" /> Mande os parabéns
+            </span>
+          )}
+        </div>
+      </button>
+    );
+  }
+
   return (
     <div className="p-4 md:p-6 space-y-4 pb-24">
       {/* Sub-abas + atalhos */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-1 bg-zinc-100 rounded-xl p-1 self-start">
-          {([['funil', 'Funil', 'ri-filter-3-line'], ['regras', 'Ofertas', 'ri-coupon-3-line'], ['criterios', 'Critérios', 'ri-equalizer-line']] as const).map(function ([key, label, icon]) {
+          {([['funil', 'Quem chamar', 'ri-filter-3-line'], ['regras', 'Ofertas', 'ri-coupon-3-line'], ['criterios', 'Critérios', 'ri-equalizer-line']] as const).map(function ([key, label, icon]) {
             return (
               <button
                 key={key}
@@ -636,7 +743,8 @@ export default function FunilAba(props: Props) {
             <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
               <i className="ri-error-warning-line text-orange-500" /> Precisam de atenção
             </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 md:gap-3">
+            <div className={'grid grid-cols-1 gap-2 md:gap-3 ' + (aniv ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-3')}>
+              {cartaoAniversariantes()}
               {ATENCAO.map(function (s) { return <CardEstagio key={s} stage={s} />; })}
             </div>
           </section>
@@ -660,8 +768,19 @@ export default function FunilAba(props: Props) {
             </div>
           </section>
 
-          {/* Lista do estágio aberto */}
-          {stageAberto ? (
+          {/* Lista aberta: aniversariantes ou o estágio escolhido */}
+          {anivAberto && tenantId ? (
+            <section ref={listaRef} className="bg-white border border-zinc-200 rounded-2xl overflow-hidden scroll-mt-3">
+              <AniversariantesLista
+                tenantId={tenantId}
+                loja={user?.loja ?? ''}
+                carregando={anivCarregando}
+                erro={anivErro}
+                lista={anivLista}
+                onTentarDeNovo={carregarAniv}
+              />
+            </section>
+          ) : stageAberto ? (
             <section ref={listaRef} className="bg-white border border-zinc-200 rounded-2xl overflow-hidden scroll-mt-3">
               {(function () {
                 const s = resumoDo(stageAberto);
@@ -680,7 +799,7 @@ export default function FunilAba(props: Props) {
                             {' · '}
                             {regraDo(stageAberto)?.auto_send && <span className="text-green-700 font-semibold">envio automático ligado · </span>}
                             {oferta ? <span className="text-amber-700 font-semibold">oferta {oferta}</span> : (
-                              <button onClick={function () { setAba('regras'); }} className="text-amber-600 hover:underline cursor-pointer">sem oferta — configurar</button>
+                              <button onClick={function () { setOfertaAberta(stageAberto); setAba('regras'); }} className="text-amber-600 hover:underline cursor-pointer">sem oferta — configurar</button>
                             )}
                           </p>
                         </div>
@@ -839,16 +958,30 @@ export default function FunilAba(props: Props) {
               tenantId={tenantId}
               settings={settings}
               algumLigado={rules.some(function (r) { return r.auto_send; })}
+              qtdLigados={rules.filter(function (r) { return r.auto_send; }).length}
+              aberto={autoAberto}
+              onToggle={function () { setAutoAberto(function (v) { return !v; }); }}
               onSettings={function (patch) { alterarSettings(patch); }}
               onModelos={setModelos}
             />
           )}
 
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+          {/* Acordeão: uma linha por estágio (a primeira é o voucher de aniversário), uma aberta por vez */}
+          <div className="bg-white border border-zinc-100 rounded-2xl overflow-hidden divide-y divide-zinc-100">
+            {tenantId && (
+              <AniversarioOferta
+                tenantId={tenantId}
+                podeVoucher={podeVoucher}
+                aberto={ofertaAberta === 'aniversario'}
+                onToggle={function () { setOfertaAberta(function (v) { return v === 'aniversario' ? null : 'aniversario'; }); }}
+                onGerado={carregarAniv}
+              />
+            )}
             {[...ATENCAO, ...JORNADA].map(function (stage) {
               const r = regraDo(stage);
               if (!r) return null;
               const resumo = resumoDo(stage);
+              const aberto = ofertaAberta === stage;
               const passaTeto = !!settings && r.voucher_type === 'percentual' && Number(r.voucher_value) > Number(settings.desconto_max_percent);
               const modeloMsg = r.mensagem || MODELO_PADRAO_MENSAGEM;
               const previa = montarMensagem(modeloMsg, {
@@ -860,146 +993,156 @@ export default function FunilAba(props: Props) {
               });
               const previasDiferem = previaSemVoucher !== previa;
               return (
-                <div key={stage} className={'bg-white border rounded-xl p-4 space-y-3 ' + (r.enabled ? 'border-zinc-200' : 'border-zinc-100')}>
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className={'w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ' + VISUAL[stage].cor}>
-                        <i className={VISUAL[stage].icon + ' text-sm'} />
-                      </div>
-                      <div className="min-w-0">
-                        <h4 className="text-sm font-bold text-zinc-800 truncate">
-                          {resumo?.label ?? stage}
-                          <span className="ml-2 text-xs font-normal text-zinc-400">{resumo?.clientes ?? 0} clientes</span>
-                        </h4>
-                        <p className="text-[11px] text-zinc-400 truncate">{descDoEstagio(stage, criteria, resumo?.desc ?? '')}</p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={function () { alterarRegra(stage, r.enabled ? { enabled: false, auto_send: false } : { enabled: true }); }}
-                      title={r.enabled ? 'Oferta ligada' : 'Oferta desligada'}
-                      className={'relative w-11 h-6 rounded-full transition-colors cursor-pointer flex-shrink-0 ' +
-                        (r.enabled ? 'bg-green-500' : 'bg-zinc-200')}
-                    >
-                      <span className={'absolute left-0 top-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow ' +
-                        (r.enabled ? 'translate-x-[22px]' : 'translate-x-0.5')} />
-                    </button>
-                  </div>
+                <div key={stage}>
+                  <CabecalhoOferta
+                    aberto={aberto}
+                    onToggle={function () { setOfertaAberta(aberto ? null : stage); }}
+                    cor={VISUAL[stage].barra}
+                    titulo={resumo?.label ?? stage}
+                    resumo={resumoCurtoOferta(r)}
+                    resumoCls={r.enabled ? 'text-zinc-600' : 'text-zinc-400'}
+                    selo={seloDaRegra(r)}
+                    idCorpo={'oferta-' + stage}
+                  />
 
-                  {(function () {
-                    const bloq = r.auto_send ? null : bloqueioAuto(r);
-                    return (
+                  {aberto && (
+                    <div id={'oferta-' + stage} className="px-4 pb-4 pt-3 space-y-3 border-t border-zinc-100">
                       <div className={'flex items-center justify-between gap-3 px-3 py-2 rounded-lg border ' +
-                        (r.auto_send ? 'bg-green-50 border-green-200' : 'bg-zinc-50 border-zinc-100')}>
+                        (r.enabled ? 'bg-white border-zinc-200' : 'bg-zinc-50 border-zinc-100')}>
                         <div className="min-w-0">
-                          <p className="text-xs font-semibold text-zinc-700">
-                            <i className="ri-robot-2-line mr-1" />Envio automático {r.auto_send ? 'ligado' : 'desligado'}
-                          </p>
+                          <p className="text-xs font-semibold text-zinc-700">Oferta {r.enabled ? 'ligada' : 'desligada'}</p>
                           <p className="text-[11px] text-zinc-400">
-                            {r.auto_send
-                              ? 'O ERPOS manda sozinho pelo WhatsApp do assistente (modelo aprovado).'
-                              : (bloq ?? 'Pronto para ligar: você confirma antes.')}
+                            {descDoEstagio(stage, criteria, resumo?.desc ?? '')} · {resumo?.clientes ?? 0} clientes
                           </p>
                         </div>
                         <button
                           type="button"
-                          disabled={!!bloq}
-                          onClick={function () { alternarAuto(r, resumo?.label ?? stage); }}
-                          title={r.auto_send ? 'Desligar envio automático' : 'Ligar envio automático'}
-                          className={'relative w-11 h-6 rounded-full transition-colors cursor-pointer flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ' +
-                            (r.auto_send ? 'bg-green-500' : 'bg-zinc-200')}
+                          onClick={function () { alterarRegra(stage, r.enabled ? { enabled: false, auto_send: false } : { enabled: true }); }}
+                          title={r.enabled ? 'Oferta ligada' : 'Oferta desligada'}
+                          className={'relative w-11 h-6 rounded-full transition-colors cursor-pointer flex-shrink-0 ' +
+                            (r.enabled ? 'bg-green-500' : 'bg-zinc-200')}
                         >
                           <span className={'absolute left-0 top-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow ' +
-                            (r.auto_send ? 'translate-x-[22px]' : 'translate-x-0.5')} />
+                            (r.enabled ? 'translate-x-[22px]' : 'translate-x-0.5')} />
                         </button>
                       </div>
-                    );
-                  })()}
 
-                  <div className={'space-y-3 ' + (r.enabled ? '' : 'opacity-50')}>
-                    <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
-                      <div className="col-span-2">
-                        <label className="block text-[11px] font-bold text-zinc-500 mb-1">Oferta</label>
-                        <select
-                          value={r.voucher_type}
-                          onChange={function (e) { alterarRegra(stage, { voucher_type: e.target.value as CrmRule['voucher_type'] }); }}
-                          className={INPUT + ' bg-white'}
-                        >
-                          <option value="nenhum">Só mensagem</option>
-                          <option value="percentual">Desconto %</option>
-                          <option value="valor">Desconto R$</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-zinc-500 mb-1">Valor</label>
-                        <input
-                          type="number" min={0} value={r.voucher_value}
-                          disabled={r.voucher_type === 'nenhum'}
-                          onChange={function (e) { alterarRegra(stage, { voucher_value: Number(e.target.value) }); }}
-                          className={INPUT + ' disabled:bg-zinc-50 disabled:text-zinc-300 ' + (passaTeto ? 'border-red-300' : '')}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-zinc-500 mb-1">Validade (d)</label>
-                        <input
-                          type="number" min={1} max={90} value={r.validade_dias}
-                          disabled={r.voucher_type === 'nenhum'}
-                          onChange={function (e) { alterarRegra(stage, { validade_dias: Number(e.target.value) }); }}
-                          className={INPUT + ' disabled:bg-zinc-50 disabled:text-zinc-300'}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-zinc-500 mb-1" title="Tempo no estágio antes de sugerir a abordagem">Esperar (h)</label>
-                        <input
-                          type="number" min={0} value={r.delay_hours}
-                          onChange={function (e) { alterarRegra(stage, { delay_hours: Number(e.target.value) }); }}
-                          className={INPUT}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-bold text-zinc-500 mb-1" title="Depois de abordar, não sugerir de novo por esse tempo">Pausa (d)</label>
-                        <input
-                          type="number" min={0} value={r.cooldown_days}
-                          onChange={function (e) { alterarRegra(stage, { cooldown_days: Number(e.target.value) }); }}
-                          className={INPUT}
-                        />
-                      </div>
-                    </div>
-                    {passaTeto && (
-                      <p className="text-[11px] text-red-600">
-                        Acima do desconto máximo da loja ({settings!.desconto_max_percent}%) — ao salvar, vira {settings!.desconto_max_percent}%.
-                      </p>
-                    )}
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-zinc-500 mb-1">Mensagem</label>
-                      <textarea
-                        rows={2}
-                        value={r.mensagem ?? ''}
-                        onChange={function (e) { alterarRegra(stage, { mensagem: e.target.value }); }}
-                        className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
-                      />
-                      <div className="mt-1.5 flex items-start gap-2">
-                        <i className="ri-whatsapp-line text-green-500 text-sm mt-0.5" />
-                        <div className="flex-1 space-y-1.5">
-                          <div>
-                            {previasDiferem && <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wide mb-0.5">Com voucher</p>}
-                            <p className="text-[11px] text-zinc-600 bg-green-50/60 border border-green-100 rounded-lg rounded-tl-none px-2.5 py-1.5">
-                              {previa}
-                            </p>
-                          </div>
-                          {previasDiferem && (
-                            <div>
-                              <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wide mb-0.5">Sem voucher (botão Chamar)</p>
-                              <p className="text-[11px] text-zinc-600 bg-green-50/60 border border-green-100 rounded-lg rounded-tl-none px-2.5 py-1.5">
-                                {previaSemVoucher}
+                      {(function () {
+                        const bloq = r.auto_send ? null : bloqueioAuto(r);
+                        return (
+                          <div className={'flex items-center justify-between gap-3 px-3 py-2 rounded-lg border ' +
+                            (r.auto_send ? 'bg-green-50 border-green-200' : 'bg-zinc-50 border-zinc-100')}>
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-zinc-700">
+                                <i className="ri-robot-2-line mr-1" />Envio automático {r.auto_send ? 'ligado' : 'desligado'}
+                              </p>
+                              <p className="text-[11px] text-zinc-400">
+                                {r.auto_send
+                                  ? 'O ERPOS manda sozinho pelo WhatsApp do assistente (modelo aprovado).'
+                                  : (bloq ?? 'Pronto para ligar: você confirma antes.')}
                               </p>
                             </div>
-                          )}
+                            <button
+                              type="button"
+                              disabled={!!bloq}
+                              onClick={function () { alternarAuto(r, resumo?.label ?? stage); }}
+                              title={r.auto_send ? 'Desligar envio automático' : 'Ligar envio automático'}
+                              className={'relative w-11 h-6 rounded-full transition-colors cursor-pointer flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ' +
+                                (r.auto_send ? 'bg-green-500' : 'bg-zinc-200')}
+                            >
+                              <span className={'absolute left-0 top-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow ' +
+                                (r.auto_send ? 'translate-x-[22px]' : 'translate-x-0.5')} />
+                            </button>
+                          </div>
+                        );
+                      })()}
+
+                      <div className={'space-y-3 ' + (r.enabled ? '' : 'opacity-50')}>
+                        <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
+                          <div className="col-span-2">
+                            <label className="block text-[11px] font-bold text-zinc-500 mb-1">Oferta</label>
+                            <select
+                              value={r.voucher_type}
+                              onChange={function (e) { alterarRegra(stage, { voucher_type: e.target.value as CrmRule['voucher_type'] }); }}
+                              className={INPUT + ' bg-white'}
+                            >
+                              <option value="nenhum">Só mensagem</option>
+                              <option value="percentual">Desconto %</option>
+                              <option value="valor">Desconto R$</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-zinc-500 mb-1">Valor</label>
+                            <input
+                              type="number" min={0} value={r.voucher_value}
+                              disabled={r.voucher_type === 'nenhum'}
+                              onChange={function (e) { alterarRegra(stage, { voucher_value: Number(e.target.value) }); }}
+                              className={INPUT + ' disabled:bg-zinc-50 disabled:text-zinc-300 ' + (passaTeto ? 'border-red-300' : '')}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-zinc-500 mb-1">Validade (d)</label>
+                            <input
+                              type="number" min={1} max={90} value={r.validade_dias}
+                              disabled={r.voucher_type === 'nenhum'}
+                              onChange={function (e) { alterarRegra(stage, { validade_dias: Number(e.target.value) }); }}
+                              className={INPUT + ' disabled:bg-zinc-50 disabled:text-zinc-300'}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-zinc-500 mb-1" title="Tempo no estágio antes de sugerir a abordagem">Esperar (h)</label>
+                            <input
+                              type="number" min={0} value={r.delay_hours}
+                              onChange={function (e) { alterarRegra(stage, { delay_hours: Number(e.target.value) }); }}
+                              className={INPUT}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-bold text-zinc-500 mb-1" title="Depois de abordar, não sugerir de novo por esse tempo">Pausa (d)</label>
+                            <input
+                              type="number" min={0} value={r.cooldown_days}
+                              onChange={function (e) { alterarRegra(stage, { cooldown_days: Number(e.target.value) }); }}
+                              className={INPUT}
+                            />
+                          </div>
+                        </div>
+                        {passaTeto && (
+                          <p className="text-[11px] text-red-600">
+                            Acima do desconto máximo da loja ({settings!.desconto_max_percent}%) — ao salvar, vira {settings!.desconto_max_percent}%.
+                          </p>
+                        )}
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-zinc-500 mb-1">Mensagem</label>
+                          <textarea
+                            rows={2}
+                            value={r.mensagem ?? ''}
+                            onChange={function (e) { alterarRegra(stage, { mensagem: e.target.value }); }}
+                            className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
+                          />
+                          <div className="mt-1.5 flex items-start gap-2">
+                            <i className="ri-whatsapp-line text-green-500 text-sm mt-0.5" />
+                            <div className="flex-1 space-y-1.5">
+                              <div>
+                                {previasDiferem && <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wide mb-0.5">Com voucher</p>}
+                                <p className="text-[11px] text-zinc-600 bg-green-50/60 border border-green-100 rounded-lg rounded-tl-none px-2.5 py-1.5">
+                                  {previa}
+                                </p>
+                              </div>
+                              {previasDiferem && (
+                                <div>
+                                  <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-wide mb-0.5">Sem voucher (botão Chamar)</p>
+                                  <p className="text-[11px] text-zinc-600 bg-green-50/60 border border-green-100 rounded-lg rounded-tl-none px-2.5 py-1.5">
+                                    {previaSemVoucher}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               );
             })}

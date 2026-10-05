@@ -239,7 +239,7 @@ export default function EnviarVoucher({ onFechar, irPara, clienteInicial, aoCria
           <Fim onFechar={onFechar} acoes={[{ label: 'Abrir Clientes', onClick: () => irPara('/clientes') }]} />
         </>
       )}
-      {passo === 'fim' && <Fim onFechar={onFechar} acoes={[{ label: 'Abrir Vouchers', onClick: () => irPara('/clientes?aba=vouchers') }]} />}
+      {passo === 'fim' && <Fim onFechar={onFechar} acoes={[{ label: 'Abrir Vouchers', onClick: () => irPara('/clientes?aba=descontos&secao=vouchers') }]} />}
     </Roteiro>
   );
 }

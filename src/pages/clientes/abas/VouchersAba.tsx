@@ -1,4 +1,4 @@
-// Aba Vouchers & Gift Cards de Clientes & Marketing.
+// Vouchers & Gift Cards de Clientes & Marketing (hoje a seção "Para uma pessoa" da aba Descontos).
 //
 // Carrega TODOS os vouchers da loja uma vez e filtra na tela: antes o filtro ia
 // para o servidor e os números do topo ("Ativos", "Expirados"…) passavam a contar
@@ -54,7 +54,12 @@ function valorDoVoucher(v: Voucher): string {
     : formatCurrency(v.original_amount);
 }
 
-export default function VouchersAba() {
+/**
+ * Painel de vouchers e gift cards: saldo, atalhos, busca, filtros, lista e modais.
+ * Sem padding externo — quem hospeda controla o espaçamento. `embutido` = dentro de um cartão
+ * (aba Descontos): a barra de busca/filtros perde a caixa própria, para não ter cartão dentro de cartão.
+ */
+export function VouchersPainel({ embutido = false }: { embutido?: boolean }) {
   const { user } = useAuth();
   const [vouchers, setVouchers] = useState<Voucher[]>([]);
   const [loading, setLoading] = useState(true);
@@ -151,7 +156,7 @@ export default function VouchersAba() {
   ];
 
   return (
-    <div className="p-4 md:p-6 space-y-4">
+    <div className="space-y-4">
       {/* Atalhos */}
       <div className="grid grid-cols-3 xl:grid-cols-6 gap-2 md:gap-3">
         <div className="col-span-3 xl:col-span-1 bg-gradient-to-br from-rose-500 to-rose-600 rounded-xl px-4 py-3 text-white">
@@ -173,7 +178,7 @@ export default function VouchersAba() {
               </div>
               <div className="min-w-0">
                 <p className="text-base font-bold text-zinc-800 leading-tight">{loading || erroLista ? '—' : c.value}</p>
-                <p className="text-[10.5px] sm:text-[11px] text-zinc-400 leading-tight">{c.label}</p>
+                <p className="text-[10.5px] sm:text-[11px] text-zinc-400 leading-tight break-words">{c.label}</p>
               </div>
             </button>
           );
@@ -181,7 +186,7 @@ export default function VouchersAba() {
       </div>
 
       {/* Barra */}
-      <div className="bg-white border border-zinc-100 rounded-2xl p-3 flex flex-col lg:flex-row lg:items-center gap-2">
+      <div className={`flex flex-col lg:flex-row lg:items-center gap-2 ${embutido ? '' : 'bg-white border border-zinc-100 rounded-2xl p-3'}`}>
         <div className="relative flex-1 min-w-0">
           <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
           <input
@@ -420,6 +425,15 @@ export default function VouchersAba() {
           onCancelled={() => { setDetalheVoucher(null); loadVouchers(); }}
         />
       )}
+    </div>
+  );
+}
+
+/** Aba antiga "Vouchers" (painel com o padding da aba). Mantida até a página trocar para DescontosAba. */
+export default function VouchersAba() {
+  return (
+    <div className="p-4 md:p-6">
+      <VouchersPainel />
     </div>
   );
 }

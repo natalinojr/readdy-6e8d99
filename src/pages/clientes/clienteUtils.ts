@@ -97,8 +97,26 @@ export function mensagemWhatsApp(c: ClienteCRM): string {
   if (isInativo(c)) {
     return `Olá, ${nome}! Sentimos sua falta por aqui. \u{1F49B} Já faz um tempinho desde sua última visita — preparamos novidades que você vai gostar. Que tal passar para conferir?`;
   }
-  if (c.tags.includes('vip') || c.tags.includes('frequente')) {
+  const daCasa = c.estagio ? ['recorrente', 'fiel', 'vip'].includes(c.estagio) : (c.tags.includes('vip') || c.tags.includes('frequente'));
+  if (daCasa) {
     return `Olá, ${nome}! Obrigado por ser um cliente tão especial. \u{1F64C} Temos novidades no cardápio que combinam com o seu gosto — venha experimentar!`;
   }
   return `Olá, ${nome}! Tudo bem? Passando para lembrar que estamos com novidades por aqui. Venha nos visitar e aproveitar! \u{1F60A}`;
+}
+
+/** Estágios do Funil, na ordem da tela do Funil (atenção primeiro, depois a jornada).
+ *  A aba Clientes filtra por eles: uma regra só para "quem é VIP", "quem está sumindo"… */
+export const ESTAGIOS_FUNIL: { id: string; label: string; chip: string; ponto: string }[] = [
+  { id: 'carrinho_abandonado', label: 'Carrinho abandonado', chip: 'bg-orange-50 text-orange-700 border-orange-200', ponto: 'bg-orange-500' },
+  { id: 'nunca_comprou', label: 'Cadastrou, nunca pediu', chip: 'bg-zinc-50 text-zinc-600 border-zinc-200', ponto: 'bg-zinc-400' },
+  { id: 'primeira_compra', label: 'Comprou 1 vez', chip: 'bg-sky-50 text-sky-700 border-sky-200', ponto: 'bg-sky-500' },
+  { id: 'recorrente', label: 'Recorrente', chip: 'bg-green-50 text-green-700 border-green-200', ponto: 'bg-green-500' },
+  { id: 'fiel', label: 'Fiel', chip: 'bg-emerald-50 text-emerald-700 border-emerald-200', ponto: 'bg-emerald-500' },
+  { id: 'vip', label: 'VIP', chip: 'bg-amber-50 text-amber-700 border-amber-200', ponto: 'bg-amber-500' },
+  { id: 'em_risco', label: 'Em risco', chip: 'bg-yellow-50 text-yellow-800 border-yellow-200', ponto: 'bg-yellow-500' },
+  { id: 'perdido', label: 'Perdido', chip: 'bg-red-50 text-red-700 border-red-200', ponto: 'bg-red-500' },
+];
+
+export function estagioFunil(id: string | null | undefined) {
+  return ESTAGIOS_FUNIL.find((e) => e.id === id) ?? null;
 }

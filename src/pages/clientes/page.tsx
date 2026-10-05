@@ -1,10 +1,12 @@
-// Clientes & Marketing — uma tela só para o que antes eram três (Clientes,
-// Promoções e Vouchers) mais o Funil, que vivia num modal dentro de Clientes.
+// Clientes & Marketing — uma tela só, em 4 abas (2026-10-05, protótipo aprovado pelo dono):
+//   Clientes · Funil · Clube (Fidelidade + Jogos) · Descontos (Promoções + Vouchers).
+// Antes eram 6 abas e, no celular, Promoções e Vouchers ficavam fora da tela.
 //
-// A aba vem da URL (?aba=clientes|funil|fidelidade|jogos|promocoes|vouchers), então /promocoes e
-// /vouchers continuam funcionando (redirecionam para cá) e links do assistente
-// abrem direto na aba certa. Cada aba respeita a sua permissão de antes:
-// clientes_ver (Clientes e Funil), gestao_promocoes e gestao_vouchers.
+// A aba vem da URL (?aba=clientes|funil|clube|descontos e ?secao= dentro dela). Os ids antigos
+// continuam valendo (links do assistente, /promocoes e /vouchers, favoritos):
+// fidelidade → clube · jogos → clube/jogos · promocoes → descontos · vouchers → descontos/vouchers.
+// Cada aba respeita a sua permissão: clientes_ver (Clientes e Funil), gestao_promocoes (Clube),
+// gestao_promocoes OU gestao_vouchers (Descontos — cada seção confere a sua).
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
@@ -14,23 +16,28 @@ import type { Voucher } from '@/types/vouchers';
 import EnviarVoucherModal from './components/EnviarVoucherModal';
 import ClientesAba from './abas/ClientesAba';
 import FunilAba, { type OfertaVoucher } from './abas/FunilAba';
-import PromocoesAba from './abas/PromocoesAba';
-import VouchersAba from './abas/VouchersAba';
-import FidelidadeAba from './abas/FidelidadeAba';
-import JogosAba from './abas/JogosAba';
+import FidelidadeAba, { type SecaoClube } from './abas/FidelidadeAba';
+import DescontosAba from './abas/DescontosAba';
 
-type Aba = 'clientes' | 'funil' | 'fidelidade' | 'jogos' | 'promocoes' | 'vouchers';
+type Aba = 'clientes' | 'funil' | 'clube' | 'descontos';
 
-const ABAS: { id: Aba; label: string; icon: string; permissao: PermissaoKey; desc: string }[] = [
-  { id: 'clientes', label: 'Clientes', icon: 'ri-group-line', permissao: 'clientes_ver', desc: 'Base de clientes, aniversários e campanhas' },
-  { id: 'funil', label: 'Funil', icon: 'ri-filter-3-line', permissao: 'clientes_ver', desc: 'Quem abordar agora e com qual oferta' },
-  // Fidelidade usa a permissão de Promoções: é marketing com dinheiro envolvido.
-  { id: 'fidelidade', label: 'Fidelidade', icon: 'ri-vip-crown-line', permissao: 'gestao_promocoes', desc: 'Pontos, recompensas, trilha de níveis e roleta' },
-  // Jogos: ranking semanal com prêmio — mesma permissão de Promoções.
-  { id: 'jogos', label: 'Jogos', icon: 'ri-gamepad-line', permissao: 'gestao_promocoes', desc: 'Joguinhos enquanto espera e ranking semanal com prêmio' },
-  { id: 'promocoes', label: 'Promoções', icon: 'ri-price-tag-3-line', permissao: 'gestao_promocoes', desc: 'Preço promocional e regras de desconto' },
-  { id: 'vouchers', label: 'Vouchers', icon: 'ri-gift-line', permissao: 'gestao_vouchers', desc: 'Vouchers, gift cards e links enviados' },
+const ABAS: { id: Aba; label: string; icon: string; permissoes: PermissaoKey[]; desc: string }[] = [
+  { id: 'clientes', label: 'Clientes', icon: 'ri-group-line', permissoes: ['clientes_ver'], desc: 'Base de clientes, filtros pelo Funil e campanhas' },
+  { id: 'funil', label: 'Funil', icon: 'ri-filter-3-line', permissoes: ['clientes_ver'], desc: 'Quem chamar agora e com qual oferta' },
+  // Clube usa a permissão de Promoções: é marketing com dinheiro envolvido (pontos, prêmios).
+  { id: 'clube', label: 'Clube', icon: 'ri-vip-crown-line', permissoes: ['gestao_promocoes'], desc: 'Fidelidade: pontos, recompensas, níveis, roleta e jogos' },
+  { id: 'descontos', label: 'Descontos', icon: 'ri-coupon-3-line', permissoes: ['gestao_promocoes', 'gestao_vouchers'], desc: 'Promoção do cardápio, vouchers e gift cards' },
 ];
+
+// Ids antigos (6 abas) → aba nova + seção.
+const LEGADO: Record<string, { aba: Aba; secao?: string }> = {
+  fidelidade: { aba: 'clube' },
+  jogos: { aba: 'clube', secao: 'jogos' },
+  promocoes: { aba: 'descontos', secao: 'promocoes' },
+  vouchers: { aba: 'descontos', secao: 'vouchers' },
+};
+
+const SECOES_CLUBE: SecaoClube[] = ['resumo', 'pontos', 'recompensas', 'trilha', 'roleta', 'jogos', 'membros'];
 
 // Mesmo critério da RotaProtegida: só o admin vê tudo; o gerente segue a matriz (2026-10-03).
 const PAPEIS_ADMIN = ['admin'];
@@ -47,21 +54,25 @@ export default function ClientesMarketingPage() {
   const [params, setParams] = useSearchParams();
   const [voucherAlvo, setVoucherAlvo] = useState<VoucherAlvo | null>(null);
 
-  // Emitir voucher (Clientes e Funil) é da aba Vouchers.
-  const podeVoucher = (!!user && PAPEIS_ADMIN.includes(user.perfil)) || hasPermissao('gestao_vouchers');
+  const ehAdmin = !!user && PAPEIS_ADMIN.includes(user.perfil);
+  // Emitir voucher (Clientes, Funil e Descontos) é de quem tem Vouchers & Gift Cards.
+  const podeVoucher = ehAdmin || hasPermissao('gestao_vouchers');
+  const podePromocoes = ehAdmin || hasPermissao('gestao_promocoes');
 
   const abasLiberadas = useMemo(
-    () => ABAS.filter((a) => (user && PAPEIS_ADMIN.includes(user.perfil)) || hasPermissao(a.permissao)),
-    [user, hasPermissao],
+    () => ABAS.filter((a) => ehAdmin || a.permissoes.some((k) => hasPermissao(k))),
+    [ehAdmin, hasPermissao],
   );
 
-  const pedida = params.get('aba') as Aba | null;
+  const pedidaBruta = params.get('aba') ?? '';
+  const legado = LEGADO[pedidaBruta];
+  const pedida = (legado?.aba ?? pedidaBruta) as Aba;
+  const secao = params.get('secao') ?? legado?.secao ?? undefined;
   const aba: Aba = abasLiberadas.find((a) => a.id === pedida)?.id ?? abasLiberadas[0]?.id ?? 'clientes';
   const abaAtual = ABAS.find((a) => a.id === aba)!;
 
-  // No celular as 6 abas não cabem: a ativa rola para a vista (Vouchers ficava escondida à direita).
+  // Barra de abas rola até a ativa quando não cabe (tela estreita ou fonte grande).
   const navRef = useRef<HTMLElement>(null);
-  // Rola só a barra de abas (scrollIntoView mexia também na página e parava no meio do caminho).
   useEffect(() => {
     const nav = navRef.current;
     const el = nav?.querySelector<HTMLElement>('[aria-selected="true"]');
@@ -69,15 +80,19 @@ export default function ClientesMarketingPage() {
     nav.scrollTo({ left: Math.max(0, el.offsetLeft - (nav.clientWidth - el.offsetWidth) / 2), behavior: 'smooth' });
   }, [aba, abasLiberadas.length, carregandoPermissoes]);
 
-  const irPara = (id: Aba) => {
+  const irPara = (id: Aba, novaSecao?: string) => {
     const p = new URLSearchParams(params);
     p.set('aba', id);
+    if (novaSecao) p.set('secao', novaSecao); else p.delete('secao');
     setParams(p, { replace: true });
   };
 
   const abrirVoucher = (cliente: ClienteCRM, oferta?: OfertaVoucher, aoEnviar?: VoucherAlvo['aoEnviar']) => {
     setVoucherAlvo({ cliente, oferta, aoEnviar });
   };
+
+  const secaoClube = SECOES_CLUBE.includes(secao as SecaoClube) ? (secao as SecaoClube) : undefined;
+  const secaoDescontos = secao === 'promocoes' || secao === 'vouchers' ? secao : undefined;
 
   return (
     <div className="flex flex-col h-full bg-zinc-50/50">
@@ -88,13 +103,13 @@ export default function ClientesMarketingPage() {
           </div>
           <div className="min-w-0">
             <h1 className="text-base font-bold text-zinc-900 leading-tight">Clientes &amp; Marketing</h1>
-            <p className="text-xs text-zinc-400 truncate">{abaAtual.desc}</p>
+            <p className="text-xs text-zinc-500 truncate">{abaAtual.desc}</p>
           </div>
         </div>
 
         <nav
           ref={navRef}
-          className="relative flex items-center gap-1 mt-3 -mb-px overflow-x-auto scrollbar-hide -mx-4 px-4 md:mx-0 md:px-0 [mask-image:linear-gradient(to_right,transparent_0,#000_16px,#000_calc(100%-28px),transparent_100%)] md:[mask-image:none]"
+          className="relative flex items-center gap-1 mt-3 -mb-px overflow-x-auto scrollbar-hide"
           role="tablist"
         >
           {abasLiberadas.map((a) => {
@@ -105,8 +120,8 @@ export default function ClientesMarketingPage() {
                 role="tab"
                 aria-selected={ativa}
                 onClick={() => irPara(a.id)}
-                className={`flex items-center gap-1.5 px-2.5 sm:px-4 py-2.5 text-sm font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
-                  ativa ? 'border-amber-500 text-zinc-900' : 'border-transparent text-zinc-400 hover:text-zinc-700'
+                className={`flex items-center gap-1.5 px-3 sm:px-4 py-2.5 text-sm font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+                  ativa ? 'border-amber-500 text-zinc-900' : 'border-transparent text-zinc-500 hover:text-zinc-800'
                 }`}
               >
                 <i className={`${a.icon} hidden sm:inline ${ativa ? 'text-amber-500' : ''}`} />
@@ -128,10 +143,10 @@ export default function ClientesMarketingPage() {
           <ClientesAba onEnviarVoucher={(c) => abrirVoucher(c)} onAbrirFunil={() => irPara('funil')} />
         )}
         {aba === 'funil' && <FunilAba onEnviarVoucher={abrirVoucher} podeVoucher={podeVoucher} />}
-        {aba === 'fidelidade' && <FidelidadeAba />}
-        {aba === 'jogos' && <JogosAba />}
-        {aba === 'promocoes' && <PromocoesAba />}
-        {aba === 'vouchers' && <VouchersAba />}
+        {aba === 'clube' && <FidelidadeAba key={secaoClube ?? 'resumo'} secaoInicial={secaoClube} />}
+        {aba === 'descontos' && (
+          <DescontosAba podePromocoes={podePromocoes} podeVouchers={podeVoucher} secaoInicial={secaoDescontos} />
+        )}
         </>}
       </div>
 

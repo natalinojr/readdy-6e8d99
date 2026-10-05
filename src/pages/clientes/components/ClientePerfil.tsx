@@ -4,7 +4,7 @@ import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import type { Voucher } from '@/types/vouchers';
 import EnviarVoucherModal from './EnviarVoucherModal';
-import { AVISO_OPT_OUT, abrirWhatsApp as abrirConversa, celularComDDI, diasDesde, mensagemWhatsApp } from '../clienteUtils';
+import { AVISO_OPT_OUT, abrirWhatsApp as abrirConversa, celularComDDI, diasDesde, estagioFunil, mensagemWhatsApp } from '../clienteUtils';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
@@ -33,12 +33,6 @@ function mesLocal(iso: string): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-const TAG_STYLE: Record<string, string> = {
-  vip: 'bg-amber-50 text-amber-700 border border-amber-200',
-  frequente: 'bg-green-50 text-green-700 border border-green-200',
-  novo: 'bg-sky-50 text-sky-700 border border-sky-200',
-  inativo: 'bg-zinc-100 text-zinc-500 border border-zinc-200',
-};
 
 const ORIGEM_LABEL: Record<string, string> = {
   cashier: 'Caixa',
@@ -69,6 +63,7 @@ function voucherValorLabel(v: Voucher): string {
 export default function ClientePerfil({ cliente, onClose, onEditar, onContato, podeVoucher = true }: Props) {
   const { user } = useAuth();
   const comprou = cliente.totalVisitas > 0;
+  const estagio = estagioFunil(cliente.estagio);
   const dias = diasSemVisita(cliente.ultimaVisita);
   const podeMensagem = !!celularComDDI(cliente.celular) && !cliente.optOut;
   const { pedidos, loading: loadingPedidos, erro: erroPedidos, tentarDeNovo } = useClientePedidos(cliente.id);
@@ -242,17 +237,17 @@ export default function ClientePerfil({ cliente, onClose, onEditar, onContato, p
       <div className="flex-1 overflow-y-auto">
         {/* Tags */}
         <div className="px-6 pt-4 flex flex-wrap gap-1.5">
-          {cliente.tags.map((tag) => (
-            <span key={tag} className={`text-xs font-semibold px-2.5 py-1 rounded-full capitalize ${TAG_STYLE[tag] ?? 'bg-zinc-100 text-zinc-600'}`}>
-              {tag}
+          {estagio && (
+            <span title="Estágio no Funil" className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${estagio.chip}`}>
+              {estagio.label}
             </span>
-          ))}
+          )}
           {cliente.manualTags.map((tag) => (
             <span key={`m-${tag}`} className="text-xs font-semibold px-2.5 py-1 rounded-full bg-violet-50 text-violet-700 border border-violet-200">
               {tag}
             </span>
           ))}
-          {comprou && dias > 30 && !cliente.tags.includes('inativo') && (
+          {comprou && dias > 30 && (
             <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-red-50 text-red-600 border border-red-200">
               {dias}d sem comprar
             </span>

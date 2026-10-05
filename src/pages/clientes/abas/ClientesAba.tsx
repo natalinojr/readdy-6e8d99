@@ -1,20 +1,21 @@
 // Aba Clientes da tela Clientes & Marketing: a base de clientes, filtros,
-// campanha de WhatsApp e exportação. A segmentação (quem está sumindo, quem é
-// VIP…) mora na aba Funil — os critérios de lá são configuráveis por loja, e a
-// antiga "Segmentação RFM" desta tela usava cortes fixos que contradiziam o funil.
+// campanha de WhatsApp e exportação. Os filtros são os ESTÁGIOS DO FUNIL
+// (crm_customer_stage, critérios configuráveis por loja na aba Funil) — uma regra só
+// (2026-10-05). Antes a lista tinha "VIP/Frequente" com cortes fixos que contradiziam o Funil.
+// Aniversários saíram daqui: viraram o cartão "Aniversariantes" do Funil.
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { useClientes, type ClienteCRM } from '@/hooks/useClientes';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import ClientePerfil from '../components/ClientePerfil';
 import EditarClienteModal from '../components/EditarClienteModal';
-import BirthdayVoucherModal from '../components/BirthdayVoucherModal';
 import {
-  AVISO_OPT_OUT, abrirWhatsApp as abrirConversa, aniversarioEsteMes, baixarCsv, celularComDDI,
-  diasAteAniversario, diasDesde, haDias, isInativo, mensagemWhatsApp, montarCsv,
+  AVISO_OPT_OUT, ESTAGIOS_FUNIL, abrirWhatsApp as abrirConversa, aniversarioEsteMes, baixarCsv, celularComDDI,
+  diasAteAniversario, diasDesde, estagioFunil, haDias, isInativo, mensagemWhatsApp, montarCsv,
 } from '../clienteUtils';
 
-type Filtro = 'todos' | 'frequente' | 'vip' | 'novo' | 'inativo' | 'aniversario' | 'sem_compra';
+/** 'todos', um estágio do Funil (ESTAGIOS_FUNIL.id) ou 'sem_estagio'. */
+type Filtro = string;
 type SortField = 'recente' | 'visitas' | 'gasto' | 'ticket' | 'aniversario' | 'nome';
 
 function fmtData(d: string) {
@@ -45,31 +46,26 @@ function abrirWhatsApp(cliente: ClienteCRM) {
   abrirConversa(cliente.celular, mensagemWhatsApp(cliente));
 }
 
-const TAG_STYLE: Record<string, string> = {
-  vip: 'bg-amber-50 text-amber-700 border border-amber-200',
-  frequente: 'bg-green-50 text-green-700 border border-green-200',
-  novo: 'bg-sky-50 text-sky-700 border border-sky-200',
-  inativo: 'bg-zinc-100 text-zinc-500 border border-zinc-200',
-};
-
-const FILTROS: { id: Filtro; label: string; icon?: string; count?: (c: ClienteCRM[]) => number }[] = [
-  { id: 'todos', label: 'Todos' },
-  { id: 'vip', label: 'VIP', icon: 'ri-vip-crown-line', count: (cs) => cs.filter((c) => c.tags.includes('vip')).length },
-  { id: 'frequente', label: 'Frequentes', icon: 'ri-repeat-line', count: (cs) => cs.filter((c) => c.tags.includes('frequente')).length },
-  { id: 'novo', label: 'Novos', icon: 'ri-user-add-line', count: (cs) => cs.filter((c) => c.tags.includes('novo')).length },
-  { id: 'inativo', label: 'Inativos', icon: 'ri-user-unfollow-line', count: (cs) => cs.filter(isInativo).length },
-  { id: 'aniversario', label: 'Aniversário', icon: 'ri-cake-line', count: (cs) => cs.filter(aniversarioEsteMes).length },
-  { id: 'sem_compra', label: 'Sem compras', icon: 'ri-user-line', count: (cs) => cs.filter((c) => c.totalVisitas === 0).length },
-];
+/** Selo do estágio do Funil (mesmas cores da aba Funil). */
+function SeloEstagio({ id, pequeno }: { id?: string | null; pequeno?: boolean }) {
+  const e = estagioFunil(id);
+  if (!e) return null;
+  return (
+    <span className={`${pequeno ? 'text-[9px] px-1.5' : 'text-[10px] px-2'} font-semibold py-0.5 rounded-full border whitespace-nowrap ${e.chip}`}>
+      {e.label}
+    </span>
+  );
+}
 
 function exportarCSV(clientes: ClienteCRM[]) {
-  const headers = ['Nome', 'Celular', 'E-mail', 'Aniversário', 'Tags', 'Compras', 'Total Gasto (R$)', 'Ticket Médio (R$)', 'Primeira Compra', 'Última Compra', 'Dias sem Comprar', 'Aceita marketing', 'Não quer mensagens'];
+  const headers = ['Nome', 'Celular', 'E-mail', 'Aniversário', 'Estágio no Funil', 'Tags', 'Compras', 'Total Gasto (R$)', 'Ticket Médio (R$)', 'Primeira Compra', 'Última Compra', 'Dias sem Comprar', 'Aceita marketing', 'Não quer mensagens'];
   const rows = clientes.map(c => [
     c.nome,
     c.celular || '',
     c.email || '',
     fmtAniversario(c.dataNascimento),
-    [...c.tags, ...c.manualTags].join(', '),
+    estagioFunil(c.estagio)?.label ?? '',
+    c.manualTags.join(', '),
     c.totalVisitas,
     c.valorTotal.toFixed(2).replace('.', ','),
     c.ticketMedio.toFixed(2).replace('.', ','),
@@ -245,7 +241,6 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
   const [selecionado, setSelecionado] = useState<ClienteCRM | null>(null);
   const [editarCliente, setEditarCliente] = useState<ClienteCRM | null>(null);
   const [showCampanha, setShowCampanha] = useState(false);
-  const [showBirthday, setShowBirthday] = useState(false);
   const [menuExportar, setMenuExportar] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -310,12 +305,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
     }
 
     if (filtro !== 'todos') {
-      l = l.filter((c) => {
-        if (filtro === 'inativo') return isInativo(c);
-        if (filtro === 'aniversario') return aniversarioEsteMes(c);
-        if (filtro === 'sem_compra') return c.totalVisitas === 0;
-        return c.tags.includes(filtro);
-      });
+      l = l.filter((c) => (filtro === 'sem_estagio' ? !estagioFunil(c.estagio) : c.estagio === filtro));
     }
 
     const cmp = (a: ClienteCRM, b: ClienteCRM): number => {
@@ -339,8 +329,14 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
   const totalVisitas = clientes.reduce((acc, c) => acc + c.totalVisitas, 0);
   const totalGasto = clientes.reduce((acc, c) => acc + c.valorTotal, 0);
   const ticketMedioGeral = totalVisitas > 0 ? totalGasto / totalVisitas : 0;
-  const aniversariantesCount = clientes.filter(aniversarioEsteMes).length;
   const inativos = clientes.filter(isInativo).length;
+  // Chips de filtro = estágios do Funil (com a contagem de cada um).
+  const chipsEstagio = [
+    { id: 'todos', label: 'Todos', ponto: '', n: clientes.length },
+    ...ESTAGIOS_FUNIL.map((e) => ({ id: e.id, label: e.label, ponto: e.ponto, n: clientes.filter((c) => c.estagio === e.id).length })),
+  ];
+  const semEstagio = clientes.filter((c) => !estagioFunil(c.estagio)).length;
+  if (semEstagio > 0) chipsEstagio.push({ id: 'sem_estagio', label: 'Sem estágio', ponto: 'bg-zinc-300', n: semEstagio });
   const ativos30d = clientes.filter((c) => c.totalVisitas > 0 && diasSemVisita(c.ultimaVisita) <= 30).length;
   const compradores = clientes.filter((c) => c.totalVisitas > 0).length;
   const retornaram = clientes.filter((c) => c.totalVisitas >= 2).length;
@@ -369,8 +365,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
   const kpis: { label: string; value: string; icon: string; color: string; hint?: string; filtro?: Filtro; acao?: () => void }[] = [
     { label: 'Clientes', value: String(clientes.length), icon: 'ri-group-line', color: 'text-amber-600 bg-amber-50', filtro: 'todos' },
     { label: 'Ativos (30 dias)', value: String(ativos30d), icon: 'ri-user-follow-line', color: 'text-green-600 bg-green-50', hint: 'Compraram nos últimos 30 dias' },
-    { label: 'Sumidos (+30 dias)', value: String(inativos), icon: 'ri-user-unfollow-line', color: 'text-red-500 bg-red-50', filtro: 'inativo', hint: 'Já compraram e não voltam há mais de 30 dias — clique para filtrar' },
-    { label: 'Aniversariantes do mês', value: String(aniversariantesCount), icon: 'ri-cake-line', color: 'text-pink-600 bg-pink-50', filtro: 'aniversario', hint: 'Clique para filtrar' },
+    { label: 'Sumidos (+30 dias)', value: String(inativos), icon: 'ri-user-unfollow-line', color: 'text-red-500 bg-red-50', acao: onAbrirFunil, hint: 'Já compraram e não voltam há mais de 30 dias — clique para ver no Funil quem chamar' },
     { label: 'Voltaram a comprar', value: `${taxaRetorno.toFixed(0)}%`, icon: 'ri-repeat-line', color: 'text-sky-600 bg-sky-50', hint: `${retornaram} de ${compradores} compradores fizeram 2 ou mais compras` },
     { label: 'Ticket médio', value: fmtMoeda(ticketMedioGeral), icon: 'ri-receipt-line', color: 'text-zinc-600 bg-zinc-100' },
   ];
@@ -378,7 +373,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
   return (
     <div className="p-4 md:p-6 space-y-4">
       {/* KPIs — no celular, 3 por linha e sem o ícone (antes ocupavam a primeira tela inteira) */}
-      <div className="grid grid-cols-3 xl:grid-cols-6 gap-2 md:gap-3">
+      <div className="grid grid-cols-3 xl:grid-cols-5 gap-2 md:gap-3">
         {kpis.map((s) => {
           const ativo = !!s.filtro && s.filtro !== 'todos' && filtro === s.filtro;
           const clicavel = !!s.filtro || !!s.acao;
@@ -460,16 +455,6 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
             >
               <i className="ri-whatsapp-line" /> WhatsApp{algumFiltro ? ` (${comTelefone})` : <span className="hidden sm:inline">&nbsp;em massa</span>}
             </button>
-            {podeVoucher && (
-              <button
-                onClick={() => setShowBirthday(true)}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors border border-pink-200 bg-pink-50 hover:bg-pink-100 text-pink-700"
-                title="Configurar e gerar vouchers de aniversário"
-                aria-label="Aniversários"
-              >
-                <i className="ri-cake-3-line" /><span className="hidden sm:inline">Aniversários</span>
-              </button>
-            )}
             <div className="relative" ref={menuRef}>
               <button
                 onClick={() => setMenuExportar((v) => !v)}
@@ -507,22 +492,22 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
           </div>
         </div>
 
-        <div className="px-3 md:px-4 py-2.5 flex items-center gap-1.5 overflow-x-auto scrollbar-hide">
-          {FILTROS.map((f) => {
+        <p className="px-3 md:px-4 pt-2.5 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+          Estágio no Funil
+        </p>
+        <div className="px-3 md:px-4 pt-1.5 pb-2.5 flex flex-wrap items-center gap-1.5">
+          {chipsEstagio.map((f) => {
             const ativo = filtro === f.id;
             return (
               <button
                 key={f.id}
                 onClick={() => aplicarFiltro(f.id)}
-                className={`px-2.5 md:px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap flex-shrink-0 flex items-center gap-1 ${ativo ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'}`}
+                aria-pressed={ativo}
+                className={`px-2.5 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap flex items-center gap-1.5 border ${ativo ? 'bg-zinc-900 border-zinc-900 text-white' : 'bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}
               >
-                {f.icon && <i className={`${f.icon} text-xs`} />}
+                {f.ponto && <span className={`w-1.5 h-1.5 rounded-full ${ativo ? 'bg-white' : f.ponto}`} />}
                 {f.label}
-                {f.count && (
-                  <span className={`ml-0.5 px-1.5 rounded-full text-[10px] ${ativo ? 'bg-white/25 text-white' : 'bg-white text-zinc-500'}`}>
-                    {f.count(clientes)}
-                  </span>
-                )}
+                <span className={`text-[10px] ${ativo ? 'text-white/75' : 'text-zinc-400'}`}>{f.n}</span>
               </button>
             );
           })}
@@ -530,7 +515,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
             <button
               onClick={() => { setSoDuplicados((v) => !v); setFiltro('todos'); }}
               title="Mesmo nome ou telefone — o histórico desses clientes fica dividido"
-              className={`ml-auto px-2.5 md:px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap flex-shrink-0 flex items-center gap-1 ${soDuplicados ? 'bg-orange-500 text-white' : 'bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100'}`}
+              className={`px-2.5 md:px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap flex-shrink-0 flex items-center gap-1 ${soDuplicados ? 'bg-orange-500 text-white' : 'bg-orange-50 text-orange-700 border border-orange-200 hover:bg-orange-100'}`}
             >
               <i className="ri-error-warning-line text-xs" /> {duplicados.size} possíveis duplicados
             </button>
@@ -544,25 +529,6 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
           <button onClick={() => recarregar()} className="flex-shrink-0 px-3 py-1.5 rounded-lg bg-white border border-red-200 font-semibold hover:bg-red-100 cursor-pointer">
             Tentar de novo
           </button>
-        </div>
-      )}
-
-      {/* Banner aniversariantes */}
-      {filtro === 'aniversario' && lista.length > 0 && (
-        <div className="flex items-center gap-3 bg-pink-50 border border-pink-200 rounded-xl px-4 py-3">
-          <i className="ri-cake-line text-pink-600 text-xl flex-shrink-0" />
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-pink-800">{lista.length} cliente{lista.length > 1 ? 's' : ''} com aniversário este mês!</p>
-            <p className="text-xs text-pink-600">Mande um parabéns pelo WhatsApp{podeVoucher ? ' ou gere os vouchers de aniversário' : ''}.</p>
-          </div>
-          {podeVoucher && (
-            <button
-              onClick={() => setShowBirthday(true)}
-              className="flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-pink-500 hover:bg-pink-600 text-white cursor-pointer"
-            >
-              Gerar vouchers
-            </button>
-          )}
         </div>
       )}
 
@@ -596,7 +562,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
                   <th className="text-left px-5 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
                     <button onClick={() => setSort('nome')} className="inline-flex items-center gap-1 hover:text-zinc-700 cursor-pointer uppercase">Cliente <SortArrow field="nome" /></button>
                   </th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Tags</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">Estágio</th>
                   <th className="text-center px-4 py-3 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
                     <button onClick={() => setSort('visitas')} title="Quantidade de vendas finalizadas (pagas) vinculadas ao cliente" className="inline-flex items-center gap-1 hover:text-zinc-700 cursor-pointer uppercase">Compras <SortArrow field="visitas" /></button>
                   </th>
@@ -651,11 +617,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-1">
-                          {cliente.tags.map((tag) => (
-                            <span key={tag} className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize ${TAG_STYLE[tag] ?? ''}`}>
-                              {tag}
-                            </span>
-                          ))}
+                          <SeloEstagio id={cliente.estagio} />
                           {cliente.manualTags.map((tag) => (
                             <span key={`m-${tag}`} className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">
                               {tag}
@@ -773,9 +735,7 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
                         <p className="text-sm font-semibold text-zinc-800 truncate">{cliente.nome}</p>
-                        {cliente.tags.slice(0, 2).map((tag) => (
-                          <span key={tag} className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full capitalize ${TAG_STYLE[tag] ?? ''}`}>{tag}</span>
-                        ))}
+                        <SeloEstagio id={cliente.estagio} pequeno />
                         {cliente.manualTags.slice(0, 2).map((tag) => (
                           <span key={`m-${tag}`} className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200">{tag}</span>
                         ))}
@@ -866,12 +826,6 @@ export default function ClientesAba({ onEnviarVoucher, onAbrirFunil }: Props) {
         />
       )}
 
-      {showBirthday && (
-        <BirthdayVoucherModal
-          aniversariantesMes={clientes.filter(aniversarioEsteMes)}
-          onClose={() => setShowBirthday(false)}
-        />
-      )}
     </div>
   );
 }

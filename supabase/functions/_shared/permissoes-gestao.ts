@@ -11,8 +11,8 @@ export const GESTAO_TELAS = [
   { key: 'gestao_pedidos', label: 'Pedidos', rota: '/pedidos' },
   { key: 'gestao_mesas', label: 'Mesas', rota: '/mesas' },
   { key: 'gestao_aprovacoes', label: 'Aprovações', rota: '/aprovacoes' },
-  { key: 'gestao_promocoes', label: 'Promoções (aba de Clientes & Marketing)', rota: '/clientes?aba=promocoes' },
-  { key: 'gestao_vouchers', label: 'Vouchers & Gift Cards (aba de Clientes & Marketing)', rota: '/clientes?aba=vouchers' },
+  { key: 'gestao_promocoes', label: 'Promoções e Clube (abas Descontos e Clube de Clientes & Marketing)', rota: '/clientes?aba=descontos&secao=promocoes' },
+  { key: 'gestao_vouchers', label: 'Vouchers & Gift Cards (aba Descontos de Clientes & Marketing)', rota: '/clientes?aba=descontos&secao=vouchers' },
   { key: 'gestao_delivery', label: 'Delivery (configuração)', rota: '/config-delivery' },
 ] as const;
 
