@@ -81,6 +81,24 @@ async function listarLojas(access: string, homolog: boolean) {
   return { ok: true, status: 200, data: null, raw: '', merchants };
 }
 
+/**
+ * Lojas que a autorização libera, sem o módulo Merchant: o polling de eventos (módulo Order) responde 403 com
+ * `unauthorizedMerchants` para loja não autorizada. 05/10: app erpos-pdv em produção só com Order/Events liberados
+ * (Merchant/Review/Shipping esperando o chamado) → /merchants vinha [] e /merchants/{id} 403. Candidatas = lojas do
+ * iFood desta loja do ERPOS no financeiro. Polling sem ack não consome evento (o iFood entrega de novo).
+ */
+async function lojasPorEventos(access: string, homolog: boolean, candidatas: { id: string; name: string }[]) {
+  let ids = [...new Set(candidatas.map((c) => c.id))];
+  for (let i = 0; i < 3 && ids.length; i++) {
+    const r = await ifoodFetch('/events/v1.0/events:polling', { headers: { Authorization: `Bearer ${access}`, Accept: 'application/json', 'x-polling-merchants': ids.join(',') } }, homolog);
+    if (r.ok) return candidatas.filter((c) => ids.includes(c.id));
+    const negadas: string[] = r.status === 403 ? (r.data?.error?.unauthorizedMerchants ?? r.data?.unauthorizedMerchants ?? []).map(String) : [];
+    if (!negadas.length) return [];
+    ids = ids.filter((id) => !negadas.includes(id));
+  }
+  return [];
+}
+
 async function ifoodFetch(path: string, init: RequestInit, homolog: boolean, maxAttempts = 4) {
   const headers = new Headers(init.headers);
   if (homolog) headers.set('x-request-homologation', 'true');
@@ -822,6 +840,17 @@ Deno.serve(async (req) => {
       return out;
     };
 
+    // Lojas da autorização: /merchants (módulo Merchant) e, se vier vazio ou negado, as lojas do iFood desta loja do
+    // ERPOS no financeiro conferidas pelo polling de eventos (módulo Order).
+    const lojasDaAutorizacao = async (access: string, homolog: boolean) => {
+      const m = await listarLojas(access, homolog);
+      if (m.ok && m.merchants.length) return m;
+      const { data: fin } = await admin.from('fin_ifood_merchants').select('merchant_id, name').eq('tenant_id', tenantId);
+      const cand = (fin ?? []).map((f: any) => ({ id: String(f.merchant_id), name: String(f.name ?? f.merchant_id) }));
+      const merchants = cand.length ? await lojasPorEventos(access, homolog, cand) : [];
+      return merchants.length ? { ok: true, status: 200, data: null, raw: '', merchants } : m;
+    };
+
     if (action === 'get_config') {
       // Loja sem config ainda: com o app do sistema, a tela já mostra "Gerar código".
       const shown = cfg ?? withSystemApp({ tenant_id: tenantId });
@@ -1474,7 +1503,7 @@ Deno.serve(async (req) => {
       }, cfg.homologation_mode === true);
       if (!r.ok || !r.data?.accessToken) return errResp(apiError(r, 'Autorizar'));
       const access = r.data.accessToken as string;
-      const { merchants } = await listarLojas(access, cfg.homologation_mode === true);
+      const { merchants } = await lojasDaAutorizacao(access, cfg.homologation_mode === true);
       const now = new Date().toISOString();
       const { error: aErr } = await admin.from('ifood_pdv_auths').insert({
         tenant_id: tenantId, access_token: access, refresh_token: r.data.refreshToken ?? null,
@@ -1501,8 +1530,8 @@ Deno.serve(async (req) => {
       for (const a of auths) {
         a.token_expires_at = null; // força renovar
         const access = await getToken(admin, cfg, a);
-        const m = await listarLojas(access, cfg.homologation_mode === true);
-        if (!m.ok) return errResp(apiError(m, 'Listar lojas'));
+        const m = await lojasDaAutorizacao(access, cfg.homologation_mode === true);
+        if (!m.ok && m.status !== 403) return errResp(apiError(m, 'Listar lojas'));
         await admin.from('ifood_pdv_auths').update({ merchants: m.merchants, updated_at: new Date().toISOString() }).eq('id', a.id);
         total += m.merchants.length;
       }
