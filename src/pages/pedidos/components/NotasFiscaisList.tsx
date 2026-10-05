@@ -3,57 +3,101 @@ import { useNavigate } from 'react-router-dom';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
-import { STATUS_LABEL, STATUS_CLASS, formatChave, formatCpfCnpj, formatBRL, cancelMinutesLeft, CANCEL_WINDOW_MIN, type FiscalDocumentRow, type FiscalDocStatus } from '@/lib/fiscal';
+import { formatChave, formatCpfCnpj, cancelMinutesLeft, CANCEL_WINDOW_MIN, type FiscalDocumentRow, type FiscalDocStatus } from '@/lib/fiscal';
 import { buildZip, downloadBlob } from '@/lib/zipStore';
-import { KpiCard, MonthNav } from '@/pages/financeiro/components/dreUi';
+import { MonthNav } from '@/pages/financeiro/components/dreUi';
+import {
+  CartaoAcao, Chips, Faixa, MenuMais, SecaoTitulo, Vazio, Nota, brl, btn, semAcento,
+  type ItemFaixa, type ItemMenu, type OpcaoChip,
+} from '@/pages/estoque/components/ui/EstoqueUi';
+import Folha from '@/pages/estoque/components/inicio/Folha';
+
+// Notas fiscais (NFC-e) — layout novo (2026-10-05), mesmo desenho da aba Pedidos: frase do mês,
+// "Precisa de você" com o botão que resolve (recusadas → tentar de novo; paradas → reprocessar),
+// faixa de números, filtros com contagem, lista enxuta e a nota abrindo numa folha com as ações.
+// Nada da tela antiga sumiu: emitir nota de um pedido, XMLs do mês e reprocessar ficam no ⋯.
 
 const LIST_COLS = 'id, tenant_id, model, status, source_type, source_id, order_ids, order_number, environment, total_amount, customer_cpf, customer_name, serie, numero, chave, protocolo, sefaz_status_code, sefaz_message, qr_code, url_chave, error_message, attempts, emitted_at, cancelled_at, cancel_reason, printed_at, created_at, updated_at';
+const TZ = 'America/Sao_Paulo';
+const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 
-function monthRange(ym: string): { start: string; end: string } {
+/** Mês em Brasília (antes usava o fuso do aparelho). */
+function intervaloMes(ym: string): { start: string; end: string } {
   const [y, m] = ym.split('-').map(Number);
-  const start = new Date(y, m - 1, 1);
-  const end = new Date(y, m, 1);
-  return { start: start.toISOString(), end: end.toISOString() };
+  const prox = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+  return { start: new Date(`${ym}-01T00:00:00-03:00`).toISOString(), end: new Date(`${prox}-01T00:00:00-03:00`).toISOString() };
 }
-const thisMonth = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
-const fmtDateTime = (iso: string | null) => iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+const mesAtual = () => new Date().toLocaleDateString('en-CA', { timeZone: TZ }).slice(0, 7);
+const rotuloMes = (ym: string) => `${MESES[Number(ym.slice(5, 7)) - 1]} ${ym.slice(0, 4)}`;
+const quando = (iso: string | null) => (iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: TZ }) : '—');
+const quandoCompleto = (iso: string | null) => (iso ? new Date(iso).toLocaleString('pt-BR', { timeZone: TZ }) : '—');
+/** "P0410260048" → "#048" (sequência do dia), como na aba Pedidos. */
+const pedidoCurto = (cod: string | null) => {
+  const m = (cod ?? '').match(/^[A-Za-z]{0,2}\d{6}(\d+)$/);
+  return m ? `#${String(Number(m[1])).padStart(3, '0')}` : (cod ?? '—');
+};
+
+type Grupo = 'todas' | 'autorizadas' | 'problema' | 'emissao' | 'canceladas';
+const GRUPO_DE: Record<FiscalDocStatus, Grupo> = {
+  authorized: 'autorizadas', rejected: 'problema', error: 'problema', pending: 'emissao', processing: 'emissao',
+  cancelled: 'canceladas', skipped: 'canceladas',
+};
+const SELO: Record<FiscalDocStatus, { texto: string; cor: string }> = {
+  authorized: { texto: 'Autorizada', cor: 'bg-emerald-50 text-emerald-700' },
+  processing: { texto: 'Emitindo', cor: 'bg-blue-50 text-blue-600' },
+  pending: { texto: 'Na fila', cor: 'bg-amber-50 text-amber-700' },
+  rejected: { texto: 'Recusada', cor: 'bg-red-50 text-red-600' },
+  error: { texto: 'Erro', cor: 'bg-red-50 text-red-600' },
+  cancelled: { texto: 'Cancelada', cor: 'bg-zinc-100 text-zinc-500' },
+  skipped: { texto: 'Não emitida', cor: 'bg-zinc-100 text-zinc-500' },
+};
+/** Parada em emissão: na fila/emitindo há mais de 2 min (o provedor costuma responder em segundos). */
+const parada = (d: FiscalDocumentRow, agora: number) =>
+  (d.status === 'pending' || d.status === 'processing') && agora - new Date(d.updated_at ?? d.created_at).getTime() > 2 * 60_000;
+const motivo = (d: FiscalDocumentRow) => d.error_message || (d.sefaz_message ? `${d.sefaz_status_code ?? ''} ${d.sefaz_message}`.trim() : '');
+
+function Selo({ d }: { d: FiscalDocumentRow }) {
+  const s = SELO[d.status];
+  return <span className={`inline-flex items-center text-[11px] font-bold rounded-md px-1.5 py-0.5 whitespace-nowrap ${s.cor}`}>{s.texto}</span>;
+}
 
 export default function NotasFiscaisList() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const { success: toastSuccess, error: toastError } = useToast();
+  const { success: toastOk, error: toastErro } = useToast();
   const [docs, setDocs] = useState<FiscalDocumentRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [mes, setMes] = useState(thisMonth());
-  const [statusFiltro, setStatusFiltro] = useState<'all' | FiscalDocStatus>('all');
+  const [carregando, setCarregando] = useState(true);
+  const [mes, setMes] = useState(mesAtual());
+  const [grupo, setGrupo] = useState<Grupo>('todas');
   const [busca, setBusca] = useState('');
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // id ou ação em andamento
-  const [cancelDoc, setCancelDoc] = useState<FiscalDocumentRow | null>(null);
+  const [aberta, setAberta] = useState<FiscalDocumentRow | null>(null);
+  const [cancelando, setCancelando] = useState<FiscalDocumentRow | null>(null);
   const [justificativa, setJustificativa] = useState('');
-  const [detail, setDetail] = useState<FiscalDocumentRow | null>(null);
+  const [emitirAberto, setEmitirAberto] = useState(false);
   const [emitirPedido, setEmitirPedido] = useState('');
   const podeCancelar = user?.perfil === 'admin' || user?.perfil === 'gerente';
-  // Relógio para o prazo de cancelamento (30 min da SEFAZ): re-renderiza a cada 30s.
+  // Relógio do prazo de cancelamento (30 min da SEFAZ) e das notas paradas
   const [agora, setAgora] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setAgora(Date.now()), 30_000); return () => clearInterval(t); }, []);
 
   const carregar = useCallback(async () => {
     if (!user?.tenantId) return;
-    setLoading(true);
-    const { start, end } = monthRange(mes);
-    const [{ data }, { data: fs }] = await Promise.all([
+    const { start, end } = intervaloMes(mes);
+    const [{ data, error }, { data: fs }] = await Promise.all([
       supabase.from('fiscal_documents').select(LIST_COLS).eq('tenant_id', user.tenantId).gte('created_at', start).lt('created_at', end).order('created_at', { ascending: false }).limit(2000),
       supabase.from('fiscal_settings').select('enabled').eq('tenant_id', user.tenantId).maybeSingle(),
     ]);
-    setDocs((data ?? []) as unknown as FiscalDocumentRow[]);
+    if (error) toastErro('Não consegui carregar as notas', error.message);
+    else setDocs((data ?? []) as unknown as FiscalDocumentRow[]);
     setEnabled(fs ? Boolean(fs.enabled) : null);
-    setLoading(false);
-  }, [user?.tenantId, mes]);
+    setCarregando(false);
+  }, [user?.tenantId, mes, toastErro]);
 
-  useEffect(() => { carregar(); }, [carregar]);
+  useEffect(() => { setCarregando(true); carregar(); }, [carregar]);
 
-  // Atualiza em tempo real quando uma nota muda de status (emissão é assíncrona)
+  // Tempo real: a emissão é assíncrona (a nota muda de "emitindo" para "autorizada" sozinha)
   useEffect(() => {
     if (!user?.tenantId) return;
     const ch = supabase.channel(`fiscal-docs-${user.tenantId}`)
@@ -62,40 +106,60 @@ export default function NotasFiscaisList() {
     return () => { supabase.removeChannel(ch); };
   }, [user?.tenantId, carregar]);
 
-  const filtrados = useMemo(() => {
-    const q = busca.trim().toLowerCase().replace(/\s/g, '');
-    return docs.filter(d => {
-      if (statusFiltro !== 'all' && d.status !== statusFiltro) return false;
-      if (!q) return true;
-      return (d.order_number ?? '').toLowerCase().replace(/\s/g, '').includes(q)
-        || (d.chave ?? '').includes(q)
-        || String(d.numero ?? '').includes(q)
-        || (d.customer_cpf ?? '').includes(q);
-    });
-  }, [docs, statusFiltro, busca]);
+  // A folha aberta acompanha a nota atualizada
+  useEffect(() => { if (aberta) setAberta(docs.find((d) => d.id === aberta.id) ?? null); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [docs]);
 
   const resumo = useMemo(() => {
-    const aut = docs.filter(d => d.status === 'authorized');
+    const aut = docs.filter((d) => d.status === 'authorized');
     return {
       autorizadas: aut.length,
       valor: aut.reduce((s, d) => s + Number(d.total_amount ?? 0), 0),
-      problemas: docs.filter(d => d.status === 'rejected' || d.status === 'error').length,
-      pendentes: docs.filter(d => d.status === 'pending' || d.status === 'processing').length,
-      canceladas: docs.filter(d => d.status === 'cancelled').length,
+      problema: docs.filter((d) => GRUPO_DE[d.status] === 'problema'),
+      emissao: docs.filter((d) => GRUPO_DE[d.status] === 'emissao'),
+      paradas: docs.filter((d) => parada(d, agora)),
+      canceladas: docs.filter((d) => GRUPO_DE[d.status] === 'canceladas').length,
+      homologacao: docs.some((d) => d.environment === 2),
     };
+  }, [docs, agora]);
+
+  const contagem = useMemo(() => {
+    const n: Record<Grupo, number> = { todas: docs.length, autorizadas: 0, problema: 0, emissao: 0, canceladas: 0 };
+    docs.forEach((d) => { n[GRUPO_DE[d.status]] += 1; });
+    return n;
   }, [docs]);
 
+  const lista = useMemo(() => {
+    const q = semAcento(busca).replace(/\s/g, '').replace(/^#/, '');
+    return docs.filter((d) => {
+      if (grupo !== 'todas' && GRUPO_DE[d.status] !== grupo) return false;
+      if (!q) return true;
+      return semAcento(d.order_number ?? '').includes(q)
+        || pedidoCurto(d.order_number).replace('#', '').replace(/^0+/, '') === q.replace(/^0+/, '')
+        || (d.chave ?? '').includes(q)
+        || String(d.numero ?? '') === q
+        || (d.customer_cpf ?? '').includes(q.replace(/\D/g, '') || '§')
+        || semAcento(d.customer_name ?? '').includes(q);
+    });
+  }, [docs, grupo, busca]);
+
+  // ── chamadas ao fiscal-write ──
   const call = async <T,>(body: Record<string, unknown>): Promise<T | null> => {
     const { data, error } = await invokeWithAuth<T & { success?: boolean; error?: string; message?: string }>('fiscal-write', { body: { tenant_id: user?.tenantId, ...body } });
-    if (error) { toastError('Erro', error.message); return null; }
+    if (error) { toastErro('Erro', error.message); return null; }
     return data as T;
   };
 
-  const reemitir = async (d: FiscalDocumentRow) => {
-    setBusy(d.id);
-    const r = await call<{ success: boolean; status: string; message?: string }>({ action: 'retry', document_id: d.id });
+  const tentarDeNovo = async (lista: FiscalDocumentRow[]) => {
+    if (lista.length === 0) return;
+    setBusy(lista.length === 1 ? lista[0].id : 'retry');
+    let ok = 0; let primeiraFalha: string | null = null;
+    for (const d of lista) {
+      const r = await call<{ success: boolean; status: string; message?: string }>({ action: 'retry', document_id: d.id });
+      if (r?.success) ok++; else if (r) primeiraFalha ??= r.message ?? r.status;
+    }
     setBusy(null);
-    if (r?.success) toastSuccess('Nota autorizada'); else if (r) toastError('Não autorizada', r.message ?? r.status);
+    if (!primeiraFalha) toastOk(ok === 1 ? 'Nota autorizada' : `${ok} notas autorizadas`);
+    else toastErro(ok > 0 ? `${ok} autorizada(s), outras recusadas` : 'Não autorizada', primeiraFalha);
     carregar();
   };
 
@@ -103,19 +167,19 @@ export default function NotasFiscaisList() {
     setBusy('pending');
     const r = await call<{ success: boolean; processed: number; results: { success: boolean }[] }>({ action: 'run_pending' });
     setBusy(null);
-    if (r) toastSuccess(`${r.results.filter(x => x.success).length} de ${r.processed} autorizadas`);
+    if (r) toastOk(r.processed === 0 ? 'Nada parado para reprocessar' : `${r.results.filter((x) => x.success).length} de ${r.processed} autorizadas`);
     carregar();
   };
 
-  const abrirPdf = async (d: FiscalDocumentRow) => {
+  const verDanfe = async (d: FiscalDocumentRow) => {
     setBusy(d.id);
     const r = await call<{ success: boolean; pdf_base64?: string; content_type?: string; error?: string }>({ action: 'get_pdf', document_id: d.id });
     setBusy(null);
-    if (!r?.success || !r.pdf_base64) { toastError('DANFE indisponível', r?.error ?? ''); return; }
+    if (!r?.success || !r.pdf_base64) { toastErro('DANFE indisponível', r?.error ?? ''); return; }
     const bin = atob(r.pdf_base64);
     const bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    // NFC-e: o provedor devolve o DANFE em HTML; NF-e vem em PDF. Abre do jeito certo.
+    // NFC-e: o provedor devolve o DANFE em HTML; NF-e vem em PDF.
     const type = r.content_type === 'text/html' ? 'text/html;charset=utf-8' : 'application/pdf';
     const url = URL.createObjectURL(new Blob([bytes], { type }));
     window.open(url, '_blank', 'noopener');
@@ -123,241 +187,261 @@ export default function NotasFiscaisList() {
   };
 
   const baixarXml = async (d: FiscalDocumentRow) => {
+    setBusy(d.id);
     const r = await call<{ success: boolean; xml?: string | null }>({ action: 'get_xml', document_id: d.id });
-    if (!r?.xml) { toastError('XML indisponível'); return; }
+    setBusy(null);
+    if (!r?.xml) { toastErro('XML indisponível'); return; }
     downloadBlob(new Blob([r.xml], { type: 'application/xml' }), `NFCe-${d.chave ?? d.id}.xml`);
   };
 
   const baixarXmlsMes = async () => {
     if (!user?.tenantId) return;
     setBusy('zip');
-    const { start, end } = monthRange(mes);
-    const { data } = await supabase.from('fiscal_documents').select('chave, xml, status, numero')
+    const { start, end } = intervaloMes(mes);
+    const { data, error } = await supabase.from('fiscal_documents').select('chave, xml, status, numero')
       .eq('tenant_id', user.tenantId).in('status', ['authorized', 'cancelled']).not('xml', 'is', null)
       .gte('created_at', start).lt('created_at', end).limit(5000);
     setBusy(null);
+    if (error) { toastErro('Não consegui juntar os XMLs', error.message); return; }
     const rows = (data ?? []) as { chave: string | null; xml: string | null; status: string; numero: number | null }[];
-    if (rows.length === 0) { toastError('Nenhum XML autorizado neste mês'); return; }
-    const zip = buildZip(rows.map(r => ({ name: `${r.status === 'cancelled' ? 'CANCELADA-' : ''}NFCe-${r.chave ?? r.numero}.xml`, content: r.xml ?? '' })));
+    if (rows.length === 0) { toastErro('Nenhum XML autorizado neste mês'); return; }
+    const zip = buildZip(rows.map((r) => ({ name: `${r.status === 'cancelled' ? 'CANCELADA-' : ''}NFCe-${r.chave ?? r.numero}.xml`, content: r.xml ?? '' })));
     downloadBlob(zip, `NFCe-${mes}.zip`);
-    toastSuccess(`${rows.length} XML(s) no arquivo`);
+    toastOk(`${rows.length} XML(s) no arquivo`);
   };
 
   const imprimir = async (d: FiscalDocumentRow) => {
     setBusy(d.id);
     const r = await call<{ success: boolean; error?: string }>({ action: 'print_danfe', document_id: d.id });
     setBusy(null);
-    if (r?.success) toastSuccess('Cupom enviado para a impressora'); else toastError('Não foi possível imprimir', r?.error ?? '');
+    if (r?.success) toastOk('Cupom enviado para a impressora'); else toastErro('Não foi possível imprimir', r?.error ?? '');
   };
 
   const confirmarCancelamento = async () => {
-    if (!cancelDoc) return;
-    setBusy(cancelDoc.id);
-    const r = await call<{ success: boolean; error?: string }>({ action: 'cancel', document_id: cancelDoc.id, justificativa });
+    if (!cancelando) return;
+    setBusy(cancelando.id);
+    const r = await call<{ success: boolean; error?: string }>({ action: 'cancel', document_id: cancelando.id, justificativa });
     setBusy(null);
-    if (r?.success) { toastSuccess('Nota cancelada na SEFAZ'); setCancelDoc(null); setJustificativa(''); carregar(); }
-    else toastError('Cancelamento recusado', r?.error ?? '');
+    if (r?.success) { toastOk('Nota cancelada na SEFAZ'); setCancelando(null); setJustificativa(''); carregar(); }
+    else toastErro('Cancelamento recusado', r?.error ?? '');
   };
 
+  /** Aceita o número completo (P0410260048) ou só o final de um pedido de hoje (48). */
   const emitirManual = async () => {
-    const num = emitirPedido.trim();
+    const num = emitirPedido.trim().replace(/^#/, '');
     if (!num || !user?.tenantId) return;
     setBusy('manual');
-    const { data: o } = await supabase.from('orders').select('id, table_session_id').eq('tenant_id', user.tenantId).eq('number', num).order('created_at', { ascending: false }).limit(1).maybeSingle();
-    if (!o) { setBusy(null); toastError('Pedido não encontrado', `Número ${num}`); return; }
-    const body = { action: 'emit', source_type: 'order', source_id: o.id, force: true };
-    const r = await call<{ success: boolean; status: string; message?: string }>(body);
+    let pedido: { id: string } | null = null;
+    if (/^\d{1,4}$/.test(num)) {
+      const hoje = new Date().toLocaleDateString('en-CA', { timeZone: TZ });
+      const { data } = await supabase.from('orders').select('id, number').eq('tenant_id', user.tenantId)
+        .gte('created_at', `${hoje}T00:00:00-03:00`).ilike('number', `%${num.padStart(3, '0')}`).order('created_at', { ascending: false }).limit(5);
+      const exatos = (data ?? []).filter((o: { number: string | null }) => (o.number ?? '').match(/^[A-Za-z]{0,2}\d{6}(\d+)$/)?.[1] && Number((o.number ?? '').match(/^[A-Za-z]{0,2}\d{6}(\d+)$/)![1]) === Number(num));
+      if (exatos.length === 1) pedido = exatos[0];
+      else if (exatos.length > 1) { setBusy(null); toastErro('Mais de um pedido com esse número hoje', 'Digite o número completo (ex.: P0410260048).'); return; }
+    } else {
+      const { data } = await supabase.from('orders').select('id').eq('tenant_id', user.tenantId).eq('number', num.toUpperCase()).order('created_at', { ascending: false }).limit(1).maybeSingle();
+      pedido = data;
+    }
+    if (!pedido) { setBusy(null); toastErro('Pedido não encontrado', /^\d{1,4}$/.test(num) ? `Nenhum pedido #${num.padStart(3, '0')} hoje. Para outro dia, digite o número completo.` : `Número ${num}`); return; }
+    const r = await call<{ success: boolean; status: string; message?: string }>({ action: 'emit', source_type: 'order', source_id: pedido.id, force: true });
     setBusy(null);
-    if (r?.success) { toastSuccess('Nota autorizada'); setEmitirPedido(''); }
-    else if (r) toastError(r.status === 'skipped' ? 'Nota não emitida' : 'Não autorizada', r.message ?? r.status);
+    if (r?.success) { toastOk('Nota autorizada'); setEmitirPedido(''); setEmitirAberto(false); }
+    else if (r) toastErro(r.status === 'skipped' ? 'Nota não emitida' : 'Não autorizada', r.message ?? r.status);
     carregar();
   };
 
-  const inputCls = 'text-sm border border-zinc-200 rounded-xl shadow-sm px-3 h-10 bg-white text-zinc-800 focus:outline-none focus:border-amber-400';
-  const btnSec = 'flex items-center gap-1.5 px-3 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 rounded-xl text-xs font-semibold text-zinc-600 cursor-pointer transition-colors whitespace-nowrap shadow-sm disabled:opacity-40';
+  // ── tela ──
+  const menu: ItemMenu[] = [
+    { rotulo: 'Emitir nota de um pedido', icone: 'ri-file-add-line', onClick: () => setEmitirAberto(true) },
+    { rotulo: 'XMLs do mês (contabilidade)', icone: 'ri-download-2-line', onClick: baixarXmlsMes },
+    { rotulo: 'Reprocessar notas paradas', icone: 'ri-refresh-line', onClick: reprocessar, oculto: resumo.emissao.length === 0 },
+    { rotulo: 'Configuração fiscal', icone: 'ri-settings-3-line', onClick: () => navigate('/configuracoes?tab=fiscal') },
+  ];
+  const ehMesAtual = mes === mesAtual();
+  const nPend = (resumo.problema.length > 0 ? 1 : 0) + (resumo.paradas.length > 0 ? 1 : 0);
+  const manchete = carregando
+    ? `${rotuloMes(mes)}: carregando…`
+    : resumo.autorizadas === 0
+      ? `${rotuloMes(mes)}: nenhuma nota autorizada`
+      : `${rotuloMes(mes)}: ${resumo.autorizadas} ${resumo.autorizadas === 1 ? 'nota' : 'notas'}, ${brl(resumo.valor)}`;
 
-  // As mesmas ações servem a tabela (computador) e os cartões (celular).
-  const acoesDaNota = (d: FiscalDocumentRow, isBusy: boolean, canRetry: boolean) => (
-    <div className="inline-flex items-center gap-1 flex-wrap">
-          {d.status === 'authorized' && (
-            <>
-              <button onClick={() => abrirPdf(d)} disabled={isBusy} title="Ver DANFE (PDF)" className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-file-pdf-2-line" /></button>
-              <button onClick={() => imprimir(d)} disabled={isBusy} title="Reimprimir cupom" className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-printer-line" /></button>
-              {podeCancelar && (() => {
-                const min = cancelMinutesLeft(d.emitted_at, agora);
-                const pode = min === null || min > 0;
-                return pode ? (
-                  <button onClick={() => { setCancelDoc(d); setJustificativa(''); }} disabled={isBusy}
-                    title={min === null ? 'Cancelar nota' : `Cancelável por mais ${min} min`}
-                    className={`inline-flex items-center gap-0.5 h-7 px-1.5 rounded-lg text-[10px] font-bold cursor-pointer disabled:opacity-40 ${min !== null && min <= 5 ? 'text-red-700 bg-red-50 animate-pulse' : 'text-red-500 hover:bg-red-50'}`}>
-                    <i className="ri-close-circle-line text-sm" />{min !== null && <span>{min}min</span>}
-                  </button>
-                ) : (
-                  <span className="w-7 h-7 flex items-center justify-center text-zinc-300" title={`Prazo de cancelamento expirado (${CANCEL_WINDOW_MIN} min após a autorização)`}><i className="ri-lock-line" /></span>
-                );
-              })()}
-            </>
-          )}
-          {(d.status === 'authorized' || d.status === 'cancelled') && (
-            <button onClick={() => baixarXml(d)} disabled={isBusy} title="Baixar XML" className="w-7 h-7 flex items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 disabled:opacity-40 cursor-pointer"><i className="ri-file-code-line" /></button>
-          )}
-          {canRetry && (
-            <button onClick={() => reemitir(d)} disabled={isBusy} title="Tentar emitir de novo" className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-40 cursor-pointer whitespace-nowrap">
-              {isBusy ? '…' : 'Reemitir'}
-            </button>
-          )}
-    </div>
-  );
+  const faixa: ItemFaixa[] = [
+    { valor: resumo.autorizadas, rotulo: 'Autorizadas', tom: 'green', onClick: () => setGrupo('autorizadas') },
+    { valor: brl(resumo.valor), rotulo: 'Valor autorizado' },
+    { valor: resumo.problema.length, rotulo: 'Recusadas / erro', tom: resumo.problema.length > 0 ? 'red' : 'neutro', onClick: () => setGrupo('problema') },
+    { valor: resumo.emissao.length, rotulo: 'Em emissão', tom: resumo.emissao.length > 0 ? 'amber' : 'neutro', onClick: () => setGrupo('emissao') },
+    { valor: resumo.canceladas, rotulo: 'Canceladas', onClick: () => setGrupo('canceladas') },
+  ];
+  const chips: OpcaoChip<Grupo>[] = ([
+    { id: 'todas', rotulo: 'Todas', n: contagem.todas },
+    { id: 'autorizadas', rotulo: 'Autorizadas', n: contagem.autorizadas },
+    { id: 'problema', rotulo: 'Recusadas', n: contagem.problema, tom: 'red' as const },
+    { id: 'emissao', rotulo: 'Em emissão', n: contagem.emissao, tom: 'amber' as const },
+    { id: 'canceladas', rotulo: 'Canceladas', n: contagem.canceladas },
+  ] as OpcaoChip<Grupo>[]).filter((c) => c.id === 'todas' || c.id === grupo || (c.n ?? 0) > 0);
+
+  const prazoCancelar = (d: FiscalDocumentRow) => {
+    if (d.status !== 'authorized') return null;
+    return cancelMinutesLeft(d.emitted_at, agora);
+  };
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto">
+    <div className="p-4 md:p-6 max-w-[1400px] mx-auto pb-16 space-y-4">
       {enabled === false && (
-        <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-          <i className="ri-error-warning-line text-amber-500 text-lg" />
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-amber-800">Emissão automática desligada</p>
-            <p className="text-xs text-amber-700 mt-0.5">As vendas não estão gerando NFC-e. Configure o provedor e ligue a emissão em Configurações › Fiscal.</p>
-          </div>
-          <button onClick={() => navigate('/configuracoes?tab=fiscal')} className="text-xs font-semibold text-amber-700 border border-amber-300 rounded-lg px-3 py-1.5 hover:bg-amber-100 cursor-pointer whitespace-nowrap">Abrir configuração</button>
-        </div>
+        <CartaoAcao tom="alerta" icone="ri-error-warning-line" titulo="Emissão automática desligada"
+          acoes={<button className={btn('out', 'sm')} onClick={() => navigate('/configuracoes?tab=fiscal')}>Abrir configuração</button>}>
+          As vendas não estão gerando NFC-e. Ligue a emissão em Configurações › Fiscal.
+        </CartaoAcao>
       )}
-      {enabled === null && !loading && (
-        <div className="flex items-start gap-3 bg-zinc-50 border border-zinc-200 rounded-xl px-4 py-3">
-          <i className="ri-information-line text-zinc-400 text-lg" />
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-zinc-700">Módulo fiscal ainda não configurado</p>
-            <p className="text-xs text-zinc-500 mt-0.5">Cadastre o token do Brasil NFe e a tributação padrão para começar a emitir NFC-e.</p>
-          </div>
-          <button onClick={() => navigate('/configuracoes?tab=fiscal')} className="text-xs font-semibold text-zinc-700 border border-zinc-300 rounded-lg px-3 py-1.5 hover:bg-zinc-100 cursor-pointer whitespace-nowrap">Configurar</button>
-        </div>
+      {enabled === null && !carregando && (
+        <CartaoAcao tom="neutro" icone="ri-information-line" titulo="Módulo fiscal ainda não configurado"
+          acoes={<button className={btn('out', 'sm')} onClick={() => navigate('/configuracoes?tab=fiscal')}>Configurar</button>}>
+          Cadastre o token do Brasil NFe e a tributação padrão para começar a emitir NFC-e.
+        </CartaoAcao>
       )}
 
-      {/* Resumo */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-        <KpiCard semVariacao atual={0} label="Autorizadas no mês" icon="ri-checkbox-circle-line" value={String(resumo.autorizadas)} valueTone="text-emerald-700" sub={formatBRL(resumo.valor)} />
-        <KpiCard semVariacao atual={0} label="Com problema" icon="ri-error-warning-line" value={String(resumo.problemas)} valueTone={resumo.problemas > 0 ? 'text-red-600' : undefined} sub="rejeitadas ou com erro" />
-        <KpiCard semVariacao atual={0} label="Pendentes" icon="ri-time-line" value={String(resumo.pendentes)} valueTone={resumo.pendentes > 0 ? 'text-amber-700' : undefined} sub="aguardando emissão" />
-        <KpiCard semVariacao atual={0} label="Canceladas" icon="ri-close-circle-line" value={String(resumo.canceladas)} sub="no mês" />
-      </div>
-
-      {/* Filtros e ações */}
-      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
-        <MonthNav mes={mes} onChange={setMes} canGoNext={mes < thisMonth()} />
-        {mes !== thisMonth() && (
-          <button onClick={() => setMes(thisMonth())} className="text-xs font-semibold px-3 py-2 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl hover:bg-amber-100 cursor-pointer">Mês atual</button>
-        )}
-        <select className={`${inputCls} cursor-pointer`} value={statusFiltro} onChange={e => setStatusFiltro(e.target.value as 'all' | FiscalDocStatus)} aria-label="Status">
-          <option value="all">Todos os status</option>
-          {(Object.keys(STATUS_LABEL) as FiscalDocStatus[]).map(s => <option key={s} value={s}>{STATUS_LABEL[s]}</option>)}
-        </select>
-        <div className="relative flex-1 min-w-[200px]">
-          <i className="ri-search-line absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-sm" />
-          <input className={`${inputCls} w-full pl-9`} placeholder="Buscar: pedido, número, chave, CPF" value={busca} onChange={e => setBusca(e.target.value)} />
+      {/* Frase do mês + mês e ⋯ */}
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="flex-1 min-w-[220px]">
+          <h2 className="text-[23px] lg:text-[28px] font-extrabold tracking-tight text-zinc-900 leading-tight">{manchete}</h2>
+          <p className="text-[12.5px] text-zinc-500 mt-1">
+            {carregando ? 'Buscando as notas do mês.'
+              : nPend > 0 ? `${nPend} ${nPend === 1 ? 'coisa precisa' : 'coisas precisam'} de você. O resto está certo.`
+              : docs.length > 0 ? 'Nada para resolver agora.' : 'Nenhuma nota neste mês.'}
+            {resumo.homologacao && <span className="ml-1 text-amber-700 font-semibold">· há notas de homologação (teste)</span>}
+          </p>
         </div>
-        <div className="ml-auto flex items-center gap-2 overflow-x-auto max-w-full">
-          <button onClick={reprocessar} disabled={busy !== null || resumo.pendentes + resumo.problemas === 0} className={btnSec}>
-            <i className="ri-refresh-line" />{busy === 'pending' ? 'Reprocessando…' : 'Reprocessar pendentes'}
-          </button>
-          <button onClick={baixarXmlsMes} disabled={busy !== null} className={btnSec}>
-            <i className="ri-download-2-line" />XMLs do mês (contador)
-          </button>
+        <div className="flex items-center gap-2">
+          <MonthNav mes={mes} onChange={setMes} canGoNext={!ehMesAtual} />
+          {!ehMesAtual && <button className={btn('ghost', 'sm')} onClick={() => setMes(mesAtual())}>Mês atual</button>}
+          <MenuMais itens={menu} grande rotulo="Mais ações das notas" />
         </div>
       </div>
 
-      {/* Emissão manual */}
-      <div className="bg-white rounded-2xl border border-zinc-200 px-5 py-3 flex flex-wrap items-center gap-3">
-        <div className="flex-1 min-w-[200px]">
-          <h3 className="text-sm font-bold text-zinc-800">Emitir nota de um pedido</h3>
-          <p className="text-xs text-zinc-400">Para vendas feitas com a emissão desligada ou que ficaram sem nota. A nota é sempre por pedido.</p>
+      {/* Precisa de você */}
+      {!carregando && nPend > 0 && (
+        <div>
+          <SecaoTitulo titulo="Precisa de você" n={nPend} />
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {resumo.problema.length > 0 && (
+              <CartaoAcao tom="alerta" icone="ri-close-circle-line"
+                titulo={resumo.problema.length === 1 ? `Nota do pedido ${pedidoCurto(resumo.problema[0].order_number)} recusada` : `${resumo.problema.length} notas recusadas`}
+                direita={<b className="text-[13.5px] font-extrabold whitespace-nowrap">{brl(resumo.problema.reduce((s, d) => s + Number(d.total_amount ?? 0), 0))}</b>}
+                acoes={<>
+                  <button className={btn('p', 'sm')} disabled={busy !== null} onClick={() => tentarDeNovo(resumo.problema)}>
+                    {busy === 'retry' || (resumo.problema.length === 1 && busy === resumo.problema[0].id) ? <><i className="ri-loader-4-line animate-spin" />Tentando…</> : resumo.problema.length === 1 ? 'Tentar de novo' : `Tentar de novo as ${resumo.problema.length}`}
+                  </button>
+                  <button className={btn('out', 'sm')} onClick={() => (resumo.problema.length === 1 ? setAberta(resumo.problema[0]) : setGrupo('problema'))}>Ver</button>
+                </>}>
+                <span className="block truncate" title={motivo(resumo.problema[0])}>Motivo: {motivo(resumo.problema[0]) || 'sem mensagem do provedor'}</span>
+              </CartaoAcao>
+            )}
+            {resumo.paradas.length > 0 && (
+              <CartaoAcao tom="prop" icone="ri-time-line"
+                titulo={resumo.paradas.length === 1 ? 'Uma nota parada na emissão' : `${resumo.paradas.length} notas paradas na emissão`}
+                acoes={<>
+                  <button className={btn('p', 'sm')} disabled={busy !== null} onClick={reprocessar}>
+                    {busy === 'pending' ? <><i className="ri-loader-4-line animate-spin" />Reprocessando…</> : 'Reprocessar'}
+                  </button>
+                  <button className={btn('out', 'sm')} onClick={() => setGrupo('emissao')}>Ver</button>
+                </>}>
+                Faz mais de 2 minutos que {resumo.paradas.length === 1 ? 'ela está' : 'elas estão'} na fila do provedor.
+              </CartaoAcao>
+            )}
+          </div>
         </div>
-        <input className={`${inputCls} w-40`} placeholder="Nº do pedido" value={emitirPedido} onChange={e => setEmitirPedido(e.target.value)} onKeyDown={e => e.key === 'Enter' && emitirManual()} />
-        <button onClick={emitirManual} disabled={busy !== null || !emitirPedido.trim()}
-          className="flex items-center gap-1.5 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors shadow-sm disabled:opacity-40">
-          {busy === 'manual' ? 'Emitindo…' : 'Emitir NFC-e'}
-        </button>
-      </div>
+      )}
+
+      <Faixa itens={faixa} className={carregando ? 'opacity-40' : ''} />
 
       {/* Lista */}
-      <div className="bg-white rounded-2xl border border-zinc-200 overflow-hidden">
-        {loading ? (
-          <div className="py-14 text-center text-zinc-400 text-sm"><i className="ri-loader-4-line animate-spin text-4xl text-amber-400 block mb-3" />Carregando…</div>
-        ) : filtrados.length === 0 ? (
-          <div className="py-14 text-center text-zinc-400 text-sm"><i className="ri-file-shield-2-line text-4xl text-zinc-200 block mb-3" />Nenhuma nota neste período.</div>
-        ) : (
-          <>
-          {/* Celular: um cartão por nota — a tabela de 7 colunas não cabe em 375px. */}
-          <ul className="md:hidden p-3 space-y-2">
-            {filtrados.map(d => {
-              const isBusy = busy === d.id;
-              const canRetry = d.status === 'rejected' || d.status === 'error' || d.status === 'pending';
-              return (
-                <li key={d.id} className="rounded-2xl border border-zinc-200 bg-white px-3 py-3">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-[11px] text-zinc-400 whitespace-nowrap">{fmtDateTime(d.emitted_at ?? d.created_at)}</span>
-                    <span className="text-base font-bold text-zinc-900 tabular-nums whitespace-nowrap">{formatBRL(d.total_amount)}</span>
-                  </div>
-                  <p className="text-sm text-zinc-800 mt-0.5">
-                    {d.source_type === 'table_session' ? 'mesa' : 'pedido'} {d.order_number ?? '—'}
-                    {d.numero ? <span className="font-mono text-zinc-500"> · NFC-e {d.numero}{d.serie ? `/${d.serie}` : ''}</span> : null}
-                  </p>
-                  {d.customer_cpf && <p className="text-[11px] text-zinc-500">CPF {formatCpfCnpj(d.customer_cpf)}</p>}
-                  <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                    <button onClick={() => setDetail(d)} className={`text-[11px] font-semibold px-2 py-0.5 rounded-md cursor-pointer ${STATUS_CLASS[d.status]}`}>
-                      {STATUS_LABEL[d.status]}
-                    </button>
-                    {d.environment === 2 && <span className="text-[10px] text-zinc-400">homologação</span>}
-                  </div>
-                  {(d.status === 'rejected' || d.status === 'error') && d.error_message && (
-                    <p className="text-[11px] text-red-500 break-words line-clamp-2 mt-1">{d.error_message}</p>
-                  )}
-                  <div className="mt-2 [&_button]:h-9 [&_button]:min-w-9 [&_button]:justify-center">
-                    {acoesDaNota(d, isBusy, canRetry)}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+      <div className="pt-2 space-y-3">
+        <SecaoTitulo titulo="Notas" sub={rotuloMes(mes)} />
+        <div className="flex flex-col md:flex-row md:items-center gap-2">
+          <Chips<Grupo> opcoes={chips} valor={grupo} onChange={setGrupo} className="flex-1" />
+          <label className="flex items-center gap-2 bg-white border border-zinc-200 rounded-xl h-9 px-3 md:w-72">
+            <i className="ri-search-line text-zinc-400" />
+            <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Pedido, nº da nota, chave ou CPF"
+              className="flex-1 min-w-0 bg-transparent outline-none text-[13px] text-zinc-800 placeholder:text-zinc-400" />
+            {busca && <button onClick={() => setBusca('')} aria-label="Limpar busca" className="text-zinc-400 hover:text-zinc-600 cursor-pointer"><i className="ri-close-line" /></button>}
+          </label>
+        </div>
 
-          <div className="hidden md:block overflow-x-auto">
-            <table className="w-full text-sm">
+        {carregando && docs.length === 0 ? (
+          <Vazio icone="ri-loader-4-line animate-spin" titulo="Carregando notas…" />
+        ) : lista.length === 0 ? (
+          <Vazio icone="ri-file-shield-2-line" titulo={busca ? `Nada com “${busca}” neste mês` : 'Nenhuma nota aqui'}>
+            {busca ? 'Confira o número ou troque o mês.' : grupo === 'todas' ? 'As notas aparecem aqui assim que as vendas são pagas.' : 'Escolha "Todas" para ver as outras notas do mês.'}
+          </Vazio>
+        ) : (
+          <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
+            {/* Celular */}
+            <ul className="md:hidden divide-y divide-zinc-100">
+              {lista.map((d) => {
+                const prazo = prazoCancelar(d);
+                return (
+                  <li key={d.id}>
+                    <button className="w-full text-left px-4 py-3 flex gap-3 hover:bg-amber-50/40 cursor-pointer" onClick={() => setAberta(d)}>
+                      <div className="flex-1 min-w-0">
+                        <p className="flex items-baseline gap-1.5 min-w-0">
+                          <b className="text-[15px] font-extrabold text-zinc-900">{d.numero ? `Nota ${d.numero}` : 'Sem número'}</b>
+                          <span className="text-[13px] font-bold text-zinc-500 truncate" title={d.order_number ?? ''}>· {d.source_type === 'table_session' ? 'mesa' : 'pedido'} {pedidoCurto(d.order_number)}</span>
+                        </p>
+                        <p className="text-[12px] text-zinc-400 mt-0.5 truncate" title={motivo(d) || undefined}>
+                          {quando(d.emitted_at ?? d.created_at)}{d.customer_cpf ? ` · CPF ${formatCpfCnpj(d.customer_cpf)}` : ''}
+                          {GRUPO_DE[d.status] === 'problema' && motivo(d) ? ` · ${motivo(d)}` : ''}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                          <Selo d={d} />
+                          {prazo != null && prazo > 0 && podeCancelar && <span className="text-[10.5px] font-bold text-zinc-400">cancelável {prazo} min</span>}
+                          {d.environment === 2 && <span className="text-[10.5px] font-bold text-amber-700">homologação</span>}
+                        </div>
+                      </div>
+                      <b className={`text-[14.5px] font-extrabold tabular-nums whitespace-nowrap ${d.status === 'cancelled' ? 'line-through text-zinc-400' : 'text-zinc-900'}`}>{brl(Number(d.total_amount ?? 0))}</b>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+
+            {/* Computador */}
+            <table className="hidden md:table w-full text-[13px] table-fixed">
+              <colgroup><col style={{ width: 130 }} /><col style={{ width: 170 }} /><col /><col style={{ width: 190 }} /><col style={{ width: 110 }} /></colgroup>
               <thead>
-                <tr className="text-[11px] uppercase tracking-wide text-zinc-400 border-b border-zinc-200">
-                  <th className="text-left pl-5 pr-4 py-2.5 font-semibold">Data</th>
-                  <th className="text-left px-4 py-2.5 font-semibold">Venda</th>
-                  <th className="text-left px-4 py-2.5 font-semibold">NFC-e</th>
-                  <th className="text-right px-4 py-2.5 font-semibold">Valor</th>
-                  <th className="text-left px-4 py-2.5 font-semibold">CPF</th>
-                  <th className="text-left px-4 py-2.5 font-semibold">Status</th>
-                  <th className="text-right px-4 py-2.5 font-semibold">Ações</th>
+                <tr className="text-left text-[10.5px] uppercase tracking-wide font-extrabold text-zinc-400 bg-zinc-50 border-b border-zinc-200">
+                  <th className="px-4 py-2.5">Nota</th><th className="px-3 py-2.5">Venda</th><th className="px-3 py-2.5">Cliente / motivo</th>
+                  <th className="px-3 py-2.5">Situação</th><th className="px-4 py-2.5 text-right">Valor</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100/80">
-                {filtrados.map(d => {
-                  const isBusy = busy === d.id;
-                  const canRetry = d.status === 'rejected' || d.status === 'error' || d.status === 'pending';
+              <tbody>
+                {lista.map((d) => {
+                  const prazo = prazoCancelar(d);
+                  const problema = GRUPO_DE[d.status] === 'problema';
                   return (
-                    <tr key={d.id} className="hover:bg-zinc-50">
-                      <td className="pl-5 pr-4 py-2.5 text-zinc-600 whitespace-nowrap">{fmtDateTime(d.emitted_at ?? d.created_at)}</td>
-                      <td className="px-4 py-2.5 text-zinc-800 whitespace-nowrap">
-                        <span className="font-medium">{d.order_number ?? '—'}</span>
-                        <span className="block text-[10px] text-zinc-400">{d.source_type === 'table_session' ? 'mesa' : 'pedido'}{d.environment === 2 ? ' · homologação' : ''}</span>
+                    <tr key={d.id} onClick={() => setAberta(d)} className={`cursor-pointer border-b border-zinc-100 last:border-0 ${aberta?.id === d.id ? 'bg-amber-50' : 'hover:bg-amber-50/40'}`}>
+                      <td className="px-4 py-2.5 align-middle">
+                        <b className="font-extrabold text-zinc-900 tabular-nums">{d.numero ? `${d.numero}${d.serie ? `/${d.serie}` : ''}` : '—'}</b>
+                        <span className="block text-[11px] text-zinc-400 whitespace-nowrap">{quando(d.emitted_at ?? d.created_at)}</span>
                       </td>
-                      <td className="px-4 py-2.5 text-zinc-700 whitespace-nowrap">
-                        {d.numero ? <span className="font-mono">{d.numero}{d.serie ? `/${d.serie}` : ''}</span> : <span className="text-zinc-300">—</span>}
-                        {d.chave && <span className="block text-[10px] text-zinc-400 font-mono" title={d.chave}>…{d.chave.slice(-8)}</span>}
+                      <td className="px-3 py-2.5 align-middle overflow-hidden">
+                        <span className="block font-bold text-zinc-800 truncate" title={d.order_number ?? ''}>{d.source_type === 'table_session' ? 'Mesa' : 'Pedido'} {pedidoCurto(d.order_number)}</span>
+                        <span className="block text-[11px] text-zinc-400 truncate" title={d.order_number ?? ''}>{d.order_number ?? ''}</span>
                       </td>
-                      <td className="px-4 py-2.5 text-right text-zinc-800 font-medium tabular-nums whitespace-nowrap">{formatBRL(d.total_amount)}</td>
-                      <td className="px-4 py-2.5 text-zinc-600 whitespace-nowrap">{d.customer_cpf ? formatCpfCnpj(d.customer_cpf) : <span className="text-zinc-300">—</span>}</td>
-                      <td className="px-4 py-2.5 whitespace-nowrap">
-                        <button onClick={() => setDetail(d)} className={`text-[11px] font-semibold px-2 py-0.5 rounded-md cursor-pointer ${STATUS_CLASS[d.status]}`} title={d.error_message ?? d.sefaz_message ?? ''}>
-                          {STATUS_LABEL[d.status]}
-                        </button>
-                        {(d.status === 'rejected' || d.status === 'error') && d.error_message && (
-                          <span className="block text-[10px] text-red-500 max-w-[220px] truncate" title={d.error_message}>{d.error_message}</span>
-                        )}
+                      <td className="px-3 py-2.5 align-middle overflow-hidden">
+                        {problema && motivo(d)
+                          ? <span className="block truncate text-red-600" title={motivo(d)}>{motivo(d)}</span>
+                          : <span className="block truncate text-zinc-600" title={d.customer_cpf ? formatCpfCnpj(d.customer_cpf) : ''}>{d.customer_cpf ? `CPF ${formatCpfCnpj(d.customer_cpf)}` : <span className="text-zinc-300">sem CPF</span>}</span>}
                       </td>
-                      <td className="px-4 py-2.5 text-right whitespace-nowrap">
-                        {acoesDaNota(d, isBusy, canRetry)}
+                      <td className="px-3 py-2.5 align-middle">
+                        <div className="flex flex-wrap items-center gap-1">
+                          <Selo d={d} />
+                          {prazo != null && prazo > 0 && podeCancelar && <span className={`text-[10.5px] font-bold ${prazo <= 5 ? 'text-red-600' : 'text-zinc-400'}`}>cancelável {prazo} min</span>}
+                          {d.environment === 2 && <span className="text-[10.5px] font-bold text-amber-700">homologação</span>}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2.5 align-middle text-right">
+                        <b className={`font-extrabold tabular-nums whitespace-nowrap ${d.status === 'cancelled' ? 'line-through text-zinc-400' : 'text-zinc-900'}`}>{brl(Number(d.total_amount ?? 0))}</b>
                       </td>
                     </tr>
                   );
@@ -365,56 +449,104 @@ export default function NotasFiscaisList() {
               </tbody>
             </table>
           </div>
-          </>
         )}
       </div>
 
-      {/* Modal detalhe */}
-      {detail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setDetail(null)}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-lg" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-sm font-bold text-zinc-900">NFC-e {detail.numero ? `nº ${detail.numero}` : ''} · {detail.order_number}</h3>
-              <button onClick={() => setDetail(null)} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer text-zinc-500"><i className="ri-close-line" /></button>
+      {/* Nota aberta */}
+      <Folha
+        aberta={!!aberta}
+        onFechar={() => setAberta(null)}
+        titulo={aberta ? `${aberta.numero ? `NFC-e nº ${aberta.numero}` : 'NFC-e sem número'} · ${aberta.source_type === 'table_session' ? 'mesa' : 'pedido'} ${pedidoCurto(aberta.order_number)}` : ''}
+        subtitulo={aberta ? `${quandoCompleto(aberta.emitted_at ?? aberta.created_at)} · ${brl(Number(aberta.total_amount ?? 0))}` : undefined}
+        rodape={aberta && (() => {
+          const d = aberta;
+          const ocupada = busy === d.id;
+          const prazo = prazoCancelar(d);
+          if (GRUPO_DE[d.status] === 'problema' || d.status === 'pending') {
+            return <button className={`${btn('p')} flex-1`} disabled={ocupada} onClick={() => tentarDeNovo([d])}>{ocupada ? 'Tentando…' : 'Tentar emitir de novo'}</button>;
+          }
+          return (
+            <div className="flex flex-wrap gap-2 w-full">
+              {d.status === 'authorized' && <button className={`${btn('out')} flex-1`} disabled={ocupada} onClick={() => verDanfe(d)}><i className="ri-file-text-line" />Ver DANFE</button>}
+              {d.status === 'authorized' && <button className={`${btn('out')} flex-1`} disabled={ocupada} onClick={() => imprimir(d)}><i className="ri-printer-line" />Imprimir</button>}
+              {(d.status === 'authorized' || d.status === 'cancelled') && <button className={`${btn('out')} flex-1`} disabled={ocupada} onClick={() => baixarXml(d)}><i className="ri-file-code-line" />XML</button>}
+              {d.status === 'authorized' && podeCancelar && prazo !== 0 && (
+                <button className={`${btn('perigo')} w-full`} disabled={ocupada} onClick={() => { setCancelando(d); setJustificativa(''); }}>
+                  <i className="ri-close-circle-line" />Cancelar na SEFAZ{prazo != null ? ` · ${prazo} min` : ''}
+                </button>
+              )}
             </div>
-            <dl className="text-xs space-y-2">
-              <div className="flex gap-2"><dt className="w-28 text-zinc-400">Status</dt><dd><span className={`px-2 py-0.5 rounded-md font-semibold ${STATUS_CLASS[detail.status]}`}>{STATUS_LABEL[detail.status]}</span></dd></div>
-              <div className="flex gap-2"><dt className="w-28 text-zinc-400">Valor</dt><dd className="text-zinc-800 font-medium">{formatBRL(detail.total_amount)}</dd></div>
-              {detail.chave && <div className="flex gap-2"><dt className="w-28 text-zinc-400">Chave</dt><dd className="font-mono text-zinc-700 break-all">{formatChave(detail.chave)}</dd></div>}
-              {detail.protocolo && <div className="flex gap-2"><dt className="w-28 text-zinc-400">Protocolo</dt><dd className="font-mono text-zinc-700">{detail.protocolo}</dd></div>}
-              {detail.emitted_at && <div className="flex gap-2"><dt className="w-28 text-zinc-400">Autorizada em</dt><dd className="text-zinc-700">{new Date(detail.emitted_at).toLocaleString('pt-BR')}</dd></div>}
-              {detail.sefaz_message && <div className="flex gap-2"><dt className="w-28 text-zinc-400">SEFAZ</dt><dd className="text-zinc-700">{detail.sefaz_status_code} - {detail.sefaz_message}</dd></div>}
-              {detail.error_message && <div className="flex gap-2"><dt className="w-28 text-zinc-400">Erro</dt><dd className="text-red-600 break-words">{detail.error_message}</dd></div>}
-              {detail.cancel_reason && <div className="flex gap-2"><dt className="w-28 text-zinc-400">Cancelamento</dt><dd className="text-zinc-700">{detail.cancel_reason}</dd></div>}
-              {detail.url_chave && <div className="flex gap-2"><dt className="w-28 text-zinc-400">Consulta</dt><dd><a className="text-amber-600 underline" href={detail.url_chave} target="_blank" rel="noreferrer">{detail.url_chave}</a></dd></div>}
-              <div className="flex gap-2"><dt className="w-28 text-zinc-400">Tentativas</dt><dd className="text-zinc-700">{detail.attempts}</dd></div>
+          );
+        })()}
+      >
+        {aberta && (
+          <div className="space-y-3 pb-2">
+            <div className="flex flex-wrap items-center gap-1.5"><Selo d={aberta} />{aberta.environment === 2 && <span className="text-[11px] font-bold text-amber-700">homologação (teste)</span>}</div>
+            {GRUPO_DE[aberta.status] === 'problema' && (
+              <div className="rounded-xl bg-red-50 px-3 py-2.5 text-[12.5px] text-red-700 leading-snug break-words">
+                <b className="block">Por que foi recusada</b>{motivo(aberta) || 'O provedor não mandou mensagem.'}
+              </div>
+            )}
+            <dl className="text-[13px] divide-y divide-zinc-100">
+              {[
+                ['Venda', `${aberta.source_type === 'table_session' ? 'Mesa' : 'Pedido'} ${aberta.order_number ?? '—'}`],
+                ['Valor', brl(Number(aberta.total_amount ?? 0))],
+                ['Cliente', aberta.customer_cpf ? `${aberta.customer_name ? `${aberta.customer_name} · ` : ''}CPF ${formatCpfCnpj(aberta.customer_cpf)}` : 'sem CPF na nota'],
+                ['Autorizada em', aberta.emitted_at ? quandoCompleto(aberta.emitted_at) : null],
+                ['Protocolo', aberta.protocolo],
+                ['SEFAZ', aberta.sefaz_message ? `${aberta.sefaz_status_code ?? ''} ${aberta.sefaz_message}`.trim() : null],
+                ['Cancelamento', aberta.cancel_reason ? `${aberta.cancel_reason}${aberta.cancelled_at ? ` · ${quandoCompleto(aberta.cancelled_at)}` : ''}` : null],
+                ['Tentativas', String(aberta.attempts ?? 0)],
+              ].filter(([, v]) => v).map(([k, v]) => (
+                <div key={k} className="flex justify-between gap-3 py-2"><dt className="text-zinc-500 flex-shrink-0">{k}</dt><dd className="text-right text-zinc-900 font-semibold break-words min-w-0">{v}</dd></div>
+              ))}
+              {aberta.chave && (
+                <div className="py-2">
+                  <dt className="text-zinc-500 flex items-center justify-between">Chave de acesso
+                    <button className="text-[12px] font-extrabold text-amber-700 cursor-pointer" onClick={() => { navigator.clipboard?.writeText(aberta.chave ?? ''); toastOk('Chave copiada'); }}>copiar</button>
+                  </dt>
+                  <dd className="font-mono text-[12px] text-zinc-700 break-all mt-1">{formatChave(aberta.chave)}</dd>
+                </div>
+              )}
             </dl>
+            {aberta.url_chave && <a className="text-[12.5px] font-extrabold text-amber-700 hover:underline" href={aberta.url_chave} target="_blank" rel="noreferrer"><i className="ri-external-link-line" /> Consultar na SEFAZ</a>}
+            {aberta.status === 'authorized' && podeCancelar && prazoCancelar(aberta) === 0 && (
+              <Nota>O prazo de cancelamento ({CANCEL_WINDOW_MIN} min após a autorização) já passou.</Nota>
+            )}
           </div>
-        </div>
-      )}
+        )}
+      </Folha>
 
-      {/* Modal cancelamento */}
-      {cancelDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md">
-            <h3 className="text-sm font-bold text-zinc-900 mb-1">Cancelar NFC-e nº {cancelDoc.numero}</h3>
-            <p className="text-xs text-zinc-500 mb-4">
-              A SEFAZ aceita cancelamento em até {CANCEL_WINDOW_MIN} minutos após a autorização.
-              {(() => { const m = cancelMinutesLeft(cancelDoc.emitted_at, agora); return m === null ? '' : m > 0 ? ` Restam ${m} min.` : ' O prazo já expirou; a SEFAZ vai recusar.'; })()}
-              {' '}A venda no ERPOS não é alterada; se a venda foi desfeita, faça o estorno no PDV também.
-            </p>
-            <label className="block text-xs font-semibold text-zinc-600 mb-1.5">Justificativa (mínimo 15 caracteres)</label>
-            <textarea className="w-full text-sm border border-zinc-200 rounded-lg px-3 py-2 focus:outline-none focus:border-amber-400" rows={3} value={justificativa} onChange={e => setJustificativa(e.target.value)} placeholder="Ex: Erro de digitação no valor da venda" />
-            <div className="flex gap-2 mt-4">
-              <button onClick={() => setCancelDoc(null)} className="flex-1 py-2 text-sm font-semibold text-zinc-600 bg-zinc-100 rounded-lg hover:bg-zinc-200 cursor-pointer">Voltar</button>
-              <button onClick={confirmarCancelamento} disabled={justificativa.trim().length < 15 || busy === cancelDoc.id}
-                className="flex-1 py-2 text-sm font-semibold text-white bg-red-500 rounded-lg hover:bg-red-600 disabled:opacity-40 cursor-pointer">
-                {busy === cancelDoc.id ? 'Cancelando…' : 'Cancelar na SEFAZ'}
-              </button>
-            </div>
-          </div>
+      {/* Cancelar na SEFAZ */}
+      <Folha aberta={!!cancelando} onFechar={() => setCancelando(null)} titulo={cancelando ? `Cancelar NFC-e nº ${cancelando.numero ?? ''}` : ''}
+        subtitulo={cancelando ? (() => { const m = cancelMinutesLeft(cancelando.emitted_at, agora); return m === null ? undefined : m > 0 ? `Restam ${m} min do prazo de ${CANCEL_WINDOW_MIN} min` : 'O prazo já passou: a SEFAZ vai recusar'; })() : undefined}
+        fecharNoFundo={false}
+        rodape={<>
+          <button className={`${btn('out')} flex-1`} onClick={() => setCancelando(null)}>Voltar</button>
+          <button className={`${btn('perigo')} flex-1`} disabled={justificativa.trim().length < 15 || (cancelando ? busy === cancelando.id : false)} onClick={confirmarCancelamento}>
+            {cancelando && busy === cancelando.id ? 'Cancelando…' : 'Cancelar na SEFAZ'}
+          </button>
+        </>}>
+        <div className="space-y-2 pb-2">
+          <p className="text-[12.5px] text-zinc-600 leading-snug">A venda no ERPOS não muda. Se a venda foi desfeita, faça o estorno no PDV também.</p>
+          <label className="block text-[12.5px] font-bold text-zinc-700">Por que cancelar? <span className="font-normal text-zinc-400">(mínimo 15 letras)</span></label>
+          <textarea className="w-full text-sm border border-zinc-200 rounded-xl px-3 py-2 focus:outline-none focus:border-amber-400" rows={3}
+            value={justificativa} onChange={(e) => setJustificativa(e.target.value)} placeholder="Ex.: erro de digitação no valor da venda" />
+          <p className={`text-[11px] ${justificativa.trim().length >= 15 ? 'text-emerald-600' : 'text-zinc-400'}`}>{justificativa.trim().length}/15</p>
         </div>
-      )}
+      </Folha>
+
+      {/* Emitir nota de um pedido */}
+      <Folha aberta={emitirAberto} onFechar={() => setEmitirAberto(false)} titulo="Emitir nota de um pedido"
+        subtitulo="Para vendas que ficaram sem nota. A nota é sempre por pedido."
+        rodape={<button className={`${btn('p')} flex-1`} disabled={busy !== null || !emitirPedido.trim()} onClick={emitirManual}>{busy === 'manual' ? 'Emitindo…' : 'Emitir NFC-e'}</button>}>
+        <div className="space-y-2 pb-2">
+          <label className="block text-[12.5px] font-bold text-zinc-700">Número do pedido</label>
+          <input autoFocus className="w-full h-11 text-base border border-zinc-200 rounded-xl px-3 focus:outline-none focus:border-amber-400"
+            placeholder="48 (de hoje) ou P0410260048" value={emitirPedido} onChange={(e) => setEmitirPedido(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && emitirManual()} />
+          <Nota>Pedido de hoje: basta o final (48). De outro dia: o número completo. Para emitir vários de uma vez, use o filtro "Sem nota" na aba Pedidos.</Nota>
+        </div>
+      </Folha>
     </div>
   );
 }
