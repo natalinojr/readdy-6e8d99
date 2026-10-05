@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 import { fetchComprasPeriodo, fetchComprasLinhas } from '@/lib/comprasDRE';
 import { orCompetenciaConta, rotuloMes } from '@/lib/competenciaConta';
+import DreEditarCategoriaModal, { type DreAlvoEdicao } from './DreEditarCategoriaModal';
 
 interface Props {
   type: string;
@@ -12,6 +13,8 @@ interface Props {
   month: string;
   mode: 'caixa' | 'competencia';
   onClose: () => void;
+  /** Categoria trocada pelo botão Editar: a DRE recarrega os totais. */
+  onChanged?: () => void;
 }
 
 interface DetailItem {
@@ -26,6 +29,8 @@ interface DetailItem {
   /** Texto do cabeçalho do grupo quando a chave não é legível (aba Compras: chave = id da compra). */
   groupLabel?: string;
   groupSub?: string;
+  /** Linha que pode mudar de categoria (conta a pagar ou item de compra). */
+  edit?: DreAlvoEdicao;
 }
 
 function getMonthRange(mes: string) {
@@ -48,7 +53,7 @@ const TYPE_LABELS: Record<string, string> = {
   custo_pessoal: 'Custo com Pessoal',
 };
 
-export default function DREDrillDownModal({ type, categoryId, categoryName, month, mode, onClose }: Props) {
+export default function DREDrillDownModal({ type, categoryId, categoryName, month, mode, onClose, onChanged }: Props) {
   const { user } = useAuth();
   const [items, setItems] = useState<DetailItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,6 +63,10 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
   const [cmvAba, setCmvAba] = useState<'itens' | 'compras'>('itens');
   const [cmvDespesa, setCmvDespesa] = useState(0);
   const [abertos, setAbertos] = useState<Record<string, boolean>>({});
+  const [editando, setEditando] = useState<DreAlvoEdicao | null>(null);
+  // Categoria trocada: a DRE recarrega ao fechar o detalhe (recarregar com ele aberto pisca a tela)
+  const [mudou, setMudou] = useState(false);
+  const fechar = () => { if (mudou) onChanged?.(); onClose(); };
 
   const loadDetails = useCallback(async () => {
     if (!user?.tenantId) return;
@@ -262,6 +271,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           description: l.descricao,
           amount: l.valor,
           source: l.nota ? `NF ${l.nota}` : 'Compra',
+          edit: l.id.startsWith('compra-') ? undefined : { kind: 'item' as const, id: l.id, descricao: `${l.descricao} — ${l.fornecedor}`, valor: l.valor, ligadoEstoque: l.ligadoEstoque },
           group: cmvAba === 'compras' ? l.purchaseId : cmvAgrupar === 'categoria' ? l.categoria : l.fornecedor,
           ...(cmvAba === 'compras' ? {
             groupLabel: l.fornecedor,
@@ -322,6 +332,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           description: `${b.description}${b.supplier ? ` — ${b.supplier}` : ''}`,
           amount: mode === 'caixa' && b.status === 'partial' ? Number(b.paid_amount ?? 0) : Number(mode === 'caixa' ? (b.paid_amount ?? b.amount) : b.amount),
           source: 'Contas a Pagar',
+          edit: { kind: 'conta' as const, id: b.id as string, descricao: String(b.description || b.supplier || 'Conta a pagar'), valor: Number(b.amount ?? 0) },
           extra: {
             ...(b.competence_month ? { 'Competência': rotuloMes(String(b.competence_month).slice(0, 7)) } : {}),
             'Pago em': b.paid_date ? String(b.paid_date) : '—',
@@ -368,6 +379,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
             : Number(b.paid_amount ?? b.amount),
           source: 'Contas a Pagar',
           ...grupoConta(b),
+          edit: { kind: 'conta' as const, id: b.id as string, descricao: String(b.description || b.supplier || 'Conta a pagar'), valor: Number(b.amount ?? 0) },
           extra: {
             'Data Venc.': String(b.due_date || '—'),
             'Forma Pag.': String(b.payment_method || '—'),
@@ -387,6 +399,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           amount: Number(b.amount),
           source: 'Contas a Pagar',
           ...grupoConta(b),
+          edit: { kind: 'conta' as const, id: b.id as string, descricao: String(b.description || b.supplier || 'Conta a pagar'), valor: Number(b.amount ?? 0) },
           extra: {
             ...(b.competence_month ? { 'Competência': rotuloMes(String(b.competence_month).slice(0, 7)) } : {}),
             'Pago em': b.paid_date ? String(b.paid_date) : '—',
@@ -411,6 +424,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           description: l.descricao,
           amount: l.valor,
           source: l.nota ? `Compra · NF ${l.nota}` : 'Compra',
+          edit: l.id.startsWith('compra-') ? undefined : { kind: 'item' as const, id: l.id, descricao: `${l.descricao} — ${l.fornecedor}`, valor: l.valor, ligadoEstoque: l.ligadoEstoque },
           group: l.purchaseId,
           groupLabel: l.fornecedor,
           groupSub: [
@@ -476,7 +490,18 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
         </span>
       </td>
       <td className="px-5 py-3 text-right">
-        <span className="text-xs font-bold text-zinc-800 tabular-nums">{formatCurrency(item.amount)}</span>
+        <div className="flex items-center justify-end gap-1.5">
+          <span className="text-xs font-bold text-zinc-800 tabular-nums">{formatCurrency(item.amount)}</span>
+          {item.edit && (
+            <button
+              onClick={() => setEditando(item.edit!)}
+              title="Mudar categoria"
+              className="w-6 h-6 flex items-center justify-center rounded-md text-zinc-400 hover:text-amber-600 hover:bg-amber-50 cursor-pointer"
+            >
+              <i className="ri-pencil-line text-sm" />
+            </button>
+          )}
+        </div>
       </td>
     </tr>
   );
@@ -508,7 +533,7 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
                 ))}
               </div>
             )}
-            <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
+            <button onClick={fechar} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-zinc-100 cursor-pointer">
               <i className="ri-close-line text-zinc-500" />
             </button>
           </div>
@@ -602,6 +627,14 @@ export default function DREDrillDownModal({ type, categoryId, categoryName, mont
           </div>
         </div>
       </div>
+      {editando && user?.tenantId && (
+        <DreEditarCategoriaModal
+          tenantId={user.tenantId}
+          alvo={editando}
+          onClose={() => setEditando(null)}
+          onSaved={() => { setEditando(null); setMudou(true); loadDetails(); }}
+        />
+      )}
     </div>
   );
 }
