@@ -94,6 +94,9 @@ export function montarPedidoErpos(o: any, itens: any[], links: IfoodLink[], menu
   const insumos: InsumoSolto[] = [];
 
   // Itens da ficha viram linhas a R$ 0 (quantidade inteira) ou baixa solta (quantidade quebrada); insumos = baixa solta.
+  // CONTRATO com a NFC-e (fiscal-write/valores.ts › ratearPartesIfood): linha a R$ 0, item_id preenchido e notes
+  // exatamente "parte de <origem>" (origem = item_name do produto do iFood ou option_name do complemento) — a nota
+  // reparte o preço do produto/complemento entre as partes (bebida sai na linha dela). Não mudar sem avisar a sessão fiscal.
   const linhaParte = (menuItemId: string, q: number, origem: string): ItemErpos | null => {
     if (!inteiro(q)) { insumos.push({ ingredient_id: null, menu_item_id: menuItemId, quantity: q, unit: null, origem }); return null; }
     const mi = menu.get(menuItemId);
