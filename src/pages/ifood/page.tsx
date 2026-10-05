@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { useIfoodDados } from './lib/useIfoodDados';
+import { supabase } from '@/lib/supabase';
+import { custoDoItem } from '@/lib/ifoodArea';
 import type { AbaIfood, AcessoIfood, AbaProps } from './lib/tipos';
 import IfoodCabecalho from './components/Cabecalho';
 import PeriodoIfoodFolha from './components/PeriodoFolha';
@@ -62,6 +64,19 @@ export default function IfoodPage() {
   const periodo = abaEfetiva === 'hoje' || !PERIODO_PADRAO[abaEfetiva] ? 'Hoje' : (periodos[abaEfetiva] ?? PERIODO_PADRAO[abaEfetiva]!);
   const dados = useIfoodDados(tenantId || undefined, periodo);
 
+  // Bolinha da aba "Itens e CMV": itens do iFood vendidos nos últimos 30 dias ainda sem custo de ficha.
+  const [vendidos30, setVendidos30] = useState<string[]>([]);
+  useEffect(() => {
+    if (!tenantId || !acesso.itens) { setVendidos30([]); return; }
+    let vivo = true;
+    supabase.rpc('fn_ifood_itens_vendidos', { p_tenant: tenantId, p_dias: 30 }).then(({ data }) => {
+      if (!vivo) return;
+      setVendidos30(((data ?? []) as Array<{ level: string; name: string; vendidos: number }>).filter((r) => r.level === 'item' && Number(r.vendidos) > 0).map((r) => r.name));
+    });
+    return () => { vivo = false; };
+  }, [tenantId, acesso.itens, dados.custos]);
+  const nItensSemFicha = useMemo(() => vendidos30.filter((n) => custoDoItem(dados.custos, n)?.custo == null).length, [vendidos30, dados.custos]);
+
   // Loja escolhida que sumiu da lista (troca de loja do ERPOS): volta para "todas".
   useEffect(() => { if (loja && !dados.lojas.some((l) => l.id === loja)) setLoja(null); }, [dados.lojas, loja]);
 
@@ -91,7 +106,7 @@ export default function IfoodPage() {
         rotuloPeriodo={temPeriodo ? periodo : null}
         onAbrirPeriodo={() => setPeriodoAberto(true)}
         configurar={acesso.configurar}
-        nItensSemFicha={0}
+        nItensSemFicha={nItensSemFicha}
       />
       <div className="flex-1 overflow-y-auto">
         <div className="p-4 md:p-6 max-w-[1400px] mx-auto pb-16">
