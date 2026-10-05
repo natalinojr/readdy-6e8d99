@@ -41,6 +41,8 @@ export interface Rascunho {
   chave?: string;
   supplierKey?: string;
   recebidoEm: string;
+  /** Hora (HH:MM) em que a mercadoria chegou; vazio = padrão da data (hoje = agora, dia passado = meio-dia). */
+  recebidaHora?: string;
   obs: string;
   /** Identifica este lançamento: reenviar (sem internet, timeout) não lança de novo. */
   ref: string;
