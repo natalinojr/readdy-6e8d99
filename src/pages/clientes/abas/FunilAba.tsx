@@ -1186,7 +1186,7 @@ export default function FunilAba(props: Props) {
       {showNaoPediram && (
         <NaoPediramPanel
           onClose={function () { setShowNaoPediram(false); }}
-          onEnviarVoucher={function (c) { setShowNaoPediram(false); props.onEnviarVoucher(c, undefined); }}
+          onEnviarVoucher={function (c, oferta) { setShowNaoPediram(false); props.onEnviarVoucher(c, oferta); }}
         />
       )}
     </div>

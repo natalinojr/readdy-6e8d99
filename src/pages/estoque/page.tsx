@@ -9,6 +9,7 @@ import CmvTab from './components/CmvTab';
 import ProducaoTab from './components/ProducaoTab';
 import FornecedoresRelatorioTab from './components/FornecedoresRelatorioTab';
 import ValidadeTab from './components/ValidadeTab';
+import ComprasPorInsumoTab from './components/ComprasPorInsumoTab';
 import ConsumoIngredientesTab from '../relatorios/components/ConsumoIngredientesTab';
 import { useEstoque, type Insumo } from '../../contexts/EstoqueContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -32,17 +33,18 @@ import ArrumarFolha from './components/folhas/ArrumarFolha';
 import RegistrarFolha from './components/folhas/RegistrarFolha';
 import PerdaFolha from './components/folhas/PerdaFolha';
 import { MenuMais, semAcento } from './components/ui/EstoqueUi';
-import { EstoqueTelaContext, type AbaEstoque, type EstoqueTelaApi, type FiltroArrumar } from './EstoqueTela';
+import { EstoqueTelaContext, type AbaEstoque, type DuvidaContagem, type EstoqueTelaApi, type FiltroArrumar } from './EstoqueTela';
 
 // Layout novo (2026-10-04, protótipo docs/prototipos/estoque-abas-proposta.html aprovado pelo dono):
 // as 10 abas em 5 grupos, como o Financeiro — em cima o grupo, embaixo as abas dele em pílula. Nenhuma aba
 // saiu; os ids (?tab=) continuam os mesmos, então os links antigos abrem no lugar novo.
-const VALID_TABS: AbaEstoque[] = ['inicio', 'insumos', 'movimentacoes', 'teorico', 'inventario', 'cmv', 'producao', 'fornecedores', 'validade', 'consumo'];
+const VALID_TABS: AbaEstoque[] = ['inicio', 'insumos', 'movimentacoes', 'teorico', 'inventario', 'cmv', 'producao', 'fornecedores', 'compras', 'validade', 'consumo'];
 
 const ABAS: Record<AbaEstoque, { label: string; icon: string }> = {
   inicio: { label: 'Início', icon: 'ri-home-5-line' },
   insumos: { label: 'Lista', icon: 'ri-list-check-2' },
   fornecedores: { label: 'Por fornecedor', icon: 'ri-truck-line' },
+  compras: { label: 'Compras por insumo', icon: 'ri-shopping-basket-line' },
   validade: { label: 'Validade e lotes', icon: 'ri-calendar-check-line' },
   movimentacoes: { label: 'Movimentações', icon: 'ri-arrow-left-right-line' },
   producao: { label: 'Produção', icon: 'ri-knife-line' },
@@ -54,7 +56,7 @@ const ABAS: Record<AbaEstoque, { label: string; icon: string }> = {
 
 const GRUPOS: { id: string; label: string; icon: string; abas: AbaEstoque[] }[] = [
   { id: 'inicio', label: 'Início', icon: 'ri-home-5-line', abas: ['inicio'] },
-  { id: 'insumos', label: 'Insumos', icon: 'ri-archive-line', abas: ['insumos', 'fornecedores', 'validade'] },
+  { id: 'insumos', label: 'Insumos', icon: 'ri-archive-line', abas: ['insumos', 'fornecedores', 'compras', 'validade'] },
   { id: 'movimentos', label: 'Movimentos', icon: 'ri-arrow-left-right-line', abas: ['movimentacoes', 'producao'] },
   { id: 'contagem', label: 'Contagem', icon: 'ri-scales-3-line', abas: ['inventario', 'teorico'] },
   { id: 'custo', label: 'Custo', icon: 'ri-percent-line', abas: ['cmv', 'consumo'] },
@@ -144,6 +146,24 @@ export default function EstoquePage() {
 
   // Quem só conta não abre nada que grave fora da contagem (a tela era a única barreira: o stock-write só confere a loja).
   const naoSoContar = <A extends unknown[]>(f: (...a: A) => void) => (...a: A) => { if (!soContar) f(...a); };
+  // Itens "em dúvida" da contagem (fn_estoque_duvidas): ficam na fila até serem contados de novo.
+  const [duvidas, setDuvidas] = useState<Map<string, DuvidaContagem>>(new Map());
+  const carregarDuvidas = useCallback(async () => {
+    if (!user?.tenantId) return;
+    const { data, error } = await supabase.rpc('fn_estoque_duvidas', { p_tenant_id: user.tenantId });
+    if (error) { console.error('[Estoque] dúvidas da contagem:', error.message); return; }
+    setDuvidas(new Map(((data ?? []) as Array<Record<string, unknown>>).map((r) => [String(r.ingredient_id), {
+      nota: r.nota ? String(r.nota) : null, por: r.marcado_por_nome ? String(r.marcado_por_nome) : null, em: String(r.marcado_em ?? ''),
+    }])));
+  }, [user?.tenantId]);
+  useEffect(() => { void carregarDuvidas(); }, [carregarDuvidas]);
+  const marcarDuvida = async (insumoId: string, duvida: boolean, nota?: string): Promise<boolean> => {
+    const { error } = await supabase.rpc('fn_estoque_duvida', { p_tenant_id: user!.tenantId, p_ingredient_id: insumoId, p_duvida: duvida, p_nota: nota ?? null });
+    if (error) { toast.error(duvida ? 'Não marquei em dúvida' : 'Não tirei da dúvida', error.message); return false; }
+    await carregarDuvidas();
+    return true;
+  };
+
   const api: EstoqueTelaApi = {
     situacao: situacao.data,
     recarregarSituacao: situacao.reload,
@@ -166,9 +186,11 @@ export default function EstoquePage() {
     editarInsumo: naoSoContar((id: string) => setInsumoModal(id)),
     podeConfigurar: podeConfigurar && !soContar,
     podeContar,
+    duvidas,
+    marcarDuvida,
   };
 
-  const depoisDeMexer = () => { void reloadInsumos(); void situacao.reload(); };
+  const depoisDeMexer = () => { void reloadInsumos(); void situacao.reload(); void carregarDuvidas(); };
 
   const salvarInsumo = async (data: Omit<Insumo, 'estoqueAtual' | 'ultimaEntrada' | 'fichaTecnica' | 'esgotado'> & { id?: string }) => {
     if (data.categoria && data.categoria !== 'Sem categoria' && !categoriasDB.includes(data.categoria)) await addCategory(data.categoria);
@@ -284,6 +306,7 @@ export default function EstoquePage() {
             </div>
           )}
           {tab === 'fornecedores' && <FornecedoresRelatorioTab />}
+          {tab === 'compras' && <ComprasPorInsumoTab />}
           {tab === 'validade' && <ValidadeTab />}
         </div>
 

@@ -69,7 +69,8 @@ Rotas dentro do layout autenticado:
 - `/` (índice): `src/pages/hoje/InicioPorPerfil.tsx` — manda cada perfil para o seu trabalho (2026-10-03)
 - `/hoje`: `src/pages/hoje/page.tsx` — tela inicial que conduz (pendências por bloco, tarefas de hoje, resumo)
 - `/hoje/rotina`: `src/pages/hoje/rotina/ConfigRotina.tsx` — rotina da loja por papel (só admin muda) (2026-10-03)
-- `/modulos`: `src/pages/modulos/page.tsx`
+- `/modulos`: `src/pages/modulos/page.tsx` (faixa "Suas lojas agora": `src/pages/lojas/components/LojasAgora.tsx`)
+- `/lojas`: `src/pages/lojas/page.tsx` — Comparar lojas, ao vivo (tela cheia, fora do menu da loja) (2026-10-04)
 - `/dashboard`: `src/pages/dashboard/page.tsx`
 - `/cardapio`: `src/pages/cardapio/page.tsx`
 - `/pdv/caixa`: `src/pages/pdv/caixa/page.tsx` (abrir/fechar a loja: `components/loja/` — `AbrirLojaView`, `FecharLojaModal`, `ContagemGaveta`, `SeloCeu`)
@@ -87,7 +88,7 @@ Rotas dentro do layout autenticado:
 - `/receber`: `src/pages/receber/page.tsx` — **Recebimentos e pagamentos** (celular da loja: receber mercadoria por etapas — nota, compra lançada, cupom, sem nota; + pedidos de pagamento em `src/pages/receber/pedidos/`: reembolso, freelancer, fornecedor sem nota, aprovação; links `?pedido=`, `?aprovar=1`, `?meus=1`)
 - `/financeiro`: `src/pages/financeiro/page.tsx`
 - `/configuracoes`: `src/pages/configuracoes/page.tsx`
-- `/config-delivery`: `src/pages/config-delivery/page.tsx` (abas Configurações, Gerir entregas, Atendimento WhatsApp → `AtendimentoWhatsAppTab.tsx`)
+- `/config-delivery`: `src/pages/config-delivery/page.tsx` (layout novo 2026-10-05: grupos Início/Pedido/Entregadores/Divulgar/WhatsApp, abas em `abas/**`; o antigo `GerirEntregasTab` virou `abas/inicio/EntregasAgora.tsx` e o `AtendimentoWhatsAppTab` virou `abas/ConversasAba.tsx` + `abas/AssistenteAba.tsx`)
 - `/usuarios`: `src/pages/usuarios/page.tsx`
 - `/clientes`: `src/pages/clientes/page.tsx` — **Clientes & Marketing** (abas `?aba=clientes|funil|fidelidade|jogos|promocoes|vouchers` em `src/pages/clientes/abas/`; cada aba com a sua permissão: `clientes_ver` (Clientes, Funil), `gestao_promocoes` (Fidelidade, Jogos, Promoções), `gestao_vouchers` (Vouchers e todo botão de emitir voucher))
 - `/auditoria`: `src/pages/auditoria/page.tsx`
@@ -281,6 +282,61 @@ Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme
 - **NFC-e (revisão):** `useFiscalDocs` lê qualquer nota que cubra o pedido (`overlaps(order_ids)` de qualquer tipo, inclusive sessão de mesa — antes o pedido coberto por nota de mesa aparecia "sem nota" e o lote emitiria em dobro), expõe `carregado`, `erroLeitura` e `canais` (fiscal_settings.emit_on_*). "Sem nota" só com notas carregadas, sem erro e canal ligado (`canalFiscal` igual ao fiscal-write). Lote: pré-marca só pedidos de 24 h sem nota cancelada e pede confirmação. O emit com `force` do servidor não confere `is_paid` nem nota de sessão de mesa (pendente no fiscal-write).
 - **Dados:** `useOrdersHistory` traz destination_phone, delivery_address, is_cortesia, cancelled_by (+nome), out_for_delivery_at; a RPC do modo Turno só devolve telefone/endereço/saída — `completarCanceladosCortesia` busca quem cancelou/quando/cortesia só dos cancelados e de total 0. RPC: pago = `is_paid` do banco (antes um pagamento parcial já contava como pago). Loading liga já na troca de filtro (filtro inclui a loja). `dbParaRecente.numero` = sequência do dia (antes eram todos os dígitos: "#210260003" no CSV/comprovante). `lib/usePedidosEsquecidos.ts`: andando de outros dias (30 dias). Componentes antigos (`PedidosLista`, `PedidosMetricas`, `PedidosFiltros`, `PedidoDetalheModal`, `SlaCell`) ficaram SEM USO e não foram apagados: tinham mudanças não commitadas de outra sessão no checkout principal.
 
+### 2026-10-05 — Delivery (/config-delivery): layout novo + horário com vários turnos + 4 ideias
+- **Protótipo aprovado pelo dono** (`docs/prototipos/delivery-proposta.html`, artifact B1itm2f1…). Regra: nenhum bloco da tela antiga sai, só muda de lugar. 5 grupos com pílulas (`?aba=`): **Início** (situação agora + Pausar/Fechar/Abrir + "dia corrido"; Entregas agora = antigo "Gerir entregas" no ⋯; Esperando o pagamento pelo app; Falta arrumar; Últimos 30 dias) · **Pedido** (Área e taxa com mapa/círculos/pedidos do mês e "testar um endereço" via `quote_delivery_fee`; Horário; Pagamento com a situação real do Mercado Pago (`online-payments public_status`); Mínimo e retirada + entrega grátis) · **Entregadores** (Equipe, Quanto ganham = `AcertoRegraCard` + tabela taxa × entregador, Avisos) · **Divulgar** (link/QR, um link por lugar com `?utm_source=instagram|whatsapp|google|panfleto` e a conta de `orders.delivery_source` — `ig` é o Instagram marcando sozinho —, divulgar um prato só entre os que estão no delivery) · **WhatsApp** (Conversas com "Pedem você" em cima, Assistente, Mensagens prontas com o texto padrão à mostra). WhatsApp › Conversas/Assistente só para o dono (`wa_loja_*` = `fn_is_tenant_admin`).
+- **Estrutura:** `page.tsx` (casca, grupos, barra "N mudanças ainda não salvas · Desfazer · Salvar", manda SÓ as chaves que mudaram), `DeliveryTela.tsx` (contexto: cfg/salvo/mudar/irPara/motoboys/estado), `config.ts` (`lerConfig`/`paraSalvar`/`contarMudancas`, `chamarDelivery`), `ui.tsx` (peças do Estoque novo + `CampoNumero` que aceita vírgula), abas em `abas/**`. Sair com mudança: `src/lib/guardaSaida.ts` (links, TopBar, Sidebar; o Voltar do Android não pergunta).
+- **Carrinho abandonado saiu do Delivery** (decisão do dono): a regra do cupom (`delivery_config.cart_recovery`) é editada em Clientes & Marketing › Funil › botão "Visitas sem pedido" (`NaoPediramPanel`), ação nova `delivery-write save_cart_recovery` (só `gestao_vouchers`, grava só essa chave); `save_delivery_settings` preserva `cart_recovery`.
+- **Horário (regra única `supabase/functions/_shared/horario-delivery.ts`, testes `src/test/lib/horarioDelivery.test.ts`):** `days[d].intervals: [{open, close}]` (vários no dia; entre eles fechado) + `exceptions: [{date, closed?, intervals?, label?}]` (data especial troca o dia da semana). `open/close` do dia continuam espelhados (1º começo / último fim) para leitor antigo; formato antigo segue lido. Fim < começo = passa da meia-noite e conta para o dia em que começou. Horários encostados/sobrepostos contam como um só em `janelaAgora` (senão "fecha em 10 min" falso e o "Fechar agora" pausava só até o fim do 1º). Leitores: `delivery-write` (abre/fecha sozinho, `close` dentro do horário = pausa até o fim do horário em curso), `atendimento-loja` (`resumoHorario`/`proximaAbertura`), `src/lib/situacaoLoja.ts` (topo do cliente: "Fechado · abre às 18h" entre almoço e janta). **Pegadinha:** tela antiga aberta num aparelho manda o dia sem `intervals` e sem `exceptions` — o `save_delivery_settings` mantém as datas e os vários horários salvos quando o abre/fecha espelhado bate.
+- **Permissões:** `save_delivery_settings` e as ações de entregadores agora conferem `gestao_delivery` com `_shared/permissao-servidor.ts › temPermissao` (antes só role admin: o Supervisor via a tela e o Salvar dava erro, a lista de entregadores vinha vazia).
+- **Pedido mínimo no servidor** (`create_delivery_order`, só entrega; retirada não tem mínimo; base = soma dos itens antes do cupom). Antes só o app conferia.
+- **Ideias aprovadas:** (1) "Esperando o pagamento pelo app" no Início com WhatsApp pronto para o cliente (pedido Pix/cartão pelo app é rascunho até pagar; o lembrete automático depende de modelo aprovado na Meta — não feito); (2) migração `20261005010000`: `out_for_delivery_at` preenchido grava `motoboy_timeline.coletou` (base do tempo de entrega) e, se já tem entregador, põe "Coletou"; o app do motoboy mostra "Entreguei" direto em pedido já em rota sem dono; (3) link por lugar; (4) **dia corrido**: `set_delivery_state` op `prazo_extra` grava `delivery_config.prazo_extra = {min, session_id}`, vale só enquanto a MESMA sessão de caixa estiver aberta (sessão mais recente por `opened_at`), soma no SLA do pedido, na cotação e no `get_delivery_config.prazo_extra_min` (o app soma nas faixas; o assistente avisa); (5) **entrega grátis acima de valor** (`delivery_config.frete_gratis = {ativo, acima_de, ate_km}`, começa desligada): servidor zera a taxa no modo distância quando a soma dos itens ≥ valor e a distância ESTIMADA (linha reta × 1,3, a mesma do app — não a rota do ORS) ≤ ate_km; grava `orders.delivery_fee_faixa` e o acerto "% da taxa" do entregador usa `coalesce(delivery_fee_faixa, delivery_fee)` (senão ele receberia R$ 0). O app só promete no modo distância e dentro do km. O caixa manda `subtotal` no `quote_delivery_fee`.
+- **Relatórios** abre em `?aba=delivery`.
+
+### 2026-10-04 — Dia da loja (soma das sessões) + "Suas lojas agora" (/modulos) + Comparar lojas (/lojas)
+- **Regra do dono:** o número do dia é a SOMA DAS SESSÕES DE CAIXA ABERTAS NAQUELE DIA. A sessão que passa da
+  meia-noite conta inteira no dia em que abriu (bar que fecha 0h30 não zera à meia-noite). Dia atual da loja =
+  dia em que abriu a sessão aberta mais recente (sem treino); sem sessão aberta, a data de hoje (Brasília).
+- **Um lugar só no banco** (migração `20261004120000_dia_da_loja_e_comparar_lojas.sql`): `fn_loja_dia_atual(t)`,
+  `fn_loja_pedidos_dias(t, d1, d2)` (pedidos das sessões abertas em [d1,d2]; pedido sem sessão vai pela data) e
+  `fn_loja_janelas(t, d1, d2)` (sessões que tocam os dias, inclusive a de antes que entrou pela madrugada). As três
+  e `auth_ve_dashboard` são internas (sem EXECUTE para anon/authenticated). Pedido NOVO de qualquer tela deve usar
+  `fn_loja_pedidos_dias`, não `created_at` do calendário, quando o número for "do dia".
+- **iFood** (não passa pelo PDV): entra no dia da sessão aberta na hora do pedido; fora de sessão, pela data —
+  `src/lib/diaLoja.ts` (`diaDoPedido`, `janelaDeBusca`, `somarNosDias`), com as janelas que o banco devolve.
+  `fetchIfoodVendas` ganhou `lista` (um item por pedido) para isso.
+- **Quem usa:** Dashboard "Hoje" (`fn_get_dashboard_metrics`/`fn_get_dashboard_painel` sem `p_desde`: `dia`,
+  `janelas`, `semana_passada.dia/janelas/ate`; o modo Sessão continua por horário), tela Hoje (`ResumoHoje`),
+  gráfico por hora (hora contada desde a 0h do dia da loja: madrugada = 24, 25…; rótulo `h % 24`; comparações
+  'pagos' em `useVendasHoraComparativo` também por sessão; 'relatorio' dos Relatórios segue calendário), categorias
+  e mais vendidos do Dashboard (do fim da sessão de ontem em diante). O assistente (`resumo_loja`) e o
+  `assistente-cron` (`medirVendas`) recebem o PDV já no dia da loja; o iFood deles segue por calendário (edge não mexida).
+- **Comparar lojas:** `fn_lojas_comparar(p_periodo hoje|ontem|7d|mes)` = uma consulta para todas as lojas em que a
+  pessoa vê o Dashboard (`auth_ve_dashboard`: admin; senão `user_permissions` da pessoa > `permissions` do papel >
+  padrão = só manager). Empresa `kind='financeiro'` fica de fora. Cada loja usa o SEU dia atual; anterior = 7 dias
+  antes (mês: mesmo trecho do mês passado) e, se o período inclui hoje, o último dia do anterior para na mesma hora
+  (`periodo.corte`). "Sem base" = loja começou depois do início do anterior (`primeiro_dia`) ou anterior zerado.
+  Front: `src/lib/lojasComparar.ts` (regras puras, testadas), `useLojasComparar` (ping `orders-ping` de cada loja →
+  recarga em 3 s; iFood a cada 5 min; `sync_sales` do iFood no máximo a cada 10 min por loja), telas em
+  `src/pages/lojas/` (`LojasAgora` na `/modulos` só com `canSwitchTenant` e 2+ lojas; `/lojas` em tela cheia, fora
+  do menu da loja: `FULL_SCREEN_PROTECTED` agora com Suspense). Loja sem venda em 30 dias (PDV ou iFood) fica
+  recolhida; esconder loja é por pessoa (`user_preferences` chave `comparar_lojas_ocultar`, uma linha por loja).
+  Tocar na loja = `selectTenant` + `/dashboard`. Cor da loja fixa pela ordem do nome (nunca pelo ranking).
+  Ordem (pedido do dono 05/10): maior faturamento primeiro; empate (de madrugada tudo em R$ 0) pelo `fat_30d`
+  (PDV sem repasse + iFood bruto, 30 dias — migração `20261005013000`), depois o nome: `ordenarPorFaturamento`.
+- **Pegadinhas:** sessão esquecida aberta por dias faz o "hoje" da loja ficar naquele dia (é a regra; o rótulo mostra
+  "dia dd/mm" e o caixa aberto desde quando). `availableTenants` fica vazio depois de escolher a loja — para saber se a
+  pessoa tem várias lojas use `canSwitchTenant`. Protótipo aprovado: `docs/prototipos/lojas-agora-proposta.html`.
+- **Revisão (05/10):** venda = pago, sem cancelado/treino/rascunho **e sem `ifood_repasse`** (pedido do funil do iFood
+  pago no app já entra pelo iFood — regra de 20260927250000; o Dashboard antigo o contava duas vezes). `fn_loja_janelas`
+  pega também a sessão aberta depois de d2 enquanto a de d2 seguia aberta (senão o mesmo iFood caía em dois dias).
+  Hora do gráfico pode passar de 99 (sessão esquecida): ler `hora.split(':')[0]`. Tela Hoje recarrega o painel junto
+  (dia/janelas). Comparativo: recarga por aviso no máximo a cada 15 s; "Ontem" não fica ao vivo; a faixa da /modulos
+  desliga avisos/iFood com menos de 2 lojas. `primeiro_dia` = primeiro pedido pago do PDV (sem PDV, o 1º do iFood).
+- **Pendente (edges não publicadas nesta mudança):** `assistente-cron` `medirVendas` soma o iFood por calendário
+  (`localDate()` 0h) com o PDV no dia da loja — com sessão esquecida mistura dias; o aviso está desligado, corrigir
+  (encaixar com `pn.dia`/`pn.janelas` ou pular quando `pn.dia` ≠ hoje) antes de ligar. `assistente-brain` `resumo_loja`:
+  `faturamento_hoje` agora é do dia da loja (vem o campo `dia`); a descrição da ferramenta ainda diz "hoje e ontem".
+
 ### 2026-10-04 — Pedidos (/pedidos): números errados corrigidos (antes do layout novo)
 - **Total 0 é real.** `useOrdersHistory` só soma os itens quando `total_amount` vem **nulo**; antes `0` (cortesia, 100% de desconto) virava o valor cheio dos itens e entrava no Faturamento/Ticket/CSV (P2209260004 Paranaguá, P0107260007 Vila Leste).
 - **"Hoje" vivo:** `page.tsx` usa o estado `hoje` (recalculado a cada minuto), não a constante `HOJE` de `utils.ts` (fica presa no dia em que o chunk carregou). `PedidosFiltros`/`PedidosLista` ainda importam a constante (só rótulo/`max` do campo) — trocar no layout novo.
@@ -301,6 +357,8 @@ Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme
 - **CMV**: só dos pratos com ficha (custo ÷ venda dos com ficha); cobertura por receita; régua única ≤30 verde / 30–35 âmbar / >35 vermelho; regras em `src/lib/cmvRegras.ts`. Link do Cardápio: `/cardapio?item=<id>&ficha=1` (abre o item na ficha técnica), `?busca=`, `?aba=combos`.
 - **Consumo**: lê a situação do Estoque (dura/abaixo do mínimo da regra única); período máx. 93 dias (lê todos os movimentos paginando); `useEstoqueSituacao({ ativo })`.
 - **Pegadinhas:** grade `grid` sem `grid-cols-1` estoura a largura no celular (texto `truncate` alarga a coluna); resumo das Movimentações relê no máx. a cada 30 s e o Teórico a cada 60 s (carga no banco); a Folha (`bg-black/45`) esconde o balão do assistente.
+- **Compras por insumo** (2026-10-05, Insumos › Compras por insumo, `ComprasPorInsumoTab` + `src/lib/comprasPorInsumo.ts`): período livre (30 dias, 3 meses, este mês, De/Até até 1 ano), quanto/gasto/preço médio/fornecedor por insumo, detalhe por compra, CSV; RPC `fn_estoque_compras_periodo` (SECURITY DEFINER, só quem configura o estoque; mesma base do histórico de preço: itens ligados + ligados pela Classificação, qtd × itens por embalagem, gasto com frete, sem bonificação). Avisa os itens de nota sem insumo ligado.
+- **Item em dúvida na contagem** (2026-10-05, `20261005110000_contagem_item_em_duvida.sql`): na contagem passo a passo o botão "Em dúvida" (com anotação opcional) tira o item da contagem e o deixa na fila `estoque_contagem_duvidas`; na contagem cheia cada linha tem "Em dúvida" (não mexe no número digitado). A fila aparece em Início › Contar ("Em dúvida (N)") e Inventário (cartão), com "Contar de novo". `fn_confirm_inventory` apaga a marca ao contar (na contagem cheia só se a pessoa mexeu: `semMudanca` não conta). RPCs `fn_estoque_duvida` / `fn_estoque_duvidas`; estado e `marcarDuvida` vêm de `useEstoqueTela()`.
 - **Ficou de fora (avisado ao dono):** lote com validade no Receber/Produção; "lembrar a equipe" de anotar perdas; bolinha no grupo Custo.
 - **Testado** logado como qa.admin (magic link) na Testes PDV, celular 375 e computador 1400: todas as abas, ficha, Registrar, perda real, Arrumar (mínimo gravado), link da ficha no Cardápio, Validade com lote; trava "só conta" com qa.garcom + permissão temporária (retirada).
 
@@ -4180,7 +4238,7 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   fica fora — é o mesmo valor do Portal do Parceiro. Taxas não contam `DELIVERY_FEE_IFOOD`. Onde está: `acoes/ifood/comum.ts`
   (`vendidoDoPedido`), `IfoodApiViews` (Pedidos), `assistente-cron › ifoodResumo`, e a conta do Portal (`ifoodVendas`/`ifoodDashboard`).
 - **Atendimento de clientes da loja pelo WhatsApp (2026-09-26)**: Delivery › aba "Atendimento WhatsApp"
-  (`AtendimentoWhatsAppTab.tsx`) + edge `atendimento-loja` (Haiku 4.5, `--no-verify-jwt`) + tabelas `wa_loja_bots`
+  (`AtendimentoWhatsAppTab.tsx`, desde 2026-10-05 `abas/ConversasAba.tsx` + `abas/AssistenteAba.tsx`) + edge `atendimento-loja` (Haiku 4.5, `--no-verify-jwt`) + tabelas `wa_loja_bots`
   (1/loja, código `PD-XXXX`), `wa_loja_conversas`, `wa_loja_mensagens` (RLS `fn_is_tenant_admin`; migração
   `20260926120000_atendimento_whatsapp_loja.sql`). Roteamento na `whatsapp-cloud`: número próprio da loja
   (`wa_loja_bots.phone_id`) → tudo para a loja; no número compartilhado, depois do `hiring-scheduler`, o código PD-

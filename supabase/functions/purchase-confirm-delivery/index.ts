@@ -223,6 +223,9 @@ Deno.serve(async (req) => {
       .from('fin_purchases')
       .update({
         delivery_confirmed_at: confirmedAt,
+        // Momento REAL em que alguém registrou o recebimento (delivery_confirmed_at pode ser só a data
+        // escolhida, gravada ao meio-dia) — base para decidir o que entra ou não no estoque.
+        delivery_registered_at: nowIso,
         delivery_notes: delivery_notes || null,
         ...(purchase.stock_applied_at ? {} : { stock_applied_at: confirmedAt }),
       })
@@ -514,6 +517,7 @@ Deno.serve(async (req) => {
       if (!stockMoved) {
         const { error: undoErr } = await supabase.from('fin_purchases').update({
           delivery_confirmed_at: null,
+          delivery_registered_at: null,
           delivery_notes: purchase.delivery_notes ?? null,
           stock_applied_at: purchase.stock_applied_at ?? null,
         }).eq('id', purchase_id).eq('tenant_id', tenant_id).eq('delivery_confirmed_at', confirmedAt);

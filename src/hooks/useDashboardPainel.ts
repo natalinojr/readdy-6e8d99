@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import type { JanelaSessao } from '@/lib/diaLoja';
 
 // Painel ao vivo do Dashboard (RPC fn_get_dashboard_painel): canais, mesmo período da semana passada
 // até esta hora, fila da cozinha, atrasados, ritmo esperado da meta, validade e metas da loja.
 // Regra de faturamento = a do fn_get_dashboard_metrics (pago, não cancelado, sem treino/rascunho; sem iFood).
+// "Hoje" = dia da loja: as sessões de caixa abertas no dia (src/lib/diaLoja.ts, migração 20261004120000).
 
 export interface DashboardCanal { origem: string; valor: number; pedidos: number }
 export interface DashboardAtrasado {
@@ -14,10 +16,18 @@ export interface DashboardMeta { dia_semana: number; faturamento: number; pedido
 export interface DashboardFilaStatus { qtd: number; mais_antigo_min: number }
 
 export interface DashboardPainel {
+  /** Dia da loja ('YYYY-MM-DD'): o da sessão aberta mais recente; sem sessão aberta, hoje */
+  dia: string;
   dia_semana: number;
+  /** Sessões que tocam o dia da loja (modo Hoje) — para encaixar o iFood no dia certo */
+  janelas: JanelaSessao[];
   atraso_min: number;
   canais: DashboardCanal[];
-  semana_passada: { desde: string; ate: string; faturamento: number; pedidos: number; canais: Record<string, number> };
+  /** Modo Hoje: o mesmo dia da semana passada (dia/janelas) até a mesma hora (ate); modo Sessão: só desde/ate */
+  semana_passada: {
+    dia?: string; janelas?: JanelaSessao[];
+    desde: string; ate: string; faturamento: number; pedidos: number; canais: Record<string, number>;
+  };
   fila: Partial<Record<'new' | 'preparing' | 'ready', DashboardFilaStatus>>;
   atrasados: DashboardAtrasado[];
   /** fração (0..1) do faturamento do dia que costuma ter entrado até este horário; null sem histórico */

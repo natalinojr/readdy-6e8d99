@@ -8,7 +8,7 @@ function getDeliveryWriteUrl(): string {
   return base + '/functions/v1/delivery-write';
 }
 
-export type DeliveryOp = 'open' | 'close' | 'pause' | 'resume' | 'force_off';
+export type DeliveryOp = 'open' | 'close' | 'pause' | 'resume' | 'force_off' | 'prazo_extra';
 
 export interface DeliveryState {
   open_now: boolean;
@@ -18,6 +18,10 @@ export interface DeliveryState {
   schedule_enabled: boolean;
   within_schedule: boolean;
   has_session: boolean;
+  /** Dia corrido: minutos somados ao prazo que o cliente vê (0 = normal; volta sozinho quando o caixa fecha). */
+  prazo_extra_min?: number;
+  /** Minutos até acabar a janela do horário programado agora (null = sem janela). */
+  minutos_ate_fechar?: number | null;
 }
 
 export interface UseDeliveryStateReturn {

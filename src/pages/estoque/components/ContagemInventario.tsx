@@ -3,6 +3,7 @@ import { useEstoque, type InventarioItemContado, type Insumo } from '../../../co
 import { useAuth } from '../../../contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import ConfirmarInventarioModal from './ConfirmarInventarioModal';
+import { useEstoqueTela } from '../EstoqueTela';
 
 interface InventarioDraft {
   /** Valores digitados, na unidade de CONTAGEM de cada insumo. */
@@ -58,6 +59,19 @@ const normalizar = (t: string) => t.normalize('NFD').replace(/[\u0300-\u036f]/g,
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
+
+/** Marca/tira "em dúvida" direto no banco; não mexe no número digitado nem nos itens conferidos. */
+function BotaoDuvida({ id }: { id: string }) {
+  const { duvidas, marcarDuvida } = useEstoqueTela();
+  const [ocupado, setOcupado] = useState(false);
+  const marcada = duvidas.has(id);
+  return (
+    <button type="button" disabled={ocupado} onClick={async () => { setOcupado(true); await marcarDuvida(id, !marcada); setOcupado(false); }}
+      className={`mt-1 inline-flex items-center gap-1 text-[11px] font-bold cursor-pointer disabled:opacity-50 ${marcada ? 'text-amber-700' : 'text-zinc-400 hover:text-amber-700'}`}>
+      <i className={marcada ? 'ri-flag-fill' : 'ri-flag-line'} />{marcada ? 'Em dúvida (tirar)' : 'Em dúvida'}
+    </button>
+  );
+}
 
 export default function ContagemInventario({ operador, onConcluido, onCancelar, startFresh }: Props) {
   const { insumos: todosInsumos } = useEstoque();
@@ -690,6 +704,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                       {insumo.nome}
                     </p>
                     <p className="text-xs text-zinc-400">{insumo.fornecedor}</p>
+                    <BotaoDuvida id={insumo.id} />
                   </div>
                   <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[11px] font-semibold whitespace-nowrap flex-shrink-0">
                     {insumo.categoria}
@@ -793,6 +808,7 @@ export default function ContagemInventario({ operador, onConcluido, onCancelar, 
                     <td className="pl-5 pr-4 py-3">
                       <p className="font-medium text-zinc-800">{insumo.nome}</p>
                       <p className="text-[10px] text-zinc-400">{insumo.fornecedor}</p>
+                      <BotaoDuvida id={insumo.id} />
                     </td>
                     <td className="px-4 py-3 text-center">
                       <span className="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[11px] font-semibold whitespace-nowrap">

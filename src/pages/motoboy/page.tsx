@@ -23,7 +23,12 @@ export function getMotoboySession(): MotoboySession | null {
 }
 
 // Fluxo sequencial dos sinais do motoboy. A partir do status atual, qual o proximo.
-function proximoBotao(status: string | null) {
+// Pedido que o caixa ja marcou como "saiu para entrega" (em_rota) e ninguem assumiu: o motoboy so precisa
+// dizer que entregou (2026-10-05, "motoboy toca so Entreguei") — tocar ja o torna dono do pedido.
+function proximoBotao(status: string | null, emRota = false) {
+  if (emRota && (status == null || status === '' || status === 'a_caminho_loja')) {
+    return { signal: 'entregou', label: 'Entreguei ao cliente', icon: 'ri-checkbox-circle-line', cor: 'bg-green-600 hover:bg-green-700' };
+  }
   switch (status) {
     case null:
     case '':
@@ -58,6 +63,8 @@ interface OrderData {
   claimed_by_id?: string | null;
   claimed_by_name?: string | null;
   motoboy_timeline?: Record<string, string>;
+  /** O caixa já marcou "saiu para entrega" (motoboy-signal get_order). */
+  em_rota?: boolean;
   cozinha?: { status: string; novo_at: string | null; preparo_at: string | null; pronto_at: string | null };
   itens: { nome: string; qtd: number }[];
 }
@@ -230,7 +237,7 @@ export default function MotoboyPage() {
       : '';
   const entregue = order.motoboy_status === 'entregou';
   // Só o botão da próxima fase aparece (a_caminho → coletei → entreguei).
-  const proximo = proximoBotao(order.motoboy_status);
+  const proximo = proximoBotao(order.motoboy_status, !!order.em_rota);
   // Trava: pedido já assumido por OUTRO entregador (a partir do 1º sinal).
   const assumidoPorOutro = !!order.claimed_by_id && order.claimed_by_id !== session?.driver_id;
 

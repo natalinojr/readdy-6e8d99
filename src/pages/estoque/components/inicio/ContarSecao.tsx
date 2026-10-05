@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useEstoque } from '@/contexts/EstoqueContext';
 import { useToast } from '@/contexts/ToastContext';
@@ -9,6 +8,7 @@ import {
 } from '@/lib/estoqueRegras';
 import type { UnidadeEstoque } from '@/types/estoque';
 import Folha from './Folha';
+import { useEstoqueTela } from '../../EstoqueTela';
 import Ajuda from './Ajuda';
 
 const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -31,37 +31,8 @@ export default function ContarSecao({ situacao, contagem, podeContar, onContar, 
   onConfigurar: () => void;
   onReload: () => void;
 }) {
-  const { user } = useAuth();
-  const toast = useToast();
-  const [criando, setCriando] = useState(false);
   const { devidos, conferir, planos, itens } = contagem;
   const pode = situacao.config.podeConfigurar;
-
-  const criarPadrao = async () => {
-    setCriando(true);
-    try {
-      const topo = maisGiram(situacao.insumos).map((i) => i.id);
-      const r1 = await supabase.rpc('fn_estoque_salvar_plano', {
-        p_tenant_id: user!.tenantId, p_id: null, p_nome: 'Contagem geral', p_frequencia: 'mensal',
-        p_dia_semana: null, p_dia_mes: 0, p_todos: true, p_itens: [],
-      });
-      if (r1.error) throw r1.error;
-      if (topo.length) {
-        const r2 = await supabase.rpc('fn_estoque_salvar_plano', {
-          p_tenant_id: user!.tenantId, p_id: null, p_nome: 'Contagem semanal', p_frequencia: 'semanal',
-          p_dia_semana: 1, p_dia_mes: null, p_todos: false, p_itens: topo,
-        });
-        if (r2.error) throw r2.error;
-      }
-      toast.success('Contagens programadas', topo.length ? 'Geral no último dia do mês e semanal toda segunda.' : 'Geral no último dia do mês.');
-      onReload();
-    } catch (e) {
-      toast.error('Não programei as contagens', (e as { message?: string })?.message ?? String(e));
-      onReload(); // se a 1ª foi gravada, o cartão some e não duplica ao tentar de novo
-    } finally {
-      setCriando(false);
-    }
-  };
 
   const proxima = planos.length
     ? [...planos].sort((a, b) => a.proxima.localeCompare(b.proxima))[0]
@@ -132,6 +103,8 @@ export default function ContarSecao({ situacao, contagem, podeContar, onContar, 
           );
         })}
 
+        <EmDuvida situacao={situacao} podeContar={podeContar} onContar={onContar} />
+
         {planos.length === 0 && (
           <div className="relative bg-white border border-zinc-200 rounded-2xl pl-4 pr-3 py-3 overflow-hidden">
             <span className="absolute left-0 top-0 bottom-0 w-1 bg-zinc-300" />
@@ -141,18 +114,10 @@ export default function ContarSecao({ situacao, contagem, podeContar, onContar, 
             </p>
             {pode ? (
               <div className="flex gap-2 mt-2">
-                <button disabled={criando} onClick={criarPadrao} className="flex-1 min-h-[42px] rounded-xl bg-amber-500 text-zinc-900 text-sm font-bold cursor-pointer disabled:opacity-50">
-                  {criando ? 'Criando…' : 'Criar as duas de sempre'}
-                </button>
-                <button onClick={onConfigurar} className="min-h-[42px] px-3 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-700 cursor-pointer">Do meu jeito</button>
+                <button onClick={onConfigurar} className="flex-1 min-h-[42px] rounded-xl bg-amber-500 text-zinc-900 text-sm font-bold cursor-pointer">Programar contagens</button>
               </div>
             ) : (
               <p className="text-[11.5px] text-zinc-400 mt-2">Quem programa é o supervisor ou o dono.</p>
-            )}
-            {pode && (
-              <p className="text-[11px] text-zinc-400 mt-2 leading-snug">
-                “As duas de sempre”: geral (todos os insumos da contagem) no último dia do mês e semanal toda segunda com os {Math.min(10, maisGiram(situacao.insumos).length) || 'que mais giram'} que mais giram em reais.
-              </p>
             )}
           </div>
         )}
@@ -187,6 +152,9 @@ export function ContagemFolha({ aberta, titulo, itens, onFechar, onConcluida }: 
   const { user } = useAuth();
   const toast = useToast();
   const { confirmarInventario } = useEstoque();
+  const { duvidas, marcarDuvida } = useEstoqueTela();
+  const [notas, setNotas] = useState<Record<string, string>>({});
+  const [marcando, setMarcando] = useState(false);
   const [passo, setPasso] = useState(0);
   const [valores, setValores] = useState<Record<string, string>>({});
   const valoresRef = useRef(valores);
@@ -213,6 +181,24 @@ export function ContagemFolha({ aberta, titulo, itens, onFechar, onConcluida }: 
   const contados = itens.filter((i) => lido(i) !== null);
   const naRevisao = passo >= itens.length;
   const atual = naRevisao ? null : itens[passo];
+
+  // "Em dúvida": o item não entra nesta contagem (o número digitado é descartado), fica na fila para contar de novo.
+  const emDuvida = async () => {
+    if (!atual || marcando) return;
+    setMarcando(true);
+    const ok = await marcarDuvida(atual.id, true, notas[atual.id]);
+    setMarcando(false);
+    if (!ok) return;
+    toast.success(`${atual.nome} ficou em dúvida`, 'Aparece em “Em dúvida” para contar de novo depois.');
+    setValores((v) => { const n = { ...v }; delete n[atual.id]; return n; });
+    setPasso((p) => p + 1);
+  };
+  const tirarDuvida = async () => {
+    if (!atual || marcando) return;
+    setMarcando(true);
+    await marcarDuvida(atual.id, false);
+    setMarcando(false);
+  };
 
   const confirmar = async () => {
     setGravando(true);
@@ -251,6 +237,7 @@ export function ContagemFolha({ aberta, titulo, itens, onFechar, onConcluida }: 
       ) : (
         <>
           <button onClick={() => { setValores((v) => { const n = { ...v }; delete n[atual!.id]; return n; }); setPasso((p) => p + 1); }} className="flex-1 min-h-[46px] rounded-xl border border-zinc-200 text-sm font-bold text-zinc-700 cursor-pointer">Pular</button>
+          <button disabled={marcando} onClick={() => { void emDuvida(); }} className="flex-1 min-h-[46px] rounded-xl border border-amber-300 bg-amber-50 text-sm font-bold text-amber-800 cursor-pointer disabled:opacity-50"><i className="ri-flag-line mr-1" />Em dúvida</button>
           <button onClick={() => setPasso((p) => p + 1)} className="flex-1 min-h-[46px] rounded-xl bg-zinc-900 text-white text-sm font-bold cursor-pointer">
             {passo === itens.length - 1 ? 'Revisar' : 'Próximo'} →
           </button>
@@ -282,6 +269,16 @@ export function ContagemFolha({ aberta, titulo, itens, onFechar, onConcluida }: 
           {fator(atual) !== 1 && (
             <p className="text-[11px] text-zinc-400 mt-1">1 {atual.unidadeContagem} = {fmtQtd(fator(atual), atual.unidade)}</p>
           )}
+          {duvidas.has(atual.id) ? (
+            <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-900 leading-snug">
+              <b><i className="ri-flag-fill mr-1" />Está em dúvida</b>{duvidas.get(atual.id)!.por ? ` (marcado por ${duvidas.get(atual.id)!.por})` : ''}.
+              {duvidas.get(atual.id)!.nota ? ` “${duvidas.get(atual.id)!.nota}”` : ''} Se contar agora, sai da dúvida.
+              <button type="button" disabled={marcando} onClick={() => { void tirarDuvida(); }} className="block mt-1 font-bold underline cursor-pointer">Tirar da dúvida sem contar</button>
+            </div>
+          ) : (
+            <input value={notas[atual.id] ?? ''} onChange={(e) => setNotas((n) => ({ ...n, [atual.id]: e.target.value }))} maxLength={120}
+              placeholder="Não tem certeza? Anote o porquê e toque em Em dúvida (opcional)" className="mt-3 w-full rounded-xl border border-zinc-200 px-3 py-2 text-[13px] focus:outline-none focus:border-amber-400" />
+          )}
         </div>
       ) : (
         <div className="pb-2">
@@ -307,5 +304,30 @@ export function ContagemFolha({ aberta, titulo, itens, onFechar, onConcluida }: 
         </div>
       )}
     </Folha>
+  );
+}
+
+/** Itens que a contagem deixou "em dúvida": ficam aqui até serem contados de novo. */
+function EmDuvida({ situacao, podeContar, onContar }: { situacao: SituacaoEstoque; podeContar: boolean; onContar: (itens: InsumoSituacao[], titulo: string) => void }) {
+  const { duvidas } = useEstoqueTela();
+  const itens = situacao.insumos.filter((i) => duvidas.has(i.id));
+  if (!itens.length) return null;
+  return (
+    <div className="relative bg-white border border-amber-200 rounded-2xl pl-4 pr-3 py-3 overflow-hidden">
+      <span className="absolute left-0 top-0 bottom-0 w-1 bg-amber-400" />
+      <p className="text-sm font-extrabold text-zinc-900"><i className="ri-flag-fill text-amber-500 mr-1" />Em dúvida <span className="text-amber-700">({itens.length})</span></p>
+      <ul className="mt-1 space-y-0.5">
+        {itens.slice(0, 5).map((i) => {
+          const d = duvidas.get(i.id)!;
+          return <li key={i.id} className="text-[12px] text-zinc-600 truncate"><b className="text-zinc-800">{i.nome}</b>{d.nota ? ` · “${d.nota}”` : ''}{d.por ? ` · ${d.por}` : ''}</li>;
+        })}
+        {itens.length > 5 && <li className="text-[11.5px] text-zinc-400">e mais {itens.length - 5}…</li>}
+      </ul>
+      {podeContar ? (
+        <button onClick={() => onContar(itens, 'Em dúvida')} className="mt-2 w-full min-h-[42px] rounded-xl bg-zinc-900 text-white text-sm font-bold cursor-pointer flex items-center justify-center gap-2">
+          <i className="ri-scales-3-line" />Contar de novo ({itens.length})
+        </button>
+      ) : <p className="text-[11.5px] text-zinc-400 mt-2">Contar é com quem tem a permissão de inventário.</p>}
+    </div>
   );
 }
