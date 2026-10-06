@@ -922,6 +922,7 @@ const GRUPO_DRE: Record<string, string> = { cost: 'Custos', expense: 'Despesas' 
 interface ContaAtrasada {
   id: string; description: string; supplier: string | null; amount: number; paid_amount: number | null; due_date: string;
   dre_category_id: string | null; reference_type: string | null; boleto_digitavel: string | null; boleto_pix_copia: string | null;
+  reference_id?: string | null;
 }
 
 // Contas atrasadas da loja, mais antiga primeiro, com quantos dias de atraso. Leitura direta: a RLS
@@ -944,15 +945,28 @@ export function ContasAtrasadasInline({ tenantId, soHoje = false, folha, onPagar
   const [baixaDe, setBaixaDe] = useState<string | null>(null);
   const [ocupada, setOcupada] = useState<string | null>(null);
   const [errosConta, setErrosConta] = useState<Record<string, string>>({});
+  // Folha: contas cujo funcionário tem chave Pix ligada no RH → "Pagar Pix" (o servidor usa essa chave)
+  const [comChave, setComChave] = useState<Set<string>>(new Set());
   const hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
   const carregar = useCallback(() => {
-    const base = supabase.from('fin_accounts_payable').select('id, description, supplier, amount, paid_amount, due_date, dre_category_id, reference_type, boleto_digitavel, boleto_pix_copia')
+    const base = supabase.from('fin_accounts_payable').select('id, description, supplier, amount, paid_amount, due_date, dre_category_id, reference_type, reference_id, boleto_digitavel, boleto_pix_copia')
       .eq('tenant_id', tenantId).not('status', 'in', '(paid,cancelled)');
     const q = folha
       ? base.eq('reference_type', 'hr_payroll').not('reference_id', 'is', null).eq('competence_month', `${folha}-01`)
       : base[soHoje ? 'eq' : 'lt']('due_date', hoje).or('reference_type.is.null,reference_type.neq.hr_payroll,reference_id.is.null');
     q.order('due_date', { ascending: true }).limit(100)
-      .then(({ data: d, error }) => { if (error) setErro(error.message); setContas((d as ContaAtrasada[]) ?? []); });
+      .then(async ({ data: d, error }) => {
+        if (error) setErro(error.message);
+        const lista = ((d as ContaAtrasada[]) ?? []);
+        if (folha && lista.length) {
+          const refs = lista.map((c) => c.reference_id).filter((x): x is string => !!x);
+          const { data: fs } = await supabase.from('hr_payroll').select('id, hr_employees(pix_favorecido_id)').eq('tenant_id', tenantId).in('id', refs);
+          const ok = new Set(((fs ?? []) as unknown as Array<{ id: string; hr_employees: { pix_favorecido_id: string | null } | null }>)
+            .filter((f) => f.hr_employees?.pix_favorecido_id).map((f) => f.id));
+          setComChave(new Set(lista.filter((c) => c.reference_id && ok.has(c.reference_id)).map((c) => c.id)));
+        }
+        setContas(lista);
+      });
   }, [tenantId, hoje, soHoje, folha]);
   useEffect(() => { carregar(); }, [carregar]);
 
@@ -973,7 +987,7 @@ export function ContasAtrasadasInline({ tenantId, soHoje = false, folha, onPagar
       {contas.map((c) => {
         const dias = Math.max(1, Math.floor((agora - new Date(`${c.due_date}T12:00:00-03:00`).getTime()) / 86400000));
         const saldo = Number(c.amount) - Number(c.paid_amount ?? 0);
-        const temBoleto = !!(c.boleto_digitavel || c.boleto_pix_copia);
+        const temBoleto = !!(c.boleto_digitavel || c.boleto_pix_copia) || comChave.has(c.id);
         return (
           <div key={c.id} className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2">
             <div className="flex items-start gap-2">
