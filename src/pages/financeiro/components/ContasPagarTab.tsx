@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useBillsPayable, useCostCenters, useBankAccounts } from '@/hooks/useFinanceiro';
 import { useSuppliers } from '@/hooks/useSuppliers';
@@ -173,15 +173,21 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   // "Em aberto agora": regra única (fn_contas_em_aberto + src/lib/contasAbertas.ts, 2026-10-07) — os mesmos
   // números do Painel, da Hoje e da aba Pagamentos. Recarrega quando a lista de contas muda (baixa, nova conta).
   const [versaoAbertas, setVersaoAbertas] = useState(0);
-  useEffect(() => { setVersaoAbertas((v) => v + 1); }, [bills]);
-  const { contas: abertasCP, hoje: hojeCP } = useContasEmAberto(user?.tenantId, versaoAbertas);
+  const primeiraLista = useRef(true);
+  useEffect(() => {
+    if (primeiraLista.current) { primeiraLista.current = false; return; } // a 1ª busca o hook já faz sozinho
+    setVersaoAbertas((v) => v + 1);
+  }, [bills]);
+  const { contas: abertasCP, hoje: hojeCP, erro: erroAbertas } = useContasEmAberto(user?.tenantId, versaoAbertas);
   const em7CP = somarDias(hojeCP, 7);
   const resumoAberto = useMemo(() => {
     const r = resumoContas(abertasCP ?? [], hojeCP);
     return { vencidas: r.vencidas, semana: { n: r.hoje.n + r.semana.n, v: Math.round((r.hoje.v + r.semana.v) * 100) / 100 }, depois: r.depois };
   }, [abertasCP, hojeCP]);
-  // Só o que é a pagar de verdade (sem saldo zerado nem compra já paga na entrega) entra nos filtros "em aberto"
-  const idsAbertos = useMemo(() => new Set(aPagar(abertasCP ?? []).map((c) => c.id)), [abertasCP]);
+  // Só o que é a pagar de verdade (sem saldo zerado nem compra já paga na entrega) entra nos filtros "em aberto".
+  // null = lista ainda não chegou ou falhou: aí não filtra por ela (não esvazia a tela nem zera os totais).
+  const idsAbertos = useMemo(() => (abertasCP && !erroAbertas ? new Set(aPagar(abertasCP).map((c) => c.id)) : null), [abertasCP, erroAbertas]);
+  const ehAberta = useCallback((id: string) => !idsAbertos || idsAbertos.has(id), [idsAbertos]);
   const [showDREModal, setShowDREModal] = useState(false);
   const [showCaixaBoletos, setShowCaixaBoletos] = useState(false);
 
@@ -222,7 +228,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   };
 
   const selectAllPending = () => {
-    const pendingIds = paginated.filter((b) => b.status !== 'paid').map((b) => b.id);
+    const pendingIds = paginated.filter((b) => !['paid', 'cancelled'].includes(b.status as string)).map((b) => b.id);
     setSelectedIds(new Set(pendingIds));
   };
 
@@ -305,7 +311,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
     // tipo) entrava aqui e derrubava a tela no STATUS_LABEL (2026-09-30).
     let result = (agingBucket || emAberto) ? [...bills.filter(b => ['pending', 'overdue', 'partial'].includes(b.status))] : [...billsDoMes];
     if (emAberto) {
-      result = result.filter((b) => idsAbertos.has(b.id) && !!b.due_date && (
+      result = result.filter((b) => ehAberta(b.id) && !!b.due_date && (
         emAberto === 'vencidas' ? b.due_date < hojeCP
           : emAberto === 'semana' ? b.due_date >= hojeCP && b.due_date <= em7CP
             : b.due_date > em7CP));
@@ -359,7 +365,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
       return 0;
     });
     return result;
-  }, [billsDoMes, bills, agingBucket, emAberto, hojeCP, em7CP, idsAbertos, search, filterStatus, filterCategory, filterDateFrom, filterDateTo, filterRecurring, sortField, sortDir]);
+  }, [billsDoMes, bills, agingBucket, emAberto, hojeCP, em7CP, ehAberta, search, filterStatus, filterCategory, filterDateFrom, filterDateTo, filterRecurring, sortField, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -377,7 +383,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   // KPIs do mês selecionado
   // Mesma régua de "em aberto" e "vencida" de todas as telas (2026-10-07): sem cancelada; vencida = vencimento
   // antes de hoje (Brasília) com saldo — antes só contava status 'overdue' e deixava de fora a paga em parte.
-  const emAbertoMes = billsDoMes.filter(b => ['pending', 'overdue', 'partial'].includes(b.status) && saldoRestante(b) > 0.005);
+  // (sem compra "já paga na entrega" — ehAberta, da mesma lista)
+  const emAbertoMes = billsDoMes.filter(b => ['pending', 'overdue', 'partial'].includes(b.status) && saldoRestante(b) > 0.005 && ehAberta(b.id));
   const vencidasMes = emAbertoMes.filter(b => !!b.due_date && b.due_date < hojeCP);
   const totalPendente = emAbertoMes.reduce((s, b) => s + saldoRestante(b), 0);
   const totalVencido = vencidasMes.reduce((s, b) => s + saldoRestante(b), 0);
@@ -470,10 +477,11 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   const uniqueCategories = [...new Set(billsDoMes.map(b => b.category).filter(Boolean))];
   const expenseDreCats = dreCats.filter(c => c.group_type === 'expense' || c.group_type === 'cost');
 
-  const today = todayBrasilia(); // dia de Brasília (UTC virava amanhã às 21h)
-  const in7Days = somarDias(today, 7);
-  const vencendoEmBreve = emAbertoMes.filter(b => b.due_date >= today && b.due_date <= in7Days);
-  const vencendoHoje = emAbertoMes.filter(b => b.due_date === today);
+  // Faixa de aviso: a MESMA lista "em aberto agora" dos cartões (todas as vencidas, não só as do mês escolhido)
+  const today = hojeCP;
+  const vencidasAgora = resumoAberto.vencidas;
+  const vencendoEmBreve = aPagar(abertasCP ?? []).filter(c => c.vencimento >= today && c.vencimento <= em7CP);
+  const vencendoHoje = vencendoEmBreve.filter(c => c.vencimento === today);
   const [showAlertBanner, setShowAlertBanner] = useState(true);
   const [showProvAlertBanner, setShowProvAlertBanner] = useState(true);
 
@@ -544,15 +552,15 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
       </div>
 
       {/* Banner de alertas de vencimento */}
-      {showAlertBanner && (vencendoEmBreve.length > 0 || totalVencido > 0) && (
-        <div className={`rounded-xl border px-4 py-3 flex items-start gap-3 ${totalVencido > 0 ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
-          <div className={`w-8 h-8 flex items-center justify-center rounded-lg flex-shrink-0 ${totalVencido > 0 ? 'bg-red-100' : 'bg-amber-100'}`}>
-            <i className={`${totalVencido > 0 ? 'ri-alarm-warning-line text-red-600' : 'ri-time-line text-amber-600'} text-base`} />
+      {showAlertBanner && (vencendoEmBreve.length > 0 || vencidasAgora.n > 0) && (
+        <div className={`rounded-xl border px-4 py-3 flex items-start gap-3 ${vencidasAgora.n > 0 ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
+          <div className={`w-8 h-8 flex items-center justify-center rounded-lg flex-shrink-0 ${vencidasAgora.n > 0 ? 'bg-red-100' : 'bg-amber-100'}`}>
+            <i className={`${vencidasAgora.n > 0 ? 'ri-alarm-warning-line text-red-600' : 'ri-time-line text-amber-600'} text-base`} />
           </div>
           <div className="flex-1 min-w-0">
-            <p className={`text-sm font-bold ${totalVencido > 0 ? 'text-red-800' : 'text-amber-800'}`}>
-              {totalVencido > 0
-                ? `${vencidasMes.length} conta${vencidasMes.length > 1 ? 's' : ''} vencida${vencidasMes.length > 1 ? 's' : ''} — ${formatCurrency(totalVencido)} em aberto`
+            <p className={`text-sm font-bold ${vencidasAgora.n > 0 ? 'text-red-800' : 'text-amber-800'}`}>
+              {vencidasAgora.n > 0
+                ? `${vencidasAgora.n} conta${vencidasAgora.n > 1 ? 's' : ''} vencida${vencidasAgora.n > 1 ? 's' : ''} — ${formatCurrency(vencidasAgora.v)} em aberto`
                 : `${vencendoEmBreve.length} conta${vencendoEmBreve.length > 1 ? 's' : ''} vencendo nos próximos 7 dias`}
             </p>
             <div className="flex flex-wrap gap-2 mt-1.5">
@@ -562,14 +570,14 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                   {vencendoHoje.length} vence hoje
                 </span>
               )}
-              {vencendoEmBreve.filter(b => b.due_date !== today).map(b => (
+              {vencendoEmBreve.filter(b => b.vencimento !== today).map(b => (
                 <span key={b.id} className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200">
-                  {b.description} — {new Date(b.due_date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
+                  {b.descricao ?? b.nome} — {new Date(b.vencimento + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
                 </span>
               )).slice(0, 4)}
-              {vencendoEmBreve.filter(b => b.due_date !== today).length > 4 && (
+              {vencendoEmBreve.filter(b => b.vencimento !== today).length > 4 && (
                 <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-500">
-                  +{vencendoEmBreve.filter(b => b.due_date !== today).length - 4} mais
+                  +{vencendoEmBreve.filter(b => b.vencimento !== today).length - 4} mais
                 </span>
               )}
             </div>
@@ -624,7 +632,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {([
             { id: 'vencidas', rotulo: 'Vencidas', cor: 'bg-red-500', tom: 'text-red-600', sub: 'saldo que falta pagar' },
-            { id: 'semana', rotulo: 'Próximos 7 dias', cor: 'bg-amber-500', tom: 'text-amber-700', sub: `até ${em7CP.slice(8, 10)}/${em7CP.slice(5, 7)}` },
+            { id: 'semana', rotulo: 'Hoje e próximos 7 dias', cor: 'bg-amber-500', tom: 'text-amber-700', sub: `até ${em7CP.slice(8, 10)}/${em7CP.slice(5, 7)}` },
             { id: 'depois', rotulo: 'Depois', cor: 'bg-emerald-500', tom: 'text-zinc-900', sub: 'ainda no prazo' },
           ] as const).map((c) => {
             const r = resumoAberto[c.id];
@@ -640,8 +648,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                   <span className="text-xs font-semibold text-zinc-500">{c.rotulo}</span>
                   <span className="ml-auto text-xs text-zinc-400">{r.n} {r.n === 1 ? 'conta' : 'contas'}</span>
                 </div>
-                <p className={`text-xl sm:text-2xl font-bold tabular-nums mt-1.5 ${r.n ? c.tom : 'text-zinc-900'}`}>{formatCurrency(r.v)}</p>
-                <p className="text-[11px] text-zinc-400 mt-0.5">{c.sub}</p>
+                <p className={`text-xl sm:text-2xl font-bold tabular-nums mt-1.5 ${r.n ? c.tom : 'text-zinc-900'}`}>{erroAbertas ? '—' : formatCurrency(r.v)}</p>
+                <p className="text-[11px] text-zinc-400 mt-0.5">{erroAbertas ? 'não deu para ler agora' : c.sub}</p>
               </button>
             );
           })}
@@ -719,7 +727,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
           {emAberto && (
             <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
               <i className="ri-filter-line text-amber-600 text-xs" />
-              <span className="text-xs font-semibold text-amber-800">{emAberto === 'vencidas' ? 'Vencidas' : emAberto === 'semana' ? 'Próximos 7 dias' : 'Depois de 7 dias'} · todas as datas</span>
+              <span className="text-xs font-semibold text-amber-800">{emAberto === 'vencidas' ? 'Vencidas' : emAberto === 'semana' ? 'Hoje e próximos 7 dias' : 'Depois de 7 dias'} · todas as datas</span>
               <button
                 onClick={() => { setEmAberto(null); setPage(1); }}
                 className="w-4 h-4 flex items-center justify-center rounded-full hover:bg-amber-200 cursor-pointer"
@@ -905,7 +913,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                 return (
                   <tr key={b.id} className={`hover:bg-zinc-50 transition-colors ${isOverdue ? 'bg-red-50/30' : ''} ${selectedIds.has(b.id) ? 'bg-amber-50/60' : ''}`}>
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                      {b.status !== 'paid' && (
+                      {!['paid', 'cancelled'].includes(b.status as string) && (
                         <button
                           onClick={(e) => { e.stopPropagation(); toggleSelect(b.id); }}
                           className={`w-5 h-5 flex items-center justify-center rounded border cursor-pointer transition-colors ${selectedIds.has(b.id) ? 'bg-amber-500 border-amber-500' : 'border-zinc-300 hover:border-amber-400'}`}
@@ -999,7 +1007,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                     </td>
                     <td className="px-4 py-3">
                       <p className="text-zinc-700 text-sm">{b.due_date ? new Date(b.due_date + 'T00:00:00').toLocaleDateString('pt-BR') : '—'}</p>
-                      {daysUntil !== null && b.status !== 'paid' && (
+                      {daysUntil !== null && !['paid', 'cancelled'].includes(b.status as string) && (
                         <p className={`text-xs mt-0.5 ${daysUntil < 0 ? 'text-red-500' : daysUntil <= 3 ? 'text-amber-500' : 'text-zinc-400'}`}>
                           {daysUntil < 0 ? `${Math.abs(daysUntil)}d em atraso` : daysUntil === 0 ? 'Vence hoje' : `em ${daysUntil}d`}
                         </p>
@@ -1010,7 +1018,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                       {/* Com pagamento parcial o valor original esconde o que
                           ainda falta pagar — sem isso a conta exibia R$1.000
                           sem dizer que restavam R$400. */}
-                      {Number(b.paid_amount ?? 0) > 0 && b.status !== 'paid' && (
+                      {Number(b.paid_amount ?? 0) > 0 && !['paid', 'cancelled'].includes(b.status as string) && (
                         <p className="text-xs text-sky-600 font-semibold">
                           falta {formatCurrency(saldoRestante(b))}
                         </p>
@@ -1036,7 +1044,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                     </td>
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1.5">
-                        {b.status !== 'paid' && (
+                        {!['paid', 'cancelled'].includes(b.status as string) && (
                           <button
                             onClick={(e) => { e.stopPropagation(); setPayModal(b); setPayForm(f => ({ ...f, paid_amount: String(saldoRestante(b)), bank_account_id: b.bank_account_id ?? '' })); }}
                             className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2 py-1 rounded-lg cursor-pointer hover:bg-green-200 whitespace-nowrap"
@@ -1082,7 +1090,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                   >
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div className="flex items-start gap-2 flex-1 min-w-0">
-                        {b.status !== 'paid' && (
+                        {!['paid', 'cancelled'].includes(b.status as string) && (
                           <button
                             onClick={(e) => { e.stopPropagation(); toggleSelect(b.id); }}
                             className={`w-5 h-5 flex items-center justify-center rounded border cursor-pointer transition-colors flex-shrink-0 mt-0.5 ${selectedIds.has(b.id) ? 'bg-amber-500 border-amber-500' : 'border-zinc-300'}`}
@@ -1097,7 +1105,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                       </div>
                       <div className="text-right flex-shrink-0">
                         <p className="font-bold text-zinc-900 text-sm">{formatCurrency(b.amount)}</p>
-                        {Number(b.paid_amount ?? 0) > 0 && b.status !== 'paid' && (
+                        {Number(b.paid_amount ?? 0) > 0 && !['paid', 'cancelled'].includes(b.status as string) && (
                           <p className="text-xs text-sky-600 font-semibold">falta {formatCurrency(saldoRestante(b))}</p>
                         )}
                         <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${STATUS_BADGE[b.status]}`}>
@@ -1117,7 +1125,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                           <span className={`text-xs ${daysUntil !== null && daysUntil < 0 ? 'text-red-500 font-semibold' : daysUntil !== null && daysUntil <= 3 ? 'text-amber-500' : 'text-zinc-400'}`}>
                             <i className="ri-calendar-line mr-0.5" />
                             {new Date(b.due_date + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}
-                            {daysUntil !== null && b.status !== 'paid' && (
+                            {daysUntil !== null && !['paid', 'cancelled'].includes(b.status as string) && (
                               <span className="ml-1">
                                 {daysUntil < 0 ? `(${Math.abs(daysUntil)}d atraso)` : daysUntil === 0 ? '(hoje)' : ''}
                               </span>
@@ -1127,7 +1135,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                         {b.is_recurring && <span className="text-xs text-amber-600"><i className="ri-repeat-line" /></span>}
                       </div>
                       <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                        {b.status !== 'paid' && (
+                        {!['paid', 'cancelled'].includes(b.status as string) && (
                           <button
                             onClick={(e) => { e.stopPropagation(); setPayModal(b); setPayForm(f => ({ ...f, paid_amount: String(saldoRestante(b)), bank_account_id: b.bank_account_id ?? '' })); }}
                             className="flex items-center gap-1 text-xs bg-green-100 text-green-700 px-2.5 py-1.5 rounded-lg cursor-pointer hover:bg-green-200 whitespace-nowrap font-semibold"

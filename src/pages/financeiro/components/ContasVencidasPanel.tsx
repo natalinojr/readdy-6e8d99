@@ -142,7 +142,7 @@ export default function ContasVencidasPanel() {
       const days = Math.floor((todayDate.getTime() - dueDate.getTime()) / 86400000);
       return {
         ...b,
-        status: b.status as 'overdue' | 'pending',
+        status: b.status as 'overdue' | 'pending' | 'partial',
         days_overdue: Math.max(0, days),
         dre_category_name: b.dre_category_id ? catMap[b.dre_category_id] : undefined,
       };
@@ -328,8 +328,8 @@ export default function ContasVencidasPanel() {
           {/* KPIs de impacto */}
           <div className="grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5 gap-3">
             <KpiCard label="Total em aberto" icon="ri-money-dollar-circle-line" value={formatCurrency(totalGeral)} valueTone="text-red-600" highlight="neg" atual={totalGeral} semVariacao />
-            <KpiCard label="Vencidas (overdue)" icon="ri-alarm-warning-line" value={formatCurrency(impacto.totalVencido)} valueTone="text-red-600" sub={`${contas.filter(c => c.status === 'overdue').length} contas`} atual={impacto.totalVencido} semVariacao />
-            <KpiCard label="Pendentes vencidas" icon="ri-time-line" value={formatCurrency(impacto.totalPendente)} valueTone="text-amber-700" sub={`${contas.filter(c => c.status === 'pending').length} contas`} atual={impacto.totalPendente} semVariacao />
+            <KpiCard label="Vencidas sem pagar nada" icon="ri-alarm-warning-line" value={formatCurrency(contas.filter(c => c.status !== 'partial').reduce((s, c) => s + saldoDevedor(c), 0))} valueTone="text-red-600" sub={`${contas.filter(c => c.status !== 'partial').length} contas`} atual={impacto.totalVencido} semVariacao />
+            <KpiCard label="Pagas em parte (o que falta)" icon="ri-time-line" value={formatCurrency(contas.filter(c => c.status === 'partial').reduce((s, c) => s + saldoDevedor(c), 0))} valueTone="text-amber-700" sub={`${contas.filter(c => c.status === 'partial').length} contas`} atual={impacto.totalPendente} semVariacao />
             <KpiCard
               label="Impacto na margem" icon="ri-percent-line"
               value={rotuloImpactoMargem(totalGeral, impacto.receitaBruta)}
@@ -465,7 +465,7 @@ export default function ContasVencidasPanel() {
                     <span className="text-[11px] text-zinc-400 whitespace-nowrap">
                       {new Date(c.due_date + 'T00:00:00').toLocaleDateString('pt-BR')}
                     </span>
-                    <span className="text-base font-bold text-red-600 tabular-nums whitespace-nowrap">{formatCurrency(c.amount)}</span>
+                    <span className="text-base font-bold text-red-600 tabular-nums whitespace-nowrap">{formatCurrency(saldoDevedor(c))}{c.status === 'partial' && <span className="block text-[10px] font-normal text-zinc-400">de {formatCurrency(c.amount)}</span>}</span>
                   </div>
                   <p className="text-sm font-medium text-zinc-800 break-words line-clamp-2">{c.description}</p>
                   {c.supplier && <p className="text-xs text-zinc-400 break-words line-clamp-1">{c.supplier}</p>}
@@ -473,8 +473,8 @@ export default function ContasVencidasPanel() {
                     <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${colors.badge}`}>
                       {c.days_overdue === 0 ? 'Hoje' : `${c.days_overdue}d`}
                     </span>
-                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${c.status === 'overdue' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>
-                      {c.status === 'overdue' ? 'Vencido' : 'Pendente'}
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${c.status !== 'partial' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>
+                      {c.status === 'partial' ? 'Pago em parte' : 'Vencido'}
                     </span>
                     {c.dre_category_name ? (
                       <span className="text-[11px] font-semibold bg-zinc-100 text-zinc-600 px-2 py-0.5 rounded-md break-words">{c.dre_category_name}</span>
@@ -569,11 +569,12 @@ export default function ContasVencidasPanel() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-right font-bold text-red-600 tabular-nums whitespace-nowrap">
-                        {formatCurrency(c.amount)}
+                        {formatCurrency(saldoDevedor(c))}
+                        {c.status === 'partial' && <span className="block text-[10px] font-normal text-zinc-400">de {formatCurrency(c.amount)}</span>}
                       </td>
                       <td className="px-4 py-3">
-                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${c.status === 'overdue' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>
-                          {c.status === 'overdue' ? 'Vencido' : 'Pendente'}
+                        <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${c.status !== 'partial' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>
+                          {c.status === 'partial' ? 'Pago em parte' : 'Vencido'}
                         </span>
                       </td>
                       <td className="px-4 py-3 pr-5">
@@ -603,7 +604,7 @@ export default function ContasVencidasPanel() {
                       Total filtrado ({filtered.length} contas)
                     </td>
                     <td className="px-4 py-3 text-right text-base font-bold text-zinc-900 tabular-nums whitespace-nowrap">
-                      {formatCurrency(filtered.reduce((s, c) => s + c.amount, 0))}
+                      {formatCurrency(filtered.reduce((s, c) => s + saldoDevedor(c), 0))}
                     </td>
                     <td colSpan={2} />
                   </tr>

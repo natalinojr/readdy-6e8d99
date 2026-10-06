@@ -840,19 +840,14 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
       // Sem travar em zero (2026-09-30): o card mostrava R$ 0,00 em verde num mês de prejuízo.
       const lucroEstimado = receitaMes - despesasTotais;
 
-      const abertas7 = ((billsVencendo.data ?? []) as Array<{ id: string; nome: string; descricao: string | null; valor: number; vencimento: string; status: string; ja_paga: boolean }>)
+      const abertas7 = ((billsVencendo.data ?? []) as Array<{ id: string; nome: string; descricao: string | null; valor: number; vencimento: string; status: string; ja_paga: boolean; origem: string | null; reference_id: string | null }>)
         .filter((c) => !c.ja_paga && c.vencimento <= sevenDaysLaterStr);
       const totalAPagar = abertas7.reduce((s, c) => s + Number(c.valor), 0);
-      // Folha pendente SEM conta a pagar (desde 2026-10-06 a folha gera conta; antes somava em dobro)
+      // Folha pendente: tira só a folha cuja conta a pagar JÁ está na soma acima (vence em até 7 dias) — senão
+      // contava 2×. A folha cuja conta vence mais longe (5º dia útil do mês seguinte) continua aqui.
+      const folhaNaSoma = new Set(abertas7.filter((c) => c.origem === 'hr_payroll' && c.reference_id).map((c) => String(c.reference_id)));
       const payrollRows = (payrollPendingMes.data ?? []) as Array<{ id?: string; net_salary: number }>;
-      const payrollIds = payrollRows.map((p) => p.id).filter((x): x is string => !!x);
-      const comConta = new Set<string>();
-      if (payrollIds.length) {
-        const { data: cs } = await supabase.from('fin_accounts_payable').select('reference_id')
-          .eq('tenant_id', user.tenantId).eq('reference_type', 'hr_payroll').in('reference_id', payrollIds).neq('status', 'cancelled');
-        for (const c of (cs ?? []) as Array<{ reference_id: string }>) comConta.add(String(c.reference_id));
-      }
-      const folhaPendente = payrollRows.filter((p) => !p.id || !comConta.has(p.id)).reduce((s, p) => s + Number(p.net_salary), 0);
+      const folhaPendente = payrollRows.filter((p) => !p.id || !folhaNaSoma.has(p.id)).reduce((s, p) => s + Number(p.net_salary), 0);
       // Despesas comprometidas = contas a pagar + folha pendente
       const totalComprometido = totalAPagar + folhaPendente;
       // Parcelas a receber pendentes nos próximos 7 dias

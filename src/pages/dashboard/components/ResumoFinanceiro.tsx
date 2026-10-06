@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePermissoes } from '@/hooks/usePermissoes';
 import { todayBrasilia, getTodayBrasiliaRange } from '@/lib/dateUtils';
 import AjudaCartao from '@/components/base/AjudaCartao';
 import { resumoContas, type ContaEmAberto } from '@/lib/contasAbertas';
@@ -30,6 +31,9 @@ const AJUDA_PEDIDOS =
 export default function ResumoFinanceiro({ refreshKey = 0 }: { refreshKey?: number }) {
   const { user } = useAuth();
   const navigate = useNavigate();
+  // leva a Pagamentos ("em que pé está"); quem não tem essa aba cai em Contas a Pagar
+  const { hasPermissao } = usePermissoes();
+  const destinoContas = hasPermissao('fin_pagamentos') ? '/financeiro?tab=pagamentos' : '/financeiro?tab=pagar';
   const [data, setData] = useState<FinancialSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(false);
@@ -144,7 +148,7 @@ export default function ResumoFinanceiro({ refreshKey = 0 }: { refreshKey?: numb
         </div>
 
         <button
-          onClick={() => navigate('/financeiro?tab=pagamentos')}
+          onClick={() => navigate(destinoContas)}
           className="w-full text-left px-3 py-2 bg-zinc-50 hover:bg-zinc-100 rounded-lg text-xs space-y-1 cursor-pointer transition-colors"
         >
           {data.qtdContasVencidas > 0 && (

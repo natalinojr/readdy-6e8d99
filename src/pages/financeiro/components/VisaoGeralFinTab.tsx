@@ -13,6 +13,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchRevenueSources, fetchPixRecebidos, fetchCashSales } from '@/lib/revenueSources';
 import { empresaTemPdv } from '@/lib/tipoEmpresa';
+import { usePermissoes } from '@/hooks/usePermissoes';
 import { KpiCard, Segmented } from './dreUi';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -202,6 +203,8 @@ const RvDTooltip = ({ active, payload, label }: { active?: boolean; payload?: { 
 export default function VisaoGeralFinTab() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { hasPermissao: temPermissao } = usePermissoes();
+  const destinoContas = temPermissao('fin_pagamentos') ? '/financeiro?tab=pagamentos' : '/financeiro?tab=pagar';
   const temPdv = empresaTemPdv(user?.tenantKind);
   const { modo } = useModoFaturamento();
   // Empresa sem PDV não tem sessão de caixa — o Modo Sessão é exclusivo do PDV.
@@ -640,7 +643,7 @@ export default function VisaoGeralFinTab() {
                 <p className="text-xs text-zinc-500">A pagar: vencidas + próximos 7 dias</p>
                 <p className="text-xl font-bold text-red-600">{formatCurrency(dashboard.totalAPagar)}</p>
               </div>
-              <button onClick={() => navigate('/financeiro?tab=pagamentos')} className="ml-auto text-xs font-semibold text-amber-600 hover:text-amber-700 cursor-pointer whitespace-nowrap">
+              <button onClick={() => navigate(destinoContas)} className="ml-auto text-xs font-semibold text-amber-600 hover:text-amber-700 cursor-pointer whitespace-nowrap">
                 Ver em que pé está <i className="ri-arrow-right-line" />
               </button>
             </div>

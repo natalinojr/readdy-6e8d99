@@ -86,21 +86,16 @@ export function useFinanceiroAlertas(): FinanceiroAlertasSummary {
       .filter((c) => !/já paga /i.test(c.notes ?? ''));
 
     // Saldo devedor (valor − pago), sem cancelada e sem compra já paga na entrega; vencidas + até 7 dias
-    const bills = aPagar((billsRes.data ?? []) as ContaEmAberto[])
-      .filter((c) => c.vencimento <= sevenDaysLater)
-      .map((c) => ({ id: c.id, description: c.nome, amount: Number(c.valor), due_date: c.vencimento, status: c.vencimento < today ? 'overdue' : c.status }));
+    const abertas7 = aPagar((billsRes.data ?? []) as ContaEmAberto[]).filter((c) => c.vencimento <= sevenDaysLater);
+    // vencida = vencimento antes de hoje (Brasília), não o status gravado — igual às outras telas
+    const bills = abertas7.map((c) => ({ id: c.id, description: c.nome, amount: Number(c.valor), due_date: c.vencimento, status: c.vencimento < today ? 'overdue' : 'vencendo' }));
 
     const vencidas = bills.filter(b => b.status === 'overdue');
     const vencendo = bills.filter(b => b.status !== 'overdue');
-    // Folha pendente SEM conta a pagar: desde 2026-10-06 a folha gera conta (que já entra acima) — antes contava 2×
-    const payrollAll = payrollRes.data ?? [];
-    const idsFolha = payrollAll.map((p) => p.id);
-    const { data: contasFolha } = idsFolha.length
-      ? await supabase.from('fin_accounts_payable').select('reference_id').eq('tenant_id', user.tenantId)
-        .eq('reference_type', 'hr_payroll').in('reference_id', idsFolha).neq('status', 'cancelled')
-      : { data: [] as Array<{ reference_id: string }> };
-    const folhaComConta = new Set((contasFolha ?? []).map((c) => String(c.reference_id)));
-    const payrollPending = payrollAll.filter((p) => !folhaComConta.has(String(p.id)));
+    // Folha pendente: tira só a folha cuja conta a pagar JÁ entrou acima (vence em até 7 dias) — antes contava 2×;
+    // a folha cuja conta vence mais longe (5º dia útil do mês seguinte) continua avisando aqui.
+    const folhaNaSoma = new Set(abertas7.filter((c) => c.origem === 'hr_payroll' && c.reference_id).map((c) => String(c.reference_id)));
+    const payrollPending = (payrollRes.data ?? []).filter((p) => !folhaNaSoma.has(String(p.id)));
     const budgets = budgetsRes.data ?? [];
 
     const totalVencidas = vencidas.reduce((s, b) => s + Number(b.amount), 0);

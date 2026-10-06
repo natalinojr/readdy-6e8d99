@@ -17,6 +17,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useBankAccounts } from '@/hooks/useFinanceiro';
 import { useContasEmAberto } from '@/hooks/useContasEmAberto';
+import { usePermissoes } from '@/hooks/usePermissoes';
 import { resumoContas } from '@/lib/contasAbertas';
 import { usePendencias, kindConfig } from '@/contexts/PendenciasContext';
 import { dreCaixaDoPeriodo } from './DRETab';
@@ -99,8 +100,11 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
 
   // --- Quanto devo — regra única (fn_contas_em_aberto + src/lib/contasAbertas.ts), a mesma da Hoje, da aba
   // Pagamentos, de Contas a Pagar e do número vermelho do Financeiro (2026-10-07).
-  const { contas: abertasCP, hoje } = useContasEmAberto(user?.tenantId, versaoCP);
-  const carregandoContasPagar = abertasCP === null;
+  const { contas: abertasCP, hoje, erro: erroCP } = useContasEmAberto(user?.tenantId, versaoCP);
+  const carregandoContasPagar = abertasCP === null && !erroCP;
+  // "Ver em que pé está" leva a Pagamentos; quem não tem essa aba cai em Contas a Pagar
+  const { hasPermissao } = usePermissoes();
+  const abaPagamentos = hasPermissao('fin_pagamentos') ? 'pagamentos' : 'pagar';
   const devo = useMemo(() => resumoContas(abertasCP ?? [], hoje), [abertasCP, hoje]);
 
   // --- O mês (mesma função da DRE, regime de caixa)
@@ -164,8 +168,8 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
           </>)}
         </Pergunta>
 
-        <Pergunta titulo="Quanto devo?" icone="ri-bill-line" acao="Ver em que pé está cada pagamento" onAcao={() => onIrAba('pagamentos')} destaque={devo.vencidas.n > 0 ? 'red' : undefined}>
-          {carregandoContasPagar ? <Carregando /> : (<>
+        <Pergunta titulo="Quanto devo?" icone="ri-bill-line" acao="Ver em que pé está cada pagamento" onAcao={() => onIrAba(abaPagamentos)} destaque={devo.vencidas.n > 0 ? 'red' : undefined}>
+          {erroCP ? <p className="text-xs text-zinc-400">Não deu para ler as contas agora — toque em Atualizar.</p> : carregandoContasPagar ? <Carregando /> : (<>
             <p className="text-2xl font-bold tabular-nums text-zinc-900">{brl(devo.total.v)}</p>
             <Linha rotulo={`Vencidas (${devo.vencidas.n})`} valor={brl(devo.vencidas.v)} cor={devo.vencidas.n ? 'text-red-600' : undefined} />
             <Linha rotulo={`Vence hoje (${devo.hoje.n})`} valor={brl(devo.hoje.v)} cor={devo.hoje.n ? 'text-red-600' : undefined} />
@@ -230,7 +234,7 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
           <div className="px-5 py-3 border-b border-zinc-100">
             <h3 className="text-sm font-bold text-zinc-800">Vence nos próximos dias</h3>
           </div>
-          {carregandoContasPagar ? <div className="p-5"><Carregando /></div> : devo.proximas.length === 0 ? (
+          {erroCP ? <p className="px-5 py-6 text-sm text-zinc-400">Não deu para ler as contas agora.</p> : carregandoContasPagar ? <div className="p-5"><Carregando /></div> : devo.proximas.length === 0 ? (
             <p className="px-5 py-6 text-sm text-zinc-400">Nenhuma conta a vencer.</p>
           ) : (
             <div className="divide-y divide-zinc-100">
