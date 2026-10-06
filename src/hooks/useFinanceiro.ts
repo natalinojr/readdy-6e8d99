@@ -721,11 +721,9 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
         supabase.from('fin_cash_flow').select('type,amount,origin')
           .eq('tenant_id', user.tenantId)
           .gte('date', monthStartDate),
-        supabase.from('fin_accounts_payable').select('*')
-          .eq('tenant_id', user.tenantId)
-          .in('status', ['pending', 'overdue'])
-          .lte('due_date', sevenDaysLaterStr)
-          .order('due_date'),
+        // Contas em aberto: regra única (fn_contas_em_aberto, 2026-10-07) — antes ficava de fora a conta paga em
+        // parte e o total somava o valor cheio. Vencidas + até 7 dias, pelo saldo que falta pagar.
+        supabase.rpc('fn_contas_em_aberto', { p_tenants: [user.tenantId] }),
         // Receita auto_sale (vendas recebidas à vista) — hoje
         supabase.from('fin_cash_flow').select('amount, payment_method_id, payment_methods(name)')
           .eq('tenant_id', user.tenantId).eq('type', 'income')
@@ -755,7 +753,7 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
               .eq('is_training', false).eq('is_draft', false)
           : Promise.resolve({ count: 0, data: null, error: null }),
         // Folha de pagamento pendente do mês atual
-        supabase.from('hr_payroll').select('net_salary')
+        supabase.from('hr_payroll').select('id, net_salary')
           .eq('tenant_id', user.tenantId)
           .eq('reference_month', currentMonthStr)
           .eq('status', 'pending'),
@@ -842,8 +840,14 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
       // Sem travar em zero (2026-09-30): o card mostrava R$ 0,00 em verde num mês de prejuízo.
       const lucroEstimado = receitaMes - despesasTotais;
 
-      const totalAPagar = (billsVencendo.data ?? []).reduce((s, b) => s + Number(b.amount), 0);
-      const folhaPendente = (payrollPendingMes.data ?? []).reduce((s, p) => s + Number(p.net_salary), 0);
+      const abertas7 = ((billsVencendo.data ?? []) as Array<{ id: string; nome: string; descricao: string | null; valor: number; vencimento: string; status: string; ja_paga: boolean; origem: string | null; reference_id: string | null }>)
+        .filter((c) => !c.ja_paga && c.vencimento <= sevenDaysLaterStr);
+      const totalAPagar = abertas7.reduce((s, c) => s + Number(c.valor), 0);
+      // Folha pendente: tira só a folha cuja conta a pagar JÁ está na soma acima (vence em até 7 dias) — senão
+      // contava 2×. A folha cuja conta vence mais longe (5º dia útil do mês seguinte) continua aqui.
+      const folhaNaSoma = new Set(abertas7.filter((c) => c.origem === 'hr_payroll' && c.reference_id).map((c) => String(c.reference_id)));
+      const payrollRows = (payrollPendingMes.data ?? []) as Array<{ id?: string; net_salary: number }>;
+      const folhaPendente = payrollRows.filter((p) => !p.id || !folhaNaSoma.has(p.id)).reduce((s, p) => s + Number(p.net_salary), 0);
       // Despesas comprometidas = contas a pagar + folha pendente
       const totalComprometido = totalAPagar + folhaPendente;
       // Parcelas a receber pendentes nos próximos 7 dias
@@ -893,7 +897,8 @@ export function useFinanceiroDashboard(): { dashboard: FinanceiroDashboard | nul
         totalAPagar,
         totalAReceber,
         totalComprometido,
-        contasVencendo: (billsVencendo.data ?? []) as BillPayable[],
+        // Formato antigo (BillPayable) para a tela: valor = o que falta pagar
+        contasVencendo: abertas7.map((c) => ({ id: c.id, description: c.nome, amount: Number(c.valor), paid_amount: 0, due_date: c.vencimento, status: c.status })) as unknown as BillPayable[],
         receitaDiaria: Object.entries(dailyMap).sort(([a], [b]) => a.localeCompare(b)).map(([date, value]) => ({ date, value })),
         receitaPorPagamento,
         fontesReceita: sources as string[],

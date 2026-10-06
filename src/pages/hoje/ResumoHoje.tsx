@@ -17,7 +17,8 @@ import { useBankAccounts } from '@/hooks/useFinanceiro';
 import { todayBrasilia, somarDias } from '@/lib/dateUtils';
 import FaturamentoHero from '@/pages/dashboard/components/FaturamentoHero';
 import { usePermissoes } from '@/hooks/usePermissoes';
-import { caixaDaSemana } from '../../../supabase/functions/_shared/previsao';
+import { useContasEmAberto } from '@/hooks/useContasEmAberto';
+import { aPagar, dinheiroXVence, saldoDaConta } from '@/lib/contasAbertas';
 
 const brl = (n: number) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -108,24 +109,13 @@ export function DinheiroHoje() {
   const { user } = useAuth();
   const { hasPermissao } = usePermissoes();
   const { accounts, loading, error: erroBanco } = useBankAccounts();
-  const [contasAbertas, setContasAbertas] = useState<Array<{ nome: string; valor: number; vencimento: string }> | null>(null);
-  const [erroDevo, setErroDevo] = useState(false);
-  const hoje = todayBrasilia();
-  useEffect(() => {
-    if (!user?.tenantId) return;
-    setContasAbertas(null); setErroDevo(false);
-    supabase.from('fin_accounts_payable').select('supplier, description, amount, paid_amount, due_date')
-      .eq('tenant_id', user.tenantId).in('status', ['pending', 'overdue', 'partial']).lte('due_date', somarDias(todayBrasilia(), 7)).limit(1000)
-      .then(({ data, error }) => {
-        if (error) { setErroDevo(true); return; }
-        setContasAbertas(((data ?? []) as Array<{ supplier: string | null; description: string | null; amount: number; paid_amount: number | null; due_date: string }>)
-          .map((b) => ({ nome: b.supplier || b.description || 'Conta', valor: Math.max(0, Number(b.amount) - Number(b.paid_amount ?? 0)), vencimento: b.due_date })));
-      });
-  }, [user?.tenantId]);
+  // Regra única de "em aberto" (fn_contas_em_aberto + src/lib/contasAbertas.ts, 2026-10-07)
+  const { contas: contasAbertas, erro: erroContas, hoje } = useContasEmAberto(user?.tenantId);
+  const erroDevo = !!erroContas;
   const contas = accounts.filter((a) => a.is_active !== false);
-  const noBanco = contas.reduce((s, a) => s + Number(a.synced_balance ?? a.current_balance ?? 0), 0);
-  const cx = contasAbertas ? caixaDaSemana(noBanco, contasAbertas, hoje) : null;
-  const nVencidas = (contasAbertas ?? []).filter((c) => c.vencimento < hoje && c.valor > 0.005).length;
+  const noBanco = contas.reduce((s, a) => s + saldoDaConta(a), 0);
+  const cx = contasAbertas && !erroDevo ? dinheiroXVence(noBanco, contasAbertas, hoje) : null;
+  const nVencidas = aPagar(contasAbertas ?? []).filter((c) => c.vencimento < hoje).length;
   const destino = hasPermissao('fin_pagamentos') ? '/financeiro?tab=pagamentos' : '/financeiro';
   return (
     <button onClick={() => navigate(destino)}

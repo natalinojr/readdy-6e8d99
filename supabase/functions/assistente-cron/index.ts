@@ -419,8 +419,13 @@ async function morningBriefText(admin: SupabaseClient, cfg: Record<string, any>,
     papeisDono.size
       ? admin.from('pendencias').select(COLUNAS_PEND_HOJE).in('tenant_id', [...papeisDono.keys()]).in('status', ['aberta', 'vista']).limit(2000)
       : Promise.resolve({ data: [] }),
-    admin.from('fin_accounts_payable').select('tenant_id, supplier, description, amount, due_date')
-      .in('tenant_id', ids).in('status', ['pending', 'overdue', 'partial']).lte('due_date', ate3).limit(500),
+    // Regra única de "em aberto" (fn_contas_em_aberto, 2026-10-07): saldo que falta, sem compra já paga na entrega
+    admin.rpc('fn_contas_em_aberto', { p_tenants: ids }).then((r) => ({
+      ...r,
+      data: ((r.data ?? []) as Array<{ tenant_id: string; nome: string; descricao: string | null; valor: number; vencimento: string; ja_paga: boolean }>)
+        .filter((c) => !c.ja_paga && c.vencimento <= ate3)
+        .map((c) => ({ tenant_id: c.tenant_id, supplier: c.nome, description: c.descricao ?? c.nome, amount: Number(c.valor), due_date: c.vencimento })),
+    })),
     ownerId
       ? admin.from('tasks').select('title, due_date').or(`created_by.eq.${ownerId},assignee_id.eq.${ownerId}`)
         .eq('is_archived', false).is('completed_at', null).lte('due_date', `${today}T23:59:59-03:00`).order('due_date').limit(60)
@@ -1170,12 +1175,13 @@ async function dueTomorrowText(tenants: Array<{ id: string; name: string }>, tod
   const from = addDays(today, 1), to = addDays(today, wd === 5 ? 3 : 1);
   const [due, overdue, banks] = await Promise.all([
     db()<Array<{ tenant_id: string; supplier: string | null; description: string; amount: number; due_date: string }>>`
-      select tenant_id, supplier, description, amount::float, due_date::text from fin_accounts_payable
-      where tenant_id = any(${ids}::uuid[]) and status <> 'paid' and due_date between ${from}::date and ${to}::date
-      order by due_date, amount desc limit 20`,
+      select tenant_id, nome supplier, coalesce(descricao, nome) description, valor::float amount, vencimento::text due_date
+        from public.fn_contas_em_aberto(${ids}::uuid[])
+       where not ja_paga and vencimento between ${from}::date and ${to}::date
+       order by vencimento, valor desc limit 20`,
     db()<[{ n: number; total: number }]>`
-      select count(*)::int n, coalesce(sum(amount - coalesce(paid_amount,0)),0)::float total from fin_accounts_payable
-      where tenant_id = any(${ids}::uuid[]) and status <> 'paid' and due_date < ${today}::date`,
+      select count(*)::int n, coalesce(sum(valor), 0)::float total from public.fn_contas_em_aberto(${ids}::uuid[])
+       where not ja_paga and vencimento < ${today}::date`,
     db()<Array<{ name: string; bank_name: string | null; synced_balance: number; synced_balance_at: string }>>`
       select name, bank_name, synced_balance::float, synced_balance_at::text from fin_bank_accounts
       where tenant_id = any(${ids}::uuid[]) and is_active and synced_balance is not null order by synced_balance desc`,
@@ -1745,15 +1751,11 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
       // Contas atrasadas (dono, 2026-09-18): uma pendência por loja, com quantas e quanto. Fecha
       // sozinha quando todas forem pagas; volta quando outra atrasar. "Hoje" é o de Brasília.
       const [atr] = await db()<Array<{ n: number; total: number }>>`
-        select count(*)::int n, coalesce(sum(amount - coalesce(paid_amount, 0)), 0)::float total
-          from fin_accounts_payable
-         where tenant_id = ${t.id} and status not in ('paid', 'cancelled')
-           and not (reference_type = 'hr_payroll' and reference_id is not null)  -- folha: cartão "Folha a pagar"
-           -- compra "já paga por Pix/cartão na entrega" (Receber mercadoria): fica pendente só até o extrato — não é
-           -- conta atrasada nem a pagar (mesma regra da aba Pagamentos, tipo ja_paga)
-           and not (reference_type = 'purchase' and exists (select 1 from fin_purchases p
-                      where p.id = fin_accounts_payable.reference_id and p.notes ilike '%já paga %'))
-           and due_date < (now() at time zone 'America/Sao_Paulo')::date`;
+        select count(*)::int n, coalesce(sum(valor), 0)::float total
+          from public.fn_contas_em_aberto(array[${t.id}::uuid])  -- regra única de "em aberto" (2026-10-07)
+         where not ja_paga
+           and not (origem = 'hr_payroll' and reference_id is not null)  -- folha: cartão "Folha a pagar"
+           and vencimento < hoje`;
       if (atr.n > 0) {
         await admin.rpc('fn_pendencia_upsert', {
           p_tenant: t.id, p_kind: 'conta_atrasada', p_ref: 'pendentes',
@@ -1772,15 +1774,11 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
       // virava pendência, no dia seguinte. Uma por loja; fecha quando todas forem pagas e, virando
       // o dia, as que sobrarem passam para "Conta atrasada".
       const [hj] = await db()<Array<{ n: number; total: number }>>`
-        select count(*)::int n, coalesce(sum(amount - coalesce(paid_amount, 0)), 0)::float total
-          from fin_accounts_payable
-         where tenant_id = ${t.id} and status not in ('paid', 'cancelled')
-           and not (reference_type = 'hr_payroll' and reference_id is not null)  -- folha: cartão "Folha a pagar"
-           -- compra "já paga por Pix/cartão na entrega" (Receber mercadoria): fica pendente só até o extrato — não é
-           -- conta atrasada nem a pagar (mesma regra da aba Pagamentos, tipo ja_paga)
-           and not (reference_type = 'purchase' and exists (select 1 from fin_purchases p
-                      where p.id = fin_accounts_payable.reference_id and p.notes ilike '%já paga %'))
-           and due_date = (now() at time zone 'America/Sao_Paulo')::date`;
+        select count(*)::int n, coalesce(sum(valor), 0)::float total
+          from public.fn_contas_em_aberto(array[${t.id}::uuid])  -- regra única de "em aberto" (2026-10-07)
+         where not ja_paga
+           and not (origem = 'hr_payroll' and reference_id is not null)  -- folha: cartão "Folha a pagar"
+           and vencimento = hoje`;
       const refHoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
       if (hj.n > 0) {
         await admin.rpc('fn_pendencia_upsert', {
@@ -2462,11 +2460,11 @@ async function previsaoCaixa(admin: SupabaseClient, lojas: Array<{ id: string; n
         db()<[{ saldo: number; n: number }]>`
           select coalesce(sum(coalesce(synced_balance, current_balance, 0)), 0)::float saldo, count(*)::int n
             from fin_bank_accounts where tenant_id = ${t.id} and is_active = true`,
+        // regra única de "em aberto" (fn_contas_em_aberto, 2026-10-07): a mesma da aba Pagamentos e da Hoje
         db()<Array<{ nome: string; valor: number; vencimento: string }>>`
-          select coalesce(nullif(supplier, ''), description, 'Conta') nome, greatest(amount - coalesce(paid_amount, 0), 0)::float valor,
-                 due_date::text vencimento
-            from fin_accounts_payable
-           where tenant_id = ${t.id} and status in ('pending', 'overdue', 'partial') and due_date <= ${somarDias(hoje, CAIXA_DIAS)}::date`,
+          select nome, valor::float valor, vencimento::text vencimento
+            from public.fn_contas_em_aberto(array[${t.id}::uuid])
+           where not ja_paga and vencimento <= ${somarDias(hoje, CAIXA_DIAS)}::date`,
       ]);
       if (!banco.n) {
         const f = await fecharAvisos(admin, t.id, KIND, linhas, 'sem conta no banco cadastrada', o.dry);

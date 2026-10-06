@@ -15,9 +15,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { invokeWithAuth } from '@/lib/supabase';
-import { useBankAccounts, useBillsPayable } from '@/hooks/useFinanceiro';
+import { useBankAccounts } from '@/hooks/useFinanceiro';
+import { useContasEmAberto } from '@/hooks/useContasEmAberto';
+import { usePermissoes } from '@/hooks/usePermissoes';
+import { resumoContas } from '@/lib/contasAbertas';
 import { usePendencias, kindConfig } from '@/contexts/PendenciasContext';
-import { todayBrasilia, somarDias } from '@/lib/dateUtils';
 import { dreCaixaDoPeriodo } from './DRETab';
 import { mesExtenso } from './dreUi';
 import VazamentosCard from './VazamentosCard';
@@ -57,7 +59,7 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
   const { user } = useAuth();
   const navigate = useNavigate();
   const { accounts, loading: carregandoContas, refresh: recarregarContas } = useBankAccounts();
-  const { bills, loading: carregandoContasPagar, refresh: recarregarContasPagar } = useBillsPayable();
+  const [versaoCP, setVersaoCP] = useState(0);
   const { abertas, recarregar: recarregarPendencias } = usePendencias();
 
   // Saldo real do banco: busca no Inter ao abrir (max_age_min evita repetir ao trocar de aba) e no botão (forçado).
@@ -85,7 +87,7 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
   useEffect(() => { buscarSaldo(false); }, [buscarSaldo]);
   const atualizarTudo = () => {
     buscarSaldo(true);
-    recarregarContasPagar();
+    setVersaoCP((v) => v + 1);
     recarregarPendencias();
     setVersao((v) => v + 1);
   };
@@ -96,24 +98,14 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
   const noBanco = contas.reduce((s, a) => s + saldoDe(a), 0);
   const divergentes = contas.filter((a) => a.synced_balance != null && Math.abs(Number(a.synced_balance) - Number(a.current_balance)) > 1);
 
-  // --- Quanto devo
-  const hoje = todayBrasilia();
-  const em7 = somarDias(hoje, 7);
-  const devo = useMemo(() => {
-    const abertasCP = bills.filter((b) => ['pending', 'overdue', 'partial'].includes(b.status));
-    const resta = (b: (typeof bills)[number]) => Math.max(0, Number(b.amount) - Number(b.paid_amount ?? 0));
-    const soma = (l: typeof abertasCP) => l.reduce((s, b) => s + resta(b), 0);
-    const vencidas = abertasCP.filter((b) => b.due_date < hoje);
-    const semana = abertasCP.filter((b) => b.due_date >= hoje && b.due_date <= em7);
-    const depois = abertasCP.filter((b) => b.due_date > em7);
-    const proximas = [...semana, ...depois].sort((a, b) => a.due_date.localeCompare(b.due_date)).slice(0, 5)
-      .map((b) => ({ id: b.id, data: b.due_date, nome: b.supplier || b.description, valor: resta(b) }));
-    return {
-      total: soma(abertasCP), n: abertasCP.length,
-      vencidas: { n: vencidas.length, v: soma(vencidas) }, semana: { n: semana.length, v: soma(semana) }, depois: { n: depois.length, v: soma(depois) },
-      proximas,
-    };
-  }, [bills, hoje, em7]);
+  // --- Quanto devo — regra única (fn_contas_em_aberto + src/lib/contasAbertas.ts), a mesma da Hoje, da aba
+  // Pagamentos, de Contas a Pagar e do número vermelho do Financeiro (2026-10-07).
+  const { contas: abertasCP, hoje, erro: erroCP } = useContasEmAberto(user?.tenantId, versaoCP);
+  const carregandoContasPagar = abertasCP === null && !erroCP;
+  // "Ver em que pé está" leva a Pagamentos; quem não tem essa aba cai em Contas a Pagar
+  const { hasPermissao } = usePermissoes();
+  const abaPagamentos = hasPermissao('fin_pagamentos') ? 'pagamentos' : 'pagar';
+  const devo = useMemo(() => resumoContas(abertasCP ?? [], hoje), [abertasCP, hoje]);
 
   // --- O mês (mesma função da DRE, regime de caixa)
   const mes = hoje.slice(0, 7);
@@ -176,13 +168,14 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
           </>)}
         </Pergunta>
 
-        <Pergunta titulo="Quanto devo?" icone="ri-bill-line" acao="Abrir Contas a Pagar" onAcao={() => onIrAba('pagar')} destaque={devo.vencidas.n > 0 ? 'red' : undefined}>
-          {carregandoContasPagar ? <Carregando /> : (<>
-            <p className="text-2xl font-bold tabular-nums text-zinc-900">{brl(devo.total)}</p>
+        <Pergunta titulo="Quanto devo?" icone="ri-bill-line" acao="Ver em que pé está cada pagamento" onAcao={() => onIrAba(abaPagamentos)} destaque={devo.vencidas.n > 0 ? 'red' : undefined}>
+          {erroCP ? <p className="text-xs text-zinc-400">Não deu para ler as contas agora — toque em Atualizar.</p> : carregandoContasPagar ? <Carregando /> : (<>
+            <p className="text-2xl font-bold tabular-nums text-zinc-900">{brl(devo.total.v)}</p>
             <Linha rotulo={`Vencidas (${devo.vencidas.n})`} valor={brl(devo.vencidas.v)} cor={devo.vencidas.n ? 'text-red-600' : undefined} />
+            <Linha rotulo={`Vence hoje (${devo.hoje.n})`} valor={brl(devo.hoje.v)} cor={devo.hoje.n ? 'text-red-600' : undefined} />
             <Linha rotulo={`Próximos 7 dias (${devo.semana.n})`} valor={brl(devo.semana.v)} cor={devo.semana.n ? 'text-amber-600' : undefined} />
             <Linha rotulo={`Depois (${devo.depois.n})`} valor={brl(devo.depois.v)} />
-            <p className="text-[11px] text-zinc-400">Saldo que falta pagar das {devo.n} contas em aberto.</p>
+            <p className="text-[11px] text-zinc-400">Saldo que falta pagar das {devo.total.n} contas em aberto.</p>
           </>)}
         </Pergunta>
 
@@ -241,13 +234,13 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
           <div className="px-5 py-3 border-b border-zinc-100">
             <h3 className="text-sm font-bold text-zinc-800">Vence nos próximos dias</h3>
           </div>
-          {carregandoContasPagar ? <div className="p-5"><Carregando /></div> : devo.proximas.length === 0 ? (
+          {erroCP ? <p className="px-5 py-6 text-sm text-zinc-400">Não deu para ler as contas agora.</p> : carregandoContasPagar ? <div className="p-5"><Carregando /></div> : devo.proximas.length === 0 ? (
             <p className="px-5 py-6 text-sm text-zinc-400">Nenhuma conta a vencer.</p>
           ) : (
             <div className="divide-y divide-zinc-100">
               {devo.proximas.map((p) => (
                 <div key={p.id} className="px-5 py-2.5 flex items-center gap-3 text-sm">
-                  <span className="text-xs text-zinc-400 w-10 flex-shrink-0">{ddmm(p.data)}</span>
+                  <span className="text-xs text-zinc-400 w-10 flex-shrink-0">{ddmm(p.vencimento)}</span>
                   <span className="flex-1 truncate text-zinc-700">{p.nome}</span>
                   <b className="tabular-nums">{brl(p.valor)}</b>
                 </div>

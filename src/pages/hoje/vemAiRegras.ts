@@ -79,7 +79,7 @@ export function montarVemAi(d: VemAiDados, filtroLoja = ''): LinhaVemAi[] {
       titulo: `Saem ${brl(total)}`,
       detalhe: [partes.join(' + '), acima ? `acima da meta de vendas do dia (${brl(meta)})` : ''].filter(Boolean).join(' · '),
       sub: lojas, acima,
-      acao: { label: 'Ver', tenantId: cs.length === 1 ? cs[0].tenant_id : '', rota: '/financeiro?tab=pagar' },
+      acao: { label: 'Ver', tenantId: cs.length === 1 ? cs[0].tenant_id : '', rota: '/financeiro?tab=pagamentos&ver=pacote' },
       curta: `${brl(total)} saem ${diaLongo(dia)}`,
     });
   }

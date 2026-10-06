@@ -2,8 +2,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { todayBrasilia, getTodayBrasiliaRange, somarDias } from '@/lib/dateUtils';
+import { usePermissoes } from '@/hooks/usePermissoes';
+import { todayBrasilia, getTodayBrasiliaRange } from '@/lib/dateUtils';
 import AjudaCartao from '@/components/base/AjudaCartao';
+import { resumoContas, type ContaEmAberto } from '@/lib/contasAbertas';
 
 const fmt = (v: number) =>
   new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
@@ -15,6 +17,8 @@ interface FinancialSummary {
   qtdContasHoje: number;
   contas7dias: number;
   qtdContas7dias: number;
+  contasVencidas: number;
+  qtdContasVencidas: number;
 }
 
 const AJUDA_PEDIDOS =
@@ -27,6 +31,9 @@ const AJUDA_PEDIDOS =
 export default function ResumoFinanceiro({ refreshKey = 0 }: { refreshKey?: number }) {
   const { user } = useAuth();
   const navigate = useNavigate();
+  // leva a Pagamentos ("em que pé está"); quem não tem essa aba cai em Contas a Pagar
+  const { hasPermissao } = usePermissoes();
+  const destinoContas = hasPermissao('fin_pagamentos') ? '/financeiro?tab=pagamentos' : '/financeiro?tab=pagar';
   const [data, setData] = useState<FinancialSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState(false);
@@ -39,7 +46,6 @@ export default function ResumoFinanceiro({ refreshKey = 0 }: { refreshKey?: numb
       // Datas em fuso de Brasília — evita "virar o dia" às 21h (UTC) e zerar o card
       const today = todayBrasilia();
       const { fromTs, toTs } = getTodayBrasiliaRange();
-      const in7 = somarDias(today, 7);
 
       const [pagamentosRes, pendentesRes, contasRes] = await Promise.all([
         // Pagamentos de hoje de pedidos entregues (sem treino/rascunho — antes contava pedido de treino)
@@ -64,33 +70,26 @@ export default function ResumoFinanceiro({ refreshKey = 0 }: { refreshKey?: numb
           .eq('ifood_repasse', false)
           .gte('created_at', fromTs)
           .lte('created_at', toTs),
-        // A pagar até 7 dias: pendente ou pago em parte, pelo saldo devedor (mesma conta dos alertas)
-        supabase
-          .from('fin_accounts_payable')
-          .select('amount, paid_amount, due_date')
-          .eq('tenant_id', user.tenantId)
-          .in('status', ['pending', 'partial'])
-          .gte('due_date', today)
-          .lte('due_date', in7),
+        // Contas em aberto: regra única (fn_contas_em_aberto + src/lib/contasAbertas.ts, 2026-10-07) — os mesmos
+        // números do Painel, da Hoje e da aba Pagamentos (antes deixava as vencidas de fora)
+        supabase.rpc('fn_contas_em_aberto', { p_tenants: [user.tenantId] }),
       ]);
       const falha = pagamentosRes.error ?? pendentesRes.error ?? contasRes.error;
       if (falha) throw falha;
 
       const soma = (rows: Array<{ amount?: number; total_amount?: number }> | null, k: 'amount' | 'total_amount') =>
         (rows ?? []).reduce((s, r) => s + Number(r[k] ?? 0), 0);
-      const contas = ((contasRes.data ?? []) as Array<{ amount: number; paid_amount: number | null; due_date: string }>)
-        .map((c) => ({ due_date: c.due_date, amount: Number(c.amount) - Number(c.paid_amount ?? 0) }))
-        .filter((c) => c.amount > 0.005);
-      const deHoje = contas.filter((c) => c.due_date === today);
-      const proximas = contas.filter((c) => c.due_date !== today);
+      const r = resumoContas((contasRes.data ?? []) as ContaEmAberto[], today);
 
       setData({
         receitaPaga: soma(pagamentosRes.data as Array<{ amount: number }> | null, 'amount'),
         receitaPendente: soma(pendentesRes.data as Array<{ total_amount: number }> | null, 'total_amount'),
-        contasHoje: soma(deHoje, 'amount'),
-        qtdContasHoje: deHoje.length,
-        contas7dias: soma(proximas, 'amount'),
-        qtdContas7dias: proximas.length,
+        contasHoje: r.hoje.v,
+        qtdContasHoje: r.hoje.n,
+        contas7dias: r.semana.v,
+        qtdContas7dias: r.semana.n,
+        contasVencidas: r.vencidas.v,
+        qtdContasVencidas: r.vencidas.n,
       });
     } catch (e) {
       console.error('[ResumoFinanceiro]', e);
@@ -149,9 +148,15 @@ export default function ResumoFinanceiro({ refreshKey = 0 }: { refreshKey?: numb
         </div>
 
         <button
-          onClick={() => navigate('/financeiro', { state: { activeTab: 'pagar' } })}
+          onClick={() => navigate(destinoContas)}
           className="w-full text-left px-3 py-2 bg-zinc-50 hover:bg-zinc-100 rounded-lg text-xs space-y-1 cursor-pointer transition-colors"
         >
+          {data.qtdContasVencidas > 0 && (
+            <span className="flex items-center justify-between gap-2 font-semibold text-red-700">
+              <span><i className="ri-alarm-warning-line" /> {data.qtdContasVencidas} conta{data.qtdContasVencidas !== 1 ? 's' : ''} vencida{data.qtdContasVencidas !== 1 ? 's' : ''}</span>
+              <b className="tabular-nums">{fmt(data.contasVencidas)}</b>
+            </span>
+          )}
           <span className="flex items-center justify-between gap-2">
             <span className={data.qtdContasHoje > 0 ? 'font-semibold text-red-700' : 'text-zinc-500'}>
               <i className="ri-calendar-event-line" /> {data.qtdContasHoje > 0 ? `${data.qtdContasHoje} conta${data.qtdContasHoje !== 1 ? 's' : ''} vence${data.qtdContasHoje !== 1 ? 'm' : ''} hoje` : 'Nenhuma conta vence hoje'}
