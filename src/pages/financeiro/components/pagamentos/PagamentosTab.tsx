@@ -170,7 +170,7 @@ export default function PagamentosTab() {
             <CartaoTipo icone="ri-truck-line" cor="text-amber-700 bg-amber-50" titulo="Mercadoria a prazo" grande={`${brl(emAberto)} em aberto`} onAbrir={() => irVer('mercadoria')}
               linhas={[
                 naoPague ? { tom: 'red', t: `${naoPague} com aviso — não pague ainda` } : null,
-                dados?.notas.length ? { tom: 'amber', t: `${dados.notas.length} nota${dados.notas.length > 1 ? 's' : ''} ainda não virou compra` } : null,
+                dados?.notas.length ? { tom: 'amber', t: `${dados.notas.length} ${dados.notas.length > 1 ? 'notas ainda não viraram' : 'nota ainda não virou'} compra` } : null,
                 semBoleto ? { tom: 'amber', t: `${semBoleto} sem boleto ainda` } : null,
                 prontas ? { tom: 'green', t: `${prontas} chegaram certo — prontas para pagar` } : null,
               ]} />
