@@ -355,7 +355,6 @@ export function ClubePainelKiosk({ status, resumo, reservas, api, onContinuar, t
             <p className="text-zinc-900 text-2xl font-black">Aponte a câmera do celular</p>
             <p className="text-zinc-500 text-sm mb-4">Abre o seu clube já logado. O QR vale por 10 minutos e uma leitura.</p>
             <div className="bg-white p-3 inline-block"><QRCode value={qrUrl} size={240} /></div>
-            <p className="text-zinc-400 text-xs mt-3">Depois, é só entrar em {new URL(qrUrl).host}{new URL(qrUrl).pathname}</p>
             <button onClick={() => setQrUrl(null)} className="w-full mt-4 py-4 bg-zinc-900 text-white font-bold rounded-2xl cursor-pointer">Pronto</button>
           </div>
         </div>
@@ -390,7 +389,7 @@ export default function ClubeEntradaKiosk({ status, resumo, reservas, api, onCon
   const [nome, setNome] = useState('');
   const [celular, setCelular] = useState('');
   const [nascimento, setNascimento] = useState('');
-  const [aceita, setAceita] = useState(false);
+  const [aceita, setAceita] = useState(true);
   const [ofertas, setOfertas] = useState(true);
   const [boasVindas, setBoasVindas] = useState(false);
 

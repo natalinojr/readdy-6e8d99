@@ -5,6 +5,8 @@ import type { ClubeResumo, ClubeReserva } from './fidelidade';
 
 export interface ClubeProgramaPublico {
   nome: string;
+  /** WhatsApp da loja para o cliente salvar nos contatos (com DDI). */
+  contato?: { nome: string; whatsapp: string } | null;
   pontos: { pontos_por_real: number; pedido_minimo: number; validade_meses: number; bonus_cadastro: number; bonus_aniversario: number; canais: Record<string, boolean> } | null;
   niveis: { id: string; nome: string; emoji: string; cor: string; min_compras: number; multiplicador: number; beneficios: string }[];
   janela_dias: number;

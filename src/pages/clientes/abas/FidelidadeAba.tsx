@@ -12,6 +12,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { invokeWithAuth } from '@/lib/supabase';
 import RoletaSvg, { rotacaoParaFatia } from '@/components/fidelidade/RoletaSvg';
 import { avisar, confirmar } from '@/components/base/Dialogos';
+import { formatPhoneBR } from '@/lib/deliveryPhone';
 import JogosAba from './JogosAba';
 import {
   CORES, avisosConfigPorSecao, chancesRoleta, custoPorPonto, distribuirNiveis, novoId, retornoPercentual, usosDaRecompensa,
@@ -445,6 +446,15 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
               className={INPUT + ' font-semibold'}
             />
           </Campo>
+          <div className="mt-2">
+            <Campo label="WhatsApp da loja (o cliente salva nos contatos pela página do clube)">
+              <input
+                value={formatPhoneBR(cfg.whatsapp_loja)} disabled={ro} inputMode="tel" placeholder="(41) 99999-9999 — vazio usa o telefone da loja"
+                onChange={(e) => mudar((c) => ({ ...c, whatsapp_loja: e.target.value.replace(/\D/g, '').slice(0, 11) }))}
+                className={INPUT}
+              />
+            </Campo>
+          </div>
         </div>
         <div className={`md:w-[26rem] rounded-lg p-3 border flex items-start gap-3 ${ligado ? 'bg-emerald-50 border-emerald-200' : 'bg-white/70 border-amber-200'}`}>
           <Chave label="Programa ligado" ligado={ligado} disabled={ro} onChange={(v) => { void alternarPrograma(v); }} />
