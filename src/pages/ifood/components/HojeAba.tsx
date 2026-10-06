@@ -144,6 +144,18 @@ export default function HojeAba({ tenantId, loja, lojas, acesso, dados, dados30,
   }, [tenantId]);
 
   const autorizada = (id: string) => !!config && config.order_enabled && (config.order_merchant_ids ?? []).includes(id);
+  // Já autorizada: liga "receber os pedidos" ali mesmo, sem trocar de tela.
+  const [ligando, setLigando] = useState<string | null>(null);
+  const ligarAqui = async (id: string) => {
+    if (!config) return;
+    setLigando(id);
+    const ids = [...new Set([...(config.order_merchant_ids ?? []), id])];
+    const r = await ifoodShipping('set_options', tenantId, { order_enabled: true, order_merchant_ids: ids });
+    if (r.success) setConfig({ ...config, order_enabled: true, order_merchant_ids: ids });
+    setLigando(null);
+  };
+  // Autorizada no Portal (código já colado), mas "receber os pedidos" desligado para ela.
+  const soFaltaLigar = (id: string) => !!config && (config.merchants ?? []).some((m) => m.id === id && !m.outra_loja);
   useEffect(() => {
     if (!config) return;
     let vivo = true;
@@ -441,8 +453,15 @@ export default function HojeAba({ tenantId, loja, lojas, acesso, dados, dados30,
               return (
                 <LinhaLoja key={l.id} bola="apagada"
                   titulo={`${l.nome}: os pedidos dela ainda não chegam ao ERPOS`}
-                  sub="O dinheiro (repasse e taxas) já chega. Para ver os pedidos e os itens na hora, o iFood pede um código: Conectar › colar o código no Portal do Parceiro (2 min)."
-                  direita={acesso.configurar ? <button type="button" className={btn('p', 'sm')} onClick={() => irPara('conexao')}>Receber os pedidos</button> : undefined} />
+                  sub={soFaltaLigar(l.id)
+                    ? 'A loja já está autorizada no iFood: é só tocar em "Receber os pedidos".'
+                    : 'O dinheiro (repasse e taxas) já chega. Para os pedidos, o iFood pede um código: toque em Autorizar e siga os 2 passos (uns 2 minutos).'}
+                  direita={acesso.configurar ? (
+                    <button type="button" className={btn('p', 'sm')} disabled={ligando === l.id}
+                      onClick={() => (soFaltaLigar(l.id) ? ligarAqui(l.id) : irPara('conexao', { autorizar: l.id }))}>
+                      {ligando === l.id ? 'Ligando…' : soFaltaLigar(l.id) ? 'Receber os pedidos' : 'Autorizar'}
+                    </button>
+                  ) : undefined} />
               );
             }
             const sit = situacoes[l.id];

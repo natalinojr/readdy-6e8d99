@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { confirmar } from '@/components/base/Dialogos';
 import { invokeWithAuth } from '@/lib/supabase';
@@ -79,6 +80,8 @@ export default function ConexaoAba({ tenantId, lojas, dados }: AbaProps) {
   }, [tenantId]);
 
   const carregar = useCallback(async () => {
+    // Relê sozinho as lojas que o iFood autorizou (antes era o botão "Atualizar lojas"). Falha aqui não trava a tela.
+    await ifoodShipping('refresh_merchants', tenantId, {}).catch(() => null);
     const c = await lerCfg();
     await lerFin();
     // Loja e avaliações: o módulo Loja do iFood ainda pode estar esperando liberação. Só confere com uma loja autorizada.
@@ -91,6 +94,10 @@ export default function ConexaoAba({ tenantId, lojas, dados }: AbaProps) {
   }, [lerCfg, lerFin, tenantId]);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Veio da Hoje com ?autorizar=<loja>: abre direto o passo que falta dela (uma tela só, sem procurar botão).
+  const [params, setParams] = useSearchParams();
+  const pedidaParaAutorizar = params.get('autorizar');
 
   /** Chama o ifood-shipping; devolve a resposta ou null (e já avisa o erro). */
   const run = async (key: string, action: string, extra: Record<string, unknown>, sucesso?: string) => {
@@ -210,9 +217,17 @@ export default function ConexaoAba({ tenantId, lojas, dados }: AbaProps) {
     const r = await ifoodShipping<{ merchants?: { id: string; name: string }[]; aviso?: string | null }>('confirm_authorization', tenantId, { authorization_code: authCode.trim() });
     if (!r.success) { setFolhaBusy(''); setFolhaMsg({ tom: 'erro', t: r.error || 'O iFood não aceitou o código.' }); return; }
     setAuthCode(''); setCodigo(null);
-    const rf = await ifoodShipping<{ total?: number; aviso?: string | null }>('refresh_merchants', tenantId, {});
-    const nova = await lerCfg();
-    const achou = (nova?.merchants ?? []).find((m) => m.id === alvo.id);
+    let rf = await ifoodShipping<{ total?: number; aviso?: string | null }>('refresh_merchants', tenantId, {});
+    let nova = await lerCfg();
+    let achou = (nova?.merchants ?? []).find((m) => m.id === alvo.id);
+    // Loja recém-autorizada demora um pouco para aparecer no iFood: tenta de novo sozinho (até ~30 s).
+    for (let t = 0; t < 3 && !achou; t++) {
+      setFolhaMsg({ tom: 'ok', t: 'O iFood aceitou o código. Esperando a loja aparecer…' });
+      await new Promise((ok) => setTimeout(ok, 10_000));
+      rf = await ifoodShipping<{ total?: number; aviso?: string | null }>('refresh_merchants', tenantId, {});
+      nova = await lerCfg();
+      achou = (nova?.merchants ?? []).find((m) => m.id === alvo.id);
+    }
     if (achou && !achou.outra_loja) {
       const ids = [...new Set([...(nova?.order_merchant_ids ?? []), achou.id])];
       const s = await ifoodShipping<{ aviso?: string | null }>('set_options', tenantId, { order_enabled: true, order_merchant_ids: ids });
@@ -224,7 +239,7 @@ export default function ConexaoAba({ tenantId, lojas, dados }: AbaProps) {
     setFolhaBusy('');
     if (achou?.outra_loja) setFolhaMsg({ tom: 'aviso', t: `${curto(alvo.nome)} já é da loja "${achou.outra_loja}" no ERPOS e não pode ser ligada aqui.` });
     else if ((nova?.merchants ?? []).length > 0) setFolhaMsg({ tom: 'aviso', t: `Essa autorização não trouxe ${curto(alvo.nome)}. No Portal do Parceiro, troque para a loja que falta (seletor de loja no topo), gere um código novo aqui e repita.` });
-    else setFolhaMsg({ tom: 'aviso', t: rf.aviso || r.aviso || 'O iFood aceitou, mas a loja ainda não apareceu. Pode levar alguns minutos para aparecer.' });
+    else setFolhaMsg({ tom: 'aviso', t: rf.aviso || r.aviso || 'O iFood aceitou, mas a loja ainda não apareceu. Feche e abra esta tela em alguns minutos: ela confere sozinha.' });
   };
 
   const atualizarLojas = async () => {
@@ -235,7 +250,7 @@ export default function ConexaoAba({ tenantId, lojas, dados }: AbaProps) {
     if (!rf.success) { setFolhaMsg({ tom: 'erro', t: rf.error || 'Não deu para atualizar.' }); return; }
     const achou = (nova?.merchants ?? []).find((m) => m.id === autorizando?.id);
     setFolhaMsg(achou
-      ? { tom: 'ok', t: `${curto(autorizando?.nome ?? 'A loja')} apareceu. Toque em "Ligar pedidos" para continuar.` }
+      ? { tom: 'ok', t: `${curto(autorizando?.nome ?? 'A loja')} apareceu. Toque em "Receber os pedidos" na lista de lojas.` }
       : { tom: 'aviso', t: rf.aviso || 'Ainda não apareceu. Loja recém-autorizada pode levar alguns minutos — espere um pouco e atualize de novo.' });
   };
 
@@ -243,6 +258,17 @@ export default function ConexaoAba({ tenantId, lojas, dados }: AbaProps) {
     const ids = [...new Set([...(cfg?.order_merchant_ids ?? []), id])];
     await run('ligar' + id, 'set_options', { order_enabled: true, order_merchant_ids: ids }, `Pedidos de ${curto(nome)} ligados.`);
   };
+
+  // Pedido vindo da Hoje (?autorizar=<loja>): faz o que falta daquela loja e limpa o parâmetro.
+  useEffect(() => {
+    if (!pedidaParaAutorizar || carregando) return;
+    const l = lista.find((x) => x.id === pedidaParaAutorizar);
+    const p = new URLSearchParams(params); p.delete('autorizar'); setParams(p, { replace: true });
+    if (!l || !podeEditar) return;
+    if (l.situacao === 'ligar') void ligarPedidos(l.id, l.nome);
+    else if (l.situacao !== 'outra' && (l.situacao !== 'ligada' || !l.dinheiro)) abrirAutorizar(l);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pedidaParaAutorizar, carregando]);
 
   // ── O que fazer com os pedidos ──
   const escolherModo = async (modo: Modo) => {
@@ -286,7 +312,7 @@ export default function ConexaoAba({ tenantId, lojas, dados }: AbaProps) {
   const nomeFin = (m: FinMerchant) => curto(nomeLoja(lojas, m.merchant_id) !== 'Loja iFood' ? nomeLoja(lojas, m.merchant_id) : m.name ?? m.merchant_id.slice(0, 8));
   const detalheDinheiro = lista.length === 0 ? 'Ainda não conectado.' : `${lista.filter((l) => l.situacao !== 'outra').map((l) => (l.dinheiro ? `${l.curto} ✓` : `${l.curto} falta autorizar`)).join(' · ')}${finLigadas.length ? (fin?.auto_sync !== false ? ' · busca todo dia às 7h' : ' · busca automática desligada') : ''}`;
   const detalhePedidos = lista.length === 0 ? 'Nenhuma loja do iFood encontrada.' : lista.map((l) => (
-    l.situacao === 'ligada' ? `${l.curto} ✓` : l.situacao === 'outra' ? `${l.curto} é de outra loja` : `${l.curto} falta autorizar`
+    l.situacao === 'ligada' ? `${l.curto} ✓` : l.situacao === 'outra' ? `${l.curto} é de outra loja` : l.situacao === 'ligar' ? `${l.curto} autorizada, desligada` : `${l.curto} falta autorizar`
   )).join(' · ');
   const entregaLiberada = lojaLiberada === true;
 
@@ -304,54 +330,47 @@ export default function ConexaoAba({ tenantId, lojas, dados }: AbaProps) {
 
       <Colunas>
         <div className="min-w-0 space-y-4">
-          <div className="space-y-2">
-            <Linha icone="ri-money-dollar-circle-line" titulo="Dinheiro (repasses e taxas)" detalhe={detalheDinheiro}
-              direita={lista.length === 0
-                ? <button className={btn('p', 'sm')} onClick={() => setModalDinheiro(true)}>Conectar</button>
-                : faltamDinheiro.length === 0 ? <Selo tom="ligado" />
-                : (
-                  <div className="flex flex-col gap-1.5 items-end">
-                    {podeEditar && faltamDinheiro.filter((l) => l.situacao === 'ligada').map((l) => (
-                      <button key={l.id} disabled={!!busy} className={btn('p', 'sm')} onClick={() => abrirAutorizar(l)}>Autorizar {l.curto}</button>
-                    ))}
-                    {!faltamDinheiro.some((l) => l.situacao === 'ligada') && <Selo tom="falta" />}
-                  </div>
-                )} />
-            <Linha icone="ri-file-list-3-line" titulo="Pedidos e itens" detalhe={detalhePedidos}
-              direita={lista.length === 0 ? (podeEditar ? <button className={btn('p', 'sm')} onClick={() => setModalEntrega(true)}>Conectar</button> : <Selo tom="falta" />)
-                : faltamPedidos.length === 0 ? <Selo tom="ligado" /> : (
-                  <div className="flex flex-col gap-1.5 items-end">
-                    {podeEditar && faltamPedidos.map((l) => l.situacao === 'ligar'
-                      ? <button key={l.id} disabled={!!busy} className={btn('p', 'sm')} onClick={() => ligarPedidos(l.id, l.nome)}>{busy === 'ligar' + l.id ? '…' : `Ligar ${l.curto}`}</button>
-                      : <button key={l.id} disabled={!!busy} className={btn('p', 'sm')} onClick={() => abrirAutorizar(l)}>Autorizar {l.curto}</button>)}
-                    {!podeEditar && <Selo tom="falta" />}
-                  </div>
-                )} />
-            <Linha icone="ri-store-3-line" titulo="Loja e avaliações"
-              detalhe={lojaLiberada === null ? 'Falta autorizar uma loja nos pedidos.' : entregaLiberada ? 'Situação, pausas, horário e avaliações na aba Loja.' : 'Esperando o iFood liberar.'}
-              direita={entregaLiberada ? <Selo tom="ligado" /> : <Selo tom={lojaLiberada === null ? 'falta' : 'aguardando'} />} />
-            <Linha icone="ri-e-bike-2-line" titulo="Entregador iFood no seu delivery"
-              detalhe={!entregaLiberada ? 'Esperando o iFood liberar.' : cfg?.shipping_enabled ? `Ligado${cfg.shipping_merchant_name ? ` · despacha pela ${curto(cfg.shipping_merchant_name)}` : ''}.` : 'Desligado. Para ligar, abra "Opções de entrega e avançado".'}
-              direita={entregaLiberada && cfg?.shipping_enabled ? <Selo tom="ligado" /> : <Selo tom={entregaLiberada ? 'falta' : 'aguardando'} />} />
-          </div>
-
           <div>
             <SecaoTitulo titulo="Lojas do iFood desta loja" />
             <div className="space-y-2">
               {lista.length === 0 && <Nota>Nenhuma loja do iFood encontrada ainda.</Nota>}
               {lista.map((l) => (
-                <Linha key={l.id} icone="ri-store-2-line" titulo={l.nome} detalhe={`${l.short ? `${l.short} · ` : ''}${l.situacao === 'ligada' ? 'pedidos ligados' : l.situacao === 'outra' ? `é da loja ${l.outra} no ERPOS` : l.situacao === 'ligar' ? 'autorizada, falta ligar os pedidos' : 'pedidos ainda não autorizados'}`}
-                  direita={l.situacao === 'ligada' ? <Selo tom="ligado" texto="ligada" /> : l.situacao === 'outra' ? <Etiqueta tom="zinc">de outra loja</Etiqueta> : <Etiqueta tom="amber">falta 1 passo</Etiqueta>} />
+                <Linha key={l.id} icone="ri-store-2-line" titulo={l.nome}
+                  detalhe={l.situacao === 'outra' ? `é da loja ${l.outra} no ERPOS`
+                    : `Pedidos: ${l.situacao === 'ligada' ? 'chegando ✓' : l.situacao === 'ligar' ? 'autorizada, desligada' : 'falta autorizar'} · Dinheiro: ${l.dinheiro ? 'chegando ✓' : 'falta autorizar'}`}
+                  direita={l.situacao === 'ligada' && l.dinheiro ? <Selo tom="ligado" texto="ligada" />
+                    : l.situacao === 'ligada' ? (podeEditar ? <button type="button" className={btn('p', 'sm')} disabled={!!busy} onClick={() => abrirAutorizar(l)}>Autorizar o dinheiro</button> : <Etiqueta tom="amber">falta 1 passo</Etiqueta>)
+                    : l.situacao === 'outra' ? <Etiqueta tom="zinc">de outra loja</Etiqueta>
+                    // Já autorizada: falta só ligar "receber os pedidos" para ela (um toque, sem código).
+                    : !podeEditar ? <Etiqueta tom="amber">falta 1 passo</Etiqueta>
+                    : l.situacao === 'ligar' ? <button type="button" className={btn('p', 'sm')} disabled={!!busy} onClick={() => ligarPedidos(l.id, l.nome)}>{busy === 'ligar' + l.id ? '…' : 'Receber os pedidos'}</button>
+                    : <button type="button" className={btn('p', 'sm')} disabled={!!busy} onClick={() => abrirAutorizar(l)}>Autorizar</button>} />
               ))}
             </div>
           </div>
+          <div className="space-y-2">
+            <Linha icone="ri-money-dollar-circle-line" titulo="Dinheiro (repasses e taxas)" detalhe={detalheDinheiro}
+              direita={lista.length === 0
+                ? <button className={btn('p', 'sm')} onClick={() => setModalDinheiro(true)}>Conectar</button>
+                : <Selo tom={faltamDinheiro.length === 0 ? 'ligado' : 'falta'} />} />
+            <Linha icone="ri-file-list-3-line" titulo="Pedidos e itens" detalhe={detalhePedidos}
+              direita={lista.length === 0 ? (podeEditar ? <button className={btn('p', 'sm')} onClick={() => setModalEntrega(true)}>Conectar</button> : <Selo tom="falta" />)
+                : <Selo tom={faltamPedidos.length === 0 ? 'ligado' : 'falta'} />} />
+            <Linha icone="ri-store-3-line" titulo="Loja e avaliações"
+              detalhe={lojaLiberada === null ? 'Falta autorizar uma loja nos pedidos.' : entregaLiberada ? 'Situação, pausas, horário e avaliações na aba Loja.' : 'Esperando o iFood liberar.'}
+              direita={entregaLiberada ? <Selo tom="ligado" /> : <Selo tom={lojaLiberada === null ? 'falta' : 'aguardando'} />} />
+            <Linha icone="ri-e-bike-2-line" titulo="Entregador iFood no seu delivery"
+              detalhe={!entregaLiberada ? 'Esperando o iFood liberar.' : cfg?.shipping_enabled ? `Ligado${cfg.shipping_merchant_name ? ` · despacha pela ${curto(cfg.shipping_merchant_name)}` : ''}.` : 'Desligado. Para ligar, abra "Entregador iFood e avançado".'}
+              direita={entregaLiberada && cfg?.shipping_enabled ? <Selo tom="ligado" /> : <Selo tom={entregaLiberada ? 'falta' : 'aguardando'} />} />
+          </div>
+
         </div>
 
         <div className="min-w-0 space-y-4">
           <div>
             <SecaoTitulo titulo="O que fazer com os pedidos do iFood?" />
             {cfg && cfg.order_enabled === false && (
-              <Nota className="mb-2">Os pedidos do iFood ainda não estão ligados nesta loja. Autorize as lojas ao lado para começar.</Nota>
+              <Nota className="mb-2">Os pedidos do iFood ainda não chegam nesta loja. Use o botão de cada loja na lista "Lojas do iFood desta loja".</Nota>
             )}
             <div className="space-y-2">
               <Modo ativo={cfg?.order_mode === 'read_only'} titulo="Só acompanhar (como está hoje)" disabled={!podeEditar || !!busy || !cfg} onClick={() => escolherModo('read_only')}>
@@ -402,7 +421,7 @@ export default function ConexaoAba({ tenantId, lojas, dados }: AbaProps) {
             <SecaoTitulo titulo="Mais opções" />
             <div className="flex flex-wrap gap-2">
               <button className={btn('out', 'sm')} onClick={() => setModalDinheiro(true)}><i className="ri-upload-2-line" /> Importar arquivo e opções do dinheiro</button>
-              <button className={btn('out', 'sm')} onClick={() => setModalEntrega(true)}><i className="ri-settings-3-line" /> Opções de entrega e avançado</button>
+              <button className={btn('out', 'sm')} onClick={() => setModalEntrega(true)}><i className="ri-settings-3-line" /> Entregador iFood e avançado</button>
             </div>
           </div>
         </div>
