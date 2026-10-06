@@ -224,6 +224,9 @@ export interface CustoLinha {
   semFicha: string[];
   balcao: number | null;
   alvo: string | null;
+  /** Comida de cada parte (dono 06/10: ver o custo por item do pedido): o próprio item (ficha dele × qtd) e cada
+   *  complemento (ficha × qtd). null = falta ficha nessa parte; 0 = parte sem custo (ex.: "sem cebola"). */
+  partes: { item: number | null; complementos: (number | null)[] };
 }
 
 /** Custo de um item do pedido com os complementos. Complemento sem ligação e sem preço (ex.: "sem cebola") não pede ficha. */
@@ -232,19 +235,21 @@ export function custoDaLinha(mapa: MapaCustos, it: ItemPedidoIfood): CustoLinha 
   const base = custoDoItem(mapa, it.nome);
   let comida: number | null = 0;
   let balcao: number | null = 0;
+  const partes: CustoLinha['partes'] = { item: base?.custo == null ? null : r2(base.custo * it.qtd), complementos: [] };
   if (base?.custo == null) { semFicha.push(it.nome); comida = null; } else comida += base.custo * it.qtd;
   if (base?.precoBalcao == null) balcao = null; else balcao += base.precoBalcao * it.qtd;
   for (const c of it.complementos) {
     const cc = custoDoComplemento(mapa, c.nome, c.grupo);
-    if (cc?.custo != null) { if (comida != null) comida += cc.custo * c.qtd; }
+    if (cc?.custo != null) { if (comida != null) comida += cc.custo * c.qtd; partes.complementos.push(r2(cc.custo * c.qtd)); }
     // Combo de escolhas: a comida é o que o cliente escolheu, então todo complemento precisa de ficha (até a Coca grátis).
-    else if (cc || c.preco > 0.005 || base?.tipo === 'escolhas') { semFicha.push(c.nome); comida = null; }
+    else if (cc || c.preco > 0.005 || base?.tipo === 'escolhas') { semFicha.push(c.nome); comida = null; partes.complementos.push(null); }
+    else partes.complementos.push(0);
     if (balcao != null) {
       if (cc?.precoBalcao != null) balcao += cc.precoBalcao * c.qtd;
       else if (c.preco > 0.005) balcao = null;
     }
   }
-  return { nome: it.nome, qtd: it.qtd, total: it.total, comida: comida == null ? null : r2(comida), semFicha, balcao: balcao == null ? null : r2(balcao), alvo: base?.alvo ?? null };
+  return { nome: it.nome, qtd: it.qtd, total: it.total, comida: comida == null ? null : r2(comida), semFicha, balcao: balcao == null ? null : r2(balcao), alvo: base?.alvo ?? null, partes };
 }
 
 // ── Pedido da área (pedido + dinheiro + comida) ──────────────────────────────

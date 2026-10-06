@@ -76,3 +76,21 @@ describe('colunas de custo do pedido (Pedidos › Custos)', () => {
     expect(resultadoDoPedido(semFicha, [{ nome: 'Simples', tipo: 'percentual', base: 'nota', valor: 6, ativo: true }]).resultado).toBeNull();
   });
 });
+
+describe('custo por parte do item (dono 06/10: ver o custo por item do pedido)', () => {
+  it('combo de escolhas: o combo não custa, cada escolha tem a comida dela; complemento sem custo = 0', async () => {
+    const { custoDaLinha } = await import('@/lib/ifoodArea');
+    const mapa: MapaCustos = new Map([
+      ['item|combo burrito', { custo: 0, alvo: 'Combo de escolhas', tipo: 'escolhas', precoBalcao: null }],
+      ['complemento|burritos chili com carne|escolha', { custo: 9.4, alvo: 'Burrito Classic', tipo: 'item', precoBalcao: 38 }],
+      ['complemento|coca cola zero 350 ml|refri', { custo: 2.9, alvo: 'Coca Zero', tipo: 'item', precoBalcao: 8 }],
+    ]);
+    const l = custoDaLinha(mapa, { nome: 'Combo Burrito', qtd: 1, total: 54.89, obs: null, complementos: [
+      { nome: 'Burritos Chili com Carne', grupo: 'Escolha', qtd: 1, preco: 49.9 },
+      { nome: 'Coca Cola Zero 350 Ml', grupo: 'Refri', qtd: 1, preco: 0 },
+      { nome: 'Guacamole 50g', grupo: 'Extras', qtd: 1, preco: 4.99 },
+    ] } as any);
+    expect(l.partes).toEqual({ item: 0, complementos: [9.4, 2.9, null] });
+    expect(l.comida).toBeNull(); // guacamole cobra à parte e não tem ficha
+  });
+});
