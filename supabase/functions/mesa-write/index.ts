@@ -4,6 +4,7 @@ import { deductStockForSkipKdsItems, runStockInBackground } from "../_shared/sto
 import { descontoClubeServidor, idsValidos, sessaoDoClube, vincularClube } from "../_shared/clube-servidor.ts";
 import { activeLocales, normalizeLocale, loadTranslations, decorate, decorateHighlights, translationsPayload } from "../_shared/menu-i18n.ts";
 import { promoPrecosDeHoje } from "../_shared/promo-item.ts";
+import { idsPausados } from "../_shared/cardapio-pausa.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -275,6 +276,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       // Item de categoria apagada (soft delete) = indisponivel (regra do fn_get_full_menu).
       const deletedCatIds = new Set((catRes.data ?? []).filter((c: Record<string, unknown>) => c.deleted_at != null).map((c: Record<string, unknown>) => String(c.id)));
       for (const [mid, m] of [...menuMap]) if (m.category_id != null && deletedCatIds.has(String(m.category_id))) menuMap.delete(mid);
+      // "Acabou hoje": item pausado = indisponível (carrinho montado antes da pausa não passa).
+      const pausadosPedido = await idsPausados(admin, tenant_id, [...menuMap.keys()]);
+      for (const mid of pausadosPedido) menuMap.delete(mid);
       const groupMap = new Map<string, Record<string, unknown>>();
       for (const g of grpRes.data ?? []) groupMap.set(String(g.id), g);
       const optMap = new Map<string, Record<string, unknown>>();
@@ -476,7 +480,9 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       ]);
       if (deletedCatsResult.error) throw deletedCatsResult.error;
       const deletedCatIds = new Set(((deletedCatsResult.data ?? []) as Array<{ id: string }>).map((c) => c.id));
-      if (itemResult.data) itemResult.data = (itemResult.data as Array<Record<string, unknown>>).filter((it) => !(it.category_id && deletedCatIds.has(it.category_id as string)));
+      // "Acabou hoje" (menu_items.pausado_ate > agora): some do cardápio da mesa/QR até a loja abrir de novo.
+      const pausados = await idsPausados(admin, tenant_id);
+      if (itemResult.data) itemResult.data = (itemResult.data as Array<Record<string, unknown>>).filter((it) => !(it.category_id && deletedCatIds.has(it.category_id as string)) && !pausados.has(String(it.id)));
 
       const options = (optResult.data ?? []).map((o: Record<string, unknown>) => ({ ...o, option_group_id: o.group_id }));
 

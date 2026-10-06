@@ -19,6 +19,7 @@ import type { Categoria, Combo, Item } from '@/types/cardapio';
 import type { InsumoFaltando } from '@/hooks/useItensSemEstoque';
 import { reportError } from '@/lib/errorReporter';
 import { visivelAgora } from '@/lib/horarioExibicao';
+import { estaPausado } from '@/lib/cardapioLista';
 
 const FN = 'autoatendimento.itemEscondido';
 // Horário de exibição (2026-10-02) esconde de propósito — não é sumiço a investigar.
@@ -68,6 +69,7 @@ function motivo(id: string, e: Entrada): { curto: string; detalhe?: unknown } {
     return { curto: 'não veio no cardápio carregado' };
   }
   if (raw.status !== 'ativo') return { curto: 'desligado no cardápio' };
+  if (estaPausado(raw.pausadoAte)) return { curto: 'acabou hoje (pausado no cardápio)' };
   if (raw.somenteDelivery) return { curto: 'marcado só delivery' };
   if (!vendeNoTablet(raw)) return { curto: 'canal autoatendimento desmarcado', detalhe: raw.canais };
   const cat = e.categorias.find((c) => c.id === raw.categoriaId);
@@ -93,7 +95,7 @@ export function useRegistroItensEscondidos(e: Entrada): void {
       estado = { tenantId: e.tenantId, visiveis: atuais, sumidos: new Map() };
       // Já na primeira carga: item ligado e vendido no tablet que não aparece é anormal.
       for (const raw of e.itens) {
-        if (atuais.has(raw.id) || raw.status !== 'ativo' || raw.somenteDelivery || !vendeNoTablet(raw)) continue;
+        if (atuais.has(raw.id) || raw.status !== 'ativo' || raw.somenteDelivery || !vendeNoTablet(raw) || estaPausado(raw.pausadoAte)) continue;
         const cat = e.categorias.find((c) => c.id === raw.categoriaId);
         if (cat && !cat.ativo) continue;
         if (!visivelAgora([raw.horario, cat?.horario], 'casa')) continue;

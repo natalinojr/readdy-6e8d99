@@ -1,5 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { reaplicarFicha, OPCOES_PADRAO, type OpcoesFicha } from '../_shared/ficha-retroativa.ts';
+import { pausaAteDe } from '../_shared/cardapio-pausa.ts';
+import { temPermissao } from '../_shared/permissao-servidor.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -287,6 +289,69 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         updated++;
       }
       result = { updated };
+    }
+    else if (action === 'bulk_update_items') {
+      // Lista do Cardápio (2026-10-06): a mesma mudança em vários itens numa chamada só — e o "Acabou hoje".
+      // Um campo por chamada: is_active | disponibilidade (casa/ambos/delivery, igual ao set_category_channel) |
+      // category_id (categoria da mesma loja, não apagada) | pausar (true = pausado_ate na próxima 05:00 de
+      // Brasília, false = volta agora). Só itens da loja (tenant) e não apagados; não toca em opções, ficha,
+      // promoções, preço nem horário.
+      const p = payload as { item_ids?: unknown; is_active?: unknown; disponibilidade?: unknown; category_id?: unknown; pausar?: unknown; motivo?: unknown };
+      const ids = [...new Set((Array.isArray(p.item_ids) ? p.item_ids : []).filter(isValidUuid).map(String))];
+      if (!ids.length) return errResp('item_ids required', 400);
+      // Lote e "Acabou hoje" mexem no cardápio inteiro: exige a mesma permissão da tela (cardapio_editar).
+      const { data: vinc } = await admin.from('user_tenants').select('role').eq('user_id', user.id).eq('tenant_id', tenantId).maybeSingle();
+      if (!(await temPermissao(admin, tenantId, user.id, vinc?.role ?? null, 'cardapio_editar'))) return errResp('Sem permissão para editar o cardápio', 403);
+      if (ids.length > 500) return errResp('Máximo de 500 itens por vez', 400);
+      const campos = ['is_active', 'disponibilidade', 'category_id', 'pausar'].filter((k) => (p as Record<string, unknown>)[k] !== undefined);
+      if (campos.length !== 1) return errResp('Envie um campo por vez: is_active, disponibilidade, category_id ou pausar', 400);
+
+      const { data: alvo, error: selErr } = await admin.from('menu_items').select('id, delivery_config')
+        .eq('tenant_id', tenantId).in('id', ids).is('deleted_at', null);
+      if (selErr) throw new Error(`bulk_update_items select: ${selErr.message}`);
+      const alvoIds = ((alvo ?? []) as Array<{ id: string }>).map((r) => r.id);
+      if (!alvoIds.length) return errResp('Nenhum item desta loja', 404);
+
+      if (p.is_active !== undefined) {
+        if (typeof p.is_active !== 'boolean') return errResp('is_active inválido', 400);
+        const { error } = await admin.from('menu_items').update({ is_active: p.is_active, updated_at: now })
+          .eq('tenant_id', tenantId).in('id', alvoIds);
+        if (error) throw new Error(`bulk_update_items is_active: ${error.message}`);
+      } else if (p.category_id !== undefined) {
+        if (!isValidUuid(p.category_id)) return errResp('category_id inválido', 400);
+        const { data: cat } = await admin.from('menu_categories').select('id').eq('id', p.category_id)
+          .eq('tenant_id', tenantId).is('deleted_at', null).maybeSingle();
+        if (!cat) return errResp('Categoria não encontrada nesta loja', 404);
+        const { error } = await admin.from('menu_items').update({ category_id: p.category_id, updated_at: now })
+          .eq('tenant_id', tenantId).in('id', alvoIds);
+        if (error) {
+          if (isUniqueViolation(error)) return new Response(JSON.stringify({ error: 'Já existe um item com o mesmo nome nessa categoria. Mude o nome antes de mover.' }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+          throw new Error(`bulk_update_items category_id: ${error.message}`);
+        }
+      } else if (p.pausar !== undefined) {
+        if (typeof p.pausar !== 'boolean') return errResp('pausar inválido', 400);
+        const motivo = typeof p.motivo === 'string' && p.motivo.trim() ? p.motivo.trim().slice(0, 120) : (p.pausar ? 'Acabou hoje' : null);
+        const { error } = await admin.from('menu_items')
+          .update({ pausado_ate: p.pausar ? pausaAteDe(new Date()) : null, pausado_motivo: p.pausar ? motivo : null, updated_at: now })
+          .eq('tenant_id', tenantId).in('id', alvoIds);
+        if (error) throw new Error(`bulk_update_items pausar: ${error.message}`);
+      } else {
+        const disp = String(p.disponibilidade);
+        if (!['ambos', 'casa', 'delivery'].includes(disp)) return errResp('invalid disponibilidade', 400);
+        const channels = disp === 'delivery'
+          ? { cashier: false, waiter: false, delivery: true, table_qr: false, self_service: false }
+          : { cashier: true, waiter: true, delivery: true, table_qr: true, self_service: true };
+        const deliveryAtivo = disp !== 'casa';
+        // delivery_config é por item (preço/embalagem próprios): só o "ativo" muda, item a item.
+        for (const it of (alvo ?? []) as Array<{ id: string; delivery_config: unknown }>) {
+          const dc = (it.delivery_config && typeof it.delivery_config === 'object') ? it.delivery_config as Record<string, unknown> : {};
+          const { error } = await admin.from('menu_items')
+            .update({ channels, delivery_config: { ...dc, ativo: deliveryAtivo }, updated_at: now })
+            .eq('id', it.id).eq('tenant_id', tenantId);
+          if (error) throw new Error(`bulk_update_items disponibilidade ${it.id}: ${error.message}`);
+        }
+      }
+      result = { updated: alvoIds.length };
     }
     else if (action === 'upsert_item') {
       const p = payload as any;

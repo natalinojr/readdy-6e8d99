@@ -4,6 +4,7 @@ import { deductStockForSkipKdsItems, runStockInBackground } from "../_shared/sto
 import { descontoClubeServidor, idsValidos, sessaoDoClube, vincularClube } from "../_shared/clube-servidor.ts";
 import { activeLocales, normalizeLocale, loadTranslations, decorate, decorateHighlights, translationsPayload } from "../_shared/menu-i18n.ts";
 import { promoPrecosDeHoje } from "../_shared/promo-item.ts";
+import { idsPausados } from "../_shared/cardapio-pausa.ts";
 import { dentroDoHorario, minutosAteFechar, normalizarHorarioDelivery, type HorarioDelivery } from "../_shared/horario-delivery.ts";
 import { temPermissao } from "../_shared/permissao-servidor.ts";
 
@@ -507,9 +508,12 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       }
       const catStationMap = new Map<string, string>();
       for (const cat of (catResult.data ?? []) as Array<{ id: string; station_id: string | null }>) { if (cat.station_id) catStationMap.set(cat.id, cat.station_id); }
+      // "Acabou hoje" (menu_items.pausado_ate > agora): some do delivery (e do atendente do WhatsApp) até a loja abrir.
+      const pausados = await idsPausados(admin, tenantId);
       const filteredItems = ((itemResult.data ?? []) as Array<Record<string, unknown>>).filter((item: Record<string, unknown>) => {
         const dc = item.delivery_config as Record<string, unknown> | null;
         if (item.category_id && deletedCatIds.has(item.category_id as string)) return false;
+        if (pausados.has(String(item.id))) return false;
         return !dc || typeof dc !== "object" || dc.ativo !== false;
       });
       const itemsMap = new Map<string, Record<string, unknown>>();
@@ -1851,13 +1855,15 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         : { data: [], error: null };
       if (deletedOrderCatsErr) throw deletedOrderCatsErr;
       const deletedOrderCatIds = new Set(((deletedOrderCats ?? []) as Array<{ id: string }>).map((c) => String(c.id)));
+      // "Acabou hoje": item pausado = indisponível (carrinho montado antes da pausa não passa).
+      const pausadosPedido = await idsPausados(admin, tenant_id, itemIds);
 
       const itemPriceMap = new Map<string, number>();
       const itemNameMap = new Map<string, string>();
       for (const mi of menuItemsRes.data) {
         const dc = mi.delivery_config as Record<string, unknown> | null;
         const deliveryBlocked = dc && typeof dc === "object" && dc.ativo === false;
-        const apagado = mi.deleted_at != null || (mi.category_id != null && deletedOrderCatIds.has(String(mi.category_id)));
+        const apagado = mi.deleted_at != null || (mi.category_id != null && deletedOrderCatIds.has(String(mi.category_id))) || pausadosPedido.has(String(mi.id));
         if (mi.is_active && !deliveryBlocked && !apagado) {
           // Usa o preço de delivery (delivery_config.preco) quando configurado (> 0).
           const precoDelivery = dc && typeof dc === "object" ? Number(dc.preco ?? 0) : 0;

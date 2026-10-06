@@ -274,6 +274,26 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-10-06 — Cardápio: layout novo, "Acabou hoje", lote e publicação automática
+- **Tela:** `/cardapio` em 5 grupos (Itens: Itens · Categorias · Combos / Vender mais: Destaques / Idiomas: Traduções /
+  Estoque: Opções × Estoque / Mais: Obs. globais); ⋯ = Atualizar as telas agora, Exportar/Importar, Mudar a ordem dos
+  itens (as setas de ordem saíram da lista e voltam por aqui). **Sem custo nem margem em lugar nenhum da lista** (dono).
+  Links `?item=&ficha=1`, `?busca=`, `?aba=combos` seguem valendo.
+- **Lista (`ItensTab`):** mais vendidos 14 dias primeiro (`fn_cardapio_resumo_itens`, leitura agregada: vendidos + tem
+  ficha; sem a RPC cai na ordem do cardápio e some o filtro "Sem ficha"), busca sem acento/por pedaço, chave Ativo,
+  Balcão · Os dois · Delivery, preço editável na linha (mesmo `salvarItem`, respeita `cardapio_alterar_preco`), barra
+  com Desfazer, marcar vários → `menu-write › bulk_update_items` (um campo por chamada: is_active | disponibilidade |
+  category_id | pausar). Regras puras em `src/lib/cardapioLista.ts` (teste `src/test/lib/cardapioLista.test.ts`).
+- **"Acabou hoje":** `menu_items.pausado_ate/pausado_motivo` (migração `20261006310000`). `pausado_ate` = próxima 05:00 de
+  Brasília (`_shared/cardapio-pausa.ts`, cópia em `cardapioLista.pausaAteDe`); passou da hora = vende de novo, ninguém
+  limpa. Some de: `CardapioContext.itemPausado` (PDV caixa/garçom/delivery filtram, `itensPublicos` do totem/mesa),
+  `mesa-write get_cardapio`, `delivery-write get_delivery_config` (QR, link do delivery, atendente do WhatsApp) e os
+  pedidos públicos dessas duas edges recusam como indisponível. As edges leem os pausados numa consulta à parte que
+  ignora erro (`idsPausados`) — publicar a edge antes da migração não derruba o cardápio.
+- **Publicação automática:** `menuWrite` do CardapioContext chama `agendarPublicacao` (useMenuPing, debounce 2 s) depois
+  de toda gravação; o botão "Publicar alterações" saiu. `salvarItem` agora devolve `true/false` e recarrega no erro (a
+  mudança otimista da lista não fica mentindo).
+
 ### 2026-10-06 — Empréstimo de insumo entre lojas
 - **Onde:** "O que aconteceu?" › Empréstimo entre lojas (`opcoes.ts`, ids `emprestimo-mandar`/`emprestimo-chegou`) e atalho no `/receber`; tela `src/pages/receber/emprestimos/page.tsx` em `/receber/emprestimos` (`?mandar=1`, `?receber=<id>|1`). Herda a trava de rota do `/receber`.
 - **Regra (migração `20261006120000_emprestimo_entre_lojas.sql`):** tabela `estoque_emprestimos` (status `enviado|recebido|cancelado`, itens em jsonb) + RPCs `fn_emprestimo_lojas/insumos/enviar/receber/cancelar/listar`. Mandar = `transfer_out` na hora (exige `estoque_movimentar`); receber = quem recebe escolhe os insumos DA LOJA DELE e digita o que chegou → `transfer_in` (exige `estoque_receber` ou `estoque_movimentar`). Movimentos com `source_tenant_id`/`destination_tenant_id` e `notes = 'emprestimo:<id>'`. Cancelar (só antes de receber) devolve com `transfer_in` "Empréstimo cancelado (voltou)".

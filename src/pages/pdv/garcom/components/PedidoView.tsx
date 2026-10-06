@@ -118,7 +118,7 @@ export default function PedidoView({
   const showCozinhaTab = (mesaNumero && mesaNumero > 0) || isAvulso;
 
   const { pedidos: allKDSPedidos } = useKDS();
-  const { categorias: todasCategorias, itensAtivos: todosItens, obsGlobais, itemNoHorario } = useCardapio();
+  const { categorias: todasCategorias, itensAtivos: todosItens, obsGlobais, itemNoHorario, itemPausado } = useCardapio();
 
   const pedidosProntos = useMemo(() => {
     if (!mesaNumero) return 0;
@@ -135,9 +135,10 @@ export default function PedidoView({
     const idsCatsAtivas = new Set(cats.map((c) => c.id));
     return todosItens
       .filter((i) => idsCatsAtivas.has(i.categoriaId))
+      .filter((i) => !itemPausado(i)) // "Acabou hoje" no Cardápio
       .filter((i) => catAtiva === 'todas' || i.categoriaId === catAtiva)
       .filter((i) => !busca || i.nome.toLowerCase().includes(busca.toLowerCase()));
-  }, [catAtiva, busca, todosItens, cats]);
+  }, [catAtiva, busca, todosItens, cats, itemPausado]);
 
   const totalItens = carrinho.reduce((a, i) => a + i.quantidade, 0);
   const totalValor = carrinho.reduce((a, i) => a + i.precoTotal * i.quantidade, 0);

@@ -87,3 +87,28 @@ export async function publicarCardapio(tenantId: string): Promise<boolean> {
 export function comJitter(fn: () => void, maxMs = 4000): () => void {
   return () => { setTimeout(fn, Math.floor(Math.random() * maxMs)); };
 }
+
+// ── Publicação automática (2026-10-06) ─────────────────────────────────────────
+// Sem botão "Publicar": toda gravação do cardápio (CardapioContext › menuWrite) agenda o aviso às telas.
+// Debounce de 2 s junta várias mudanças seguidas (lote, desfazer, preço) num aviso só.
+// "Atualizar as telas agora" (⋯ do Cardápio) continua chamando publicarCardapio direto.
+const agendados = new Map<string, ReturnType<typeof setTimeout>>();
+type OuvintePublicacao = (ok: boolean) => void;
+const ouvintesPublicacao = new Set<OuvintePublicacao>();
+
+export function agendarPublicacao(tenantId: string | null | undefined, atrasoMs = 2000): void {
+  if (!tenantId) return;
+  const antes = agendados.get(tenantId);
+  if (antes) clearTimeout(antes);
+  agendados.set(tenantId, setTimeout(async () => {
+    agendados.delete(tenantId);
+    const ok = await publicarCardapio(tenantId);
+    ouvintesPublicacao.forEach((fn) => { try { fn(ok); } catch { /* ignora */ } });
+  }, atrasoMs));
+}
+
+/** A tela do Cardápio ouve para mostrar "As telas já atualizaram". Devolve a função que para de ouvir. */
+export function aoPublicarAutomatico(fn: OuvintePublicacao): () => void {
+  ouvintesPublicacao.add(fn);
+  return () => { ouvintesPublicacao.delete(fn); };
+}

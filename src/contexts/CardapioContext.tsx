@@ -12,7 +12,8 @@ import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import type { Categoria, Item, Combo, ObservacaoGlobal, GrupoOpcoes, OpcaoItem, PromocaoItem, Destaque } from '@/types/cardapio';
 import type { ItemCardapioPublico } from '@/types/mesaCliente';
 import { saveMenuCache, getMenuCache } from '@/lib/offlineDB';
-import { useMenuPing } from '@/hooks/useMenuPing';
+import { useMenuPing, agendarPublicacao } from '@/hooks/useMenuPing';
+import { aplicarMudanca, estaPausado, fraseMudanca, payloadLote, pausaAteDe, type MudancaLote } from '@/lib/cardapioLista';
 import { CANAIS_HORARIO, agoraBrasilia, horarioDoCanal, normalizarHorario, temHorario, visivelEm, type CanalHorario } from '@/lib/horarioExibicao';
 import { useRelogioMinuto } from '@/hooks/useRelogioMinuto';
 
@@ -114,6 +115,9 @@ interface DBItem {
   cod_tributacao?: string | null;
   gtin?: string | null;
   availability_schedule?: unknown;
+  /** "Acabou hoje" (20261006310000) */
+  pausado_ate?: string | null;
+  pausado_motivo?: string | null;
   option_groups?: DBGrupoOpcoes[];
   promotions?: DBPromocao[];
   preset_observations?: DBPresetObs[];
@@ -276,6 +280,8 @@ function mapItem(i: DBItem, ingredientNameMap?: Map<string, string>): Item {
       origem: i.origem ?? null, codTributacao: i.cod_tributacao ?? null, gtin: i.gtin ?? null,
     },
     horario: normalizarHorario(i.availability_schedule),
+    pausadoAte: i.pausado_ate ?? null,
+    pausadoMotivo: i.pausado_motivo ?? null,
   };
 }
 
@@ -322,6 +328,9 @@ function mapDestaque(h: DBHighlight, categorias: Categoria[]): Destaque {
 
 // ── Menu Write Helper ──────────────────────────────────────────────────────────
 
+// Ações do menu-write que só leem (não avisam as telas).
+const ACOES_SO_LEITURA = new Set(['fetch_templates', 'fichas_vendidas', 'reaplicar_ficha']);
+
 async function menuWrite(action: string, payload: Record<string, unknown>, tenantId?: string): Promise<{ success?: boolean } | null> {
   try {
     const body: Record<string, unknown> = { action, payload };
@@ -332,6 +341,8 @@ async function menuWrite(action: string, payload: Record<string, unknown>, tenan
       console.error('[Cardapio] menuWrite error:', action, detail);
       throw new Error(detail);
     }
+    // Gravou: as telas abertas (PDV, garçom, totem, mesa, QR, delivery) recarregam sozinhas em ~2 s.
+    if (!ACOES_SO_LEITURA.has(action)) agendarPublicacao(tenantId);
     return data;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -368,11 +379,14 @@ interface CardapioContextValue {
   reordenarCategorias: (items: Array<{ id: string; sortOrder: number }>) => Promise<void>;
 
   // Item CRUD
-  salvarItem: (item: Item) => Promise<void>;
+  /** true = gravou. Erro: avisa, recarrega (desfaz a mudança otimista da lista) e devolve false. */
+  salvarItem: (item: Item) => Promise<boolean>;
   excluirItem: (id: string) => Promise<void>;
   reordenarItens: (items: Array<{ id: string; sortOrder: number }>) => Promise<void>;
   // Aplica o canal (casa/ambos/delivery) a todos os itens de uma categoria de uma vez
   definirCanalCategoria: (categoriaId: string, val: 'ambos' | 'casa' | 'delivery') => Promise<void>;
+  /** A mesma mudança em vários itens numa chamada (menu-write › bulk_update_items). true = gravou. */
+  atualizarItensEmLote: (ids: string[], mudanca: MudancaLote) => Promise<boolean>;
 
   // Global Obs CRUD
   criarObsGlobal: (texto: string) => Promise<void>;
@@ -394,6 +408,8 @@ interface CardapioContextValue {
   itensAtivos: Item[];      // itens ativos para canais presenciais (exclui somenteDelivery)
   /** O item (e a categoria dele) está no horário de exibição agora? Caixa/garçom mostram, mas marcam "fora do horário". */
   itemNoHorario: (item: Item, canal?: CanalHorario) => boolean;
+  /** "Acabou hoje": pausado agora (some de todas as telas de venda; volta sozinho). */
+  itemPausado: (item: Item) => boolean;
   itensDelivery: Item[];    // itens ativos para o canal delivery
   itensPublicos: ItemCardapioPublico[];
   numerosMap: Map<string, number>;
@@ -679,7 +695,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
 
   // ── Item CRUD ─────────────────────────────────────────────────────────────
 
-  const salvarItem = async (item: Item) => {
+  const salvarItem = async (item: Item): Promise<boolean> => {
     setSaving(true);
     const idToSend = isUuid(item.id) ? item.id : undefined;
     const isNew = !idToSend;
@@ -799,8 +815,11 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
       }
 
       await recarregar({ silent: true });
+      return true;
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao salvar item: ${err instanceof Error ? err.message : String(err)}` });
+      await recarregar({ silent: true });
+      return false;
     } finally {
       setSaving(false);
     }
@@ -867,6 +886,39 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       addToast({ type: 'error', message: `Erro ao reordenar itens: ${err instanceof Error ? err.message : String(err)}` });
       await recarregar({ silent: true });
+    }
+  };
+
+  const atualizarItensEmLote = async (ids: string[], mudanca: MudancaLote): Promise<boolean> => {
+    const alvo = itens.filter((i) => ids.includes(i.id) && isUuid(i.id));
+    if (!alvo.length) return false;
+    const pausaAte = pausaAteDe();
+    const idsAlvo = new Set(alvo.map((i) => i.id));
+    // Atualização otimista: a lista muda na hora; o recarregar reconcilia.
+    setItens((prev) => prev.map((i) => (idsAlvo.has(i.id) ? aplicarMudanca(i, mudanca, pausaAte) : i)));
+    setSaving(true);
+    try {
+      await menuWrite('bulk_update_items', payloadLote([...idsAlvo], mudanca), user?.tenantId);
+      if (user) {
+        const nomeCat = mudanca.tipo === 'categoria' ? categorias.find((c) => c.id === mudanca.valor)?.nome : undefined;
+        registrarEvento({
+          tipo: 'item_editado',
+          severidade: mudanca.tipo === 'ativo' && !mudanca.valor ? 'aviso' : 'info',
+          usuario: user.nome,
+          perfil: user.perfil,
+          descricao: `Cardápio: ${fraseMudanca(mudanca, alvo.map((i) => i.nome), nomeCat)}`,
+          entidade: 'Cardápio',
+          entidadeId: alvo.length === 1 ? alvo[0].nome : `${alvo.length} itens`,
+        });
+      }
+      await recarregar({ silent: true });
+      return true;
+    } catch (err) {
+      addToast({ type: 'error', title: 'Não salvou', message: err instanceof Error ? err.message : String(err) });
+      await recarregar({ silent: true });
+      return false;
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -1055,7 +1107,9 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     () => itens.some(i => temHorario(i.horario)) || categorias.some(c => temHorario(c.horario)) || destaques.some(d => temHorario(d.horario)),
     [itens, categorias, destaques],
   );
-  const minutoAgora = useRelogioMinuto(usaHorario);
+  // "Acabou hoje": o relógio também roda quando há item pausado (volta sozinho às 05:00 sem recarregar).
+  const temPausado = useMemo(() => itens.some((i) => !!i.pausadoAte), [itens]);
+  const minutoAgora = useRelogioMinuto(usaHorario || temPausado);
   // Ids fora do horário agora, por canal (ver abaixo). A chave só muda quando
   // algo entra/sai: itensPublicos/itemNoHorario ficam iguais e o totem não remonta o cardápio
   // a cada minuto (o provider em si re-renderiza 1x/min, só nas lojas que usam horário).
@@ -1075,6 +1129,14 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     return fora.sort().join(',');
   }, [usaHorario, itens, categorias, destaques, minutoAgora]);
   const foraDoHorario = useMemo(() => new Set(chaveForaDoHorario ? chaveForaDoHorario.split(',') : []), [chaveForaDoHorario]);
+  // Ids pausados agora; a chave só muda quando um item pausa ou volta (mesma ideia do horário).
+  const chavePausados = useMemo(() => {
+    if (!temPausado) return '';
+    const agora = new Date();
+    return itens.filter((i) => estaPausado(i.pausadoAte, agora)).map((i) => i.id).sort().join(',');
+  }, [temPausado, itens, minutoAgora]);
+  const pausadosAgora = useMemo(() => new Set(chavePausados ? chavePausados.split(',') : []), [chavePausados]);
+  const itemPausado = useCallback((item: Item) => pausadosAgora.has(item.id), [pausadosAgora]);
   // Canal padrão = casa (caixa, garçom, totem); o PDV delivery passa 'delivery'.
   const itemNoHorario = useCallback(
     (item: Item, canal: CanalHorario = 'casa') => !foraDoHorario.has(`${canal === 'casa' ? 'c' : 'd'}:${item.id}`),
@@ -1103,7 +1165,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
     );
 
     const itensNormais: ItemCardapioPublico[] = itensAtivosMesaQR
-      .filter(item => categoriasAtivasIds.has(item.categoriaId) && itemNoHorario(item, 'casa'))
+      .filter(item => categoriasAtivasIds.has(item.categoriaId) && itemNoHorario(item, 'casa') && !pausadosAgora.has(item.id))
       .map((item) => {
         const promoAtiva = promoAtivaHoje(item.promocoes);
         const categoriaNome = categorias.find(c => c.id === item.categoriaId)?.nome ?? 'Outros';
@@ -1156,7 +1218,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
 
     return [...itensNormais, ...combosAtivos];
   },
-    [itensAtivos, categorias, combos, destaques, itemNoHorario, foraDoHorario],
+    [itensAtivos, categorias, combos, destaques, itemNoHorario, foraDoHorario, pausadosAgora],
   );
 
   return (
@@ -1165,11 +1227,11 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
       setItens, setCategorias, setCombos, setObsGlobais,
       recarregar, recarregarEstacoes,
       criarCategoria, editarCategoria, excluirCategoria, reordenarCategorias,
-      salvarItem, excluirItem, reordenarItens, definirCanalCategoria,
+      salvarItem, excluirItem, reordenarItens, definirCanalCategoria, atualizarItensEmLote,
       criarObsGlobal, editarObsGlobal, excluirObsGlobal,
       salvarCombo, excluirCombo,
       destaques, adicionarDestaque, editarDestaque, removerDestaque, reordenarDestaques,
-      itensAtivos, itensDelivery, itensPublicos, numerosMap, itemNoHorario,
+      itensAtivos, itensDelivery, itensPublicos, numerosMap, itemNoHorario, itemPausado,
     }}>
       {children}
     </CardapioContext.Provider>

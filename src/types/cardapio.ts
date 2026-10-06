@@ -139,6 +139,9 @@ export interface Item {
   fiscal?: import('@/lib/fiscal').ItemFiscal;
   /** Horário em que o item aparece no cardápio do cliente (null = sempre). */
   horario?: import('@/lib/horarioExibicao').HorarioExibicao;
+  /** "Acabou hoje": pausado até esta hora (ISO). Some de todas as telas de venda e volta sozinho. */
+  pausadoAte?: string | null;
+  pausadoMotivo?: string | null;
   deleted_at?: string | null;
 }
 

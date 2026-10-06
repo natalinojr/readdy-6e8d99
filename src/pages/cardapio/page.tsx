@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useCardapio } from '../../contexts/CardapioContext';
 import CategoriasTab from './components/CategoriasTab';
@@ -9,18 +9,42 @@ import DestaquesTab from './components/DestaquesTab';
 import TraducoesTab from './components/TraducoesTab';
 import OpcoesEstoqueTab from './components/OpcoesEstoqueTab';
 import CardapioExportImportModal from '../../components/feature/CardapioExportImportModal';
+import { MenuMais, btn } from '@/components/kit';
 
 import { notifyReload } from '@/lib/reloadSignal';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
-import { publicarCardapio } from '@/hooks/useMenuPing';
+import { publicarCardapio, aoPublicarAutomatico } from '@/hooks/useMenuPing';
+import { useResumoItensCardapio } from '@/hooks/useResumoItensCardapio';
+import { pendenciasCardapio } from '@/lib/cardapioLista';
 
-type Tab = 'destaques' | 'itens' | 'categorias' | 'combos' | 'obsGlobais' | 'traducoes' | 'opcoesEstoque';
+// Layout novo do Cardápio (dono, 2026-10-06; protótipo sistema-proto › gestao1 › CARDÁPIO), SEM custo e margem.
+// 5 grupos: Itens (Itens · Categorias · Combos) · Vender mais (Destaques) · Idiomas (Traduções) ·
+// Estoque (Opções × Estoque) · Mais (Observações globais). Nenhuma aba antiga sumiu: só mudou de lugar.
+// Sem "Publicar alterações": toda gravação avisa as telas sozinha (useMenuPing › agendarPublicacao, 2 s);
+// "Atualizar as telas agora" no ⋯ força o aviso.
+
+type Grupo = 'itens' | 'vender' | 'idiomas' | 'estoque' | 'mais';
+type Pilula = 'itens' | 'categorias' | 'combos';
+
+const GRUPOS: { id: Grupo; label: string; icon: string }[] = [
+  { id: 'itens', label: 'Itens', icon: 'ri-restaurant-line' },
+  { id: 'vender', label: 'Vender mais', icon: 'ri-star-line' },
+  { id: 'idiomas', label: 'Idiomas', icon: 'ri-translate-2' },
+  { id: 'estoque', label: 'Estoque', icon: 'ri-links-line' },
+  { id: 'mais', label: 'Mais', icon: 'ri-chat-3-line' },
+];
 
 export default function CardapioPage() {
-  const { itens, categorias, combos, obsGlobais, destaques, loading, recarregar } = useCardapio();
-  const [activeTab, setActiveTab] = useState<Tab>('destaques');
+  const { itens, categorias, combos, destaques, loading, recarregar } = useCardapio();
+  const [grupo, setGrupo] = useState<Grupo>('itens');
+  const [pilula, setPilula] = useState<Pilula>('itens');
   const [showExportImport, setShowExportImport] = useState(false);
+  const [ordenar, setOrdenar] = useState(false);
+  const [novoItem, setNovoItem] = useState(0);
+  const { user } = useAuth();
+  const { addToast } = useToast();
+  const { resumo, recarregar: recarregarResumo } = useResumoItensCardapio(user?.tenantId);
 
   // Links de fora do Cardápio (ex.: "Fazer ficha" do Estoque › CMV):
   //   ?item=<id>&ficha=1 abre o item na Ficha Técnica · ?busca=<nome> abre a lista de itens já filtrada ·
@@ -32,128 +56,150 @@ export default function CardapioPage() {
     const busca = params.get('busca');
     const aba = params.get('aba');
     if (!item && !busca && aba !== 'combos') return;
+    setGrupo('itens');
     if (item || busca) {
-      setActiveTab('itens');
+      setPilula('itens');
       setEntrada({ itemId: item, ficha: params.get('ficha') === '1', busca });
     } else {
-      setActiveTab('combos');
+      setPilula('combos');
     }
     setParams({}, { replace: true });
   }, [params, setParams]);
-  const { user } = useAuth();
-  const { addToast } = useToast();
-  const [publicando, setPublicando] = useState(false);
 
-  // As alterações já ficam salvas no banco; publicar avisa as telas abertas
-  // (PDV, garçom, totem, mesa, QR universal, delivery) para recarregarem agora.
-  const handlePublicar = async () => {
+  // "As telas já atualizaram": aviso curto depois da publicação automática.
+  const [avisoTelas, setAvisoTelas] = useState<'ok' | 'erro' | null>(null);
+  const timerAviso = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => aoPublicarAutomatico((ok) => {
+    setAvisoTelas(ok ? 'ok' : 'erro');
+    clearTimeout(timerAviso.current);
+    timerAviso.current = setTimeout(() => setAvisoTelas(null), ok ? 4000 : 9000);
+  }), []);
+  useEffect(() => () => clearTimeout(timerAviso.current), []);
+
+  const [publicando, setPublicando] = useState(false);
+  const atualizarTelas = async () => {
     if (!user?.tenantId || publicando) return;
     setPublicando(true);
     const ok = await publicarCardapio(user.tenantId);
     setPublicando(false);
     addToast(ok
-      ? { type: 'success', title: 'Cardápio publicado', message: 'As telas abertas atualizam em alguns segundos.' }
-      : { type: 'error', title: 'Não consegui publicar', message: 'Verifique a internet e tente de novo.' });
+      ? { type: 'success', title: 'Telas avisadas', message: 'PDV, garçom, totem, mesa, QR universal e delivery atualizam em alguns segundos.' }
+      : { type: 'error', title: 'Não consegui avisar as telas', message: 'Verifique a internet e tente de novo.' });
   };
 
-  const tabs: { id: Tab; label: string; shortLabel: string; icon: string; count: number }[] = [
-    { id: 'destaques', label: 'Destaques', shortLabel: 'Dest.', icon: 'ri-star-line', count: destaques.length },
-    { id: 'itens', label: 'Itens', shortLabel: 'Itens', icon: 'ri-file-list-3-line', count: itens.length },
-    { id: 'categorias', label: 'Categorias', shortLabel: 'Categ.', icon: 'ri-layout-grid-line', count: categorias.length },
-    { id: 'combos', label: 'Combos', shortLabel: 'Combos', icon: 'ri-gift-2-line', count: combos.length },
-    { id: 'obsGlobais', label: 'Obs. Globais', shortLabel: 'Obs.', icon: 'ri-chat-3-line', count: obsGlobais.filter(o => o.ativo).length },
-    { id: 'traducoes', label: 'Traduções', shortLabel: 'Idiomas', icon: 'ri-translate-2', count: 0 },
-    { id: 'opcoesEstoque', label: 'Opções × Estoque', shortLabel: 'Opç.×Est.', icon: 'ri-links-line', count: 0 },
+  // Selos dos grupos: o que precisa de você (as mesmas contas da lista de itens).
+  const pendencias = useMemo(() => pendenciasCardapio(itens, destaques, resumo), [itens, destaques, resumo]);
+  const seloGrupo: Partial<Record<Grupo, number>> = {
+    itens: pendencias.filter((p) => p.tipo === 'ficha').length,
+    vender: pendencias.filter((p) => p.tipo !== 'ficha').length,
+  };
+
+  const pilulas: { id: Pilula; label: string; n?: number }[] = [
+    { id: 'itens', label: 'Itens', n: itens.length },
+    { id: 'categorias', label: 'Categorias', n: categorias.length },
+    { id: 'combos', label: 'Combos', n: combos.length || undefined },
   ];
 
-  const ativosCount = itens.filter(i => i.status === 'ativo').length;
-  const inativos = itens.filter(i => i.status === 'inativo').length;
-  const promoCount = itens.filter(i => i.promocoes.some(p => p.ativo)).length;
+  const abrirNovoItem = () => {
+    setGrupo('itens');
+    setPilula('itens');
+    setNovoItem((n) => n + 1);
+  };
 
   return (
-    <div className="min-h-screen bg-gray-50/50">
-      {/* Header */}
-      <div className="px-4 md:px-6 py-4 md:py-5" style={{ background: '#ffffff', borderBottom: '1px solid #f4f4f5' }}>
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-          <div>
-            <h1 className="text-lg font-bold text-gray-900">Cardápio</h1>
-            <p className="text-xs text-gray-500 mt-0.5">Gerencie categorias, itens e combos do seu restaurante</p>
+    <div className="min-h-screen" style={{ background: '#FAF7F2' }}>
+      {/* Cabeçalho */}
+      <div className="px-4 md:px-6 pt-3 md:pt-5 pb-0 bg-white" style={{ borderBottom: '1px solid #EEE6DA' }}>
+        <div className="flex items-center gap-2 md:gap-3 mb-2 md:mb-4">
+          <div className="w-8 h-8 md:w-9 md:h-9 flex items-center justify-center rounded-xl flex-shrink-0 bg-amber-500">
+            <i className="ri-restaurant-line text-zinc-900 text-base md:text-lg" />
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1.5 bg-green-50 text-green-700 text-xs font-medium px-2.5 py-1.5 rounded-full">
-              <i className="ri-checkbox-circle-line" />
-              {ativosCount} ativos
-            </div>
-            {inativos > 0 && (
-              <div className="flex items-center gap-1.5 bg-gray-100 text-gray-600 text-xs font-medium px-2.5 py-1.5 rounded-full">
-                <i className="ri-pause-circle-line" />
-                {inativos} inativos
-              </div>
-            )}
-            {promoCount > 0 && (
-              <div className="flex items-center gap-1.5 bg-red-50 text-red-600 text-xs font-medium px-2.5 py-1.5 rounded-full">
-                <i className="ri-price-tag-3-line" />
-                {promoCount} promo
-              </div>
-            )}
-            <button
-              onClick={() => setShowExportImport(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full hover:bg-amber-100 transition-colors cursor-pointer whitespace-nowrap"
-            >
-              <i className="ri-exchange-line" />
-              Exportar / Importar
-            </button>
-            <button
-              onClick={handlePublicar}
-              disabled={publicando || !user?.tenantId}
-              title="Atualiza agora o cardápio em todas as telas abertas: PDV, garçom, totem, mesa, QR universal e delivery"
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-orange-500 rounded-full hover:bg-orange-600 disabled:opacity-60 transition-colors cursor-pointer whitespace-nowrap"
-            >
-              <i className={publicando ? 'ri-loader-4-line animate-spin' : 'ri-broadcast-line'} />
-              {publicando ? 'Publicando…' : 'Publicar alterações'}
-            </button>
+          <div className="min-w-0 flex-1">
+            <h1 className="text-base md:text-lg font-bold text-zinc-900 flex items-center gap-2 flex-wrap">
+              Cardápio
+              {avisoTelas === 'ok' && (
+                <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 rounded-full px-2 py-0.5 inline-flex items-center gap-1">
+                  <i className="ri-check-line" />As telas já atualizaram
+                </span>
+              )}
+              {avisoTelas === 'erro' && (
+                <span className="text-[11px] font-bold text-red-600 bg-red-50 rounded-full px-2 py-0.5 inline-flex items-center gap-1"
+                  title="Salvou, mas o aviso às telas não saiu. Use ⋯ › Atualizar as telas agora.">
+                  <i className="ri-error-warning-line" />Salvou; as telas não foram avisadas
+                </span>
+              )}
+            </h1>
+            <p className="text-xs text-zinc-500 hidden sm:block">O que a loja vende e a que preço</p>
           </div>
+          <MenuMais rotulo="Mais: exportar, importar e atualizar as telas" grande itens={[
+            { rotulo: publicando ? 'Avisando as telas…' : 'Atualizar as telas agora', icone: 'ri-broadcast-line', onClick: atualizarTelas },
+            { rotulo: 'Exportar / Importar', icone: 'ri-exchange-line', onClick: () => setShowExportImport(true) },
+            { rotulo: ordenar ? 'Parar de mudar a ordem' : 'Mudar a ordem dos itens', icone: 'ri-arrow-up-down-line', onClick: () => { setGrupo('itens'); setPilula('itens'); setOrdenar((o) => !o); } },
+          ]} />
+          <button onClick={abrirNovoItem} className={btn('p')}>
+            <i className="ri-add-line text-base" />Novo item
+          </button>
         </div>
 
-        {/* Tabs — scrollable on mobile */}
-        <div className="flex items-center gap-0 mt-4 border-b border-gray-100 -mb-4 pb-0 overflow-x-auto scrollbar-none">
-          {tabs.map(t => (
-            <button
-              key={t.id}
-              onClick={() => setActiveTab(t.id)}
-              className={`flex items-center gap-1.5 px-3 md:px-4 py-3 text-sm font-medium border-b-2 transition-colors cursor-pointer whitespace-nowrap -mb-px flex-shrink-0 ${
-                activeTab === t.id
-                  ? 'border-orange-500 text-orange-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <i className={`${t.icon} text-base`} />
-              <span className="hidden sm:inline">{t.label}</span>
-              <span className="sm:hidden">{t.shortLabel}</span>
-              <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
-                activeTab === t.id ? 'bg-orange-100 text-orange-600' : 'bg-gray-100 text-gray-500'
-              }`}>
-                {t.count}
-              </span>
-            </button>
-          ))}
+        {/* Grupos — no celular os 5 dividem a largura (ícone em cima, nome embaixo) */}
+        <div className="flex md:gap-0.5 -mx-4 md:mx-0 px-1 md:px-0">
+          {GRUPOS.map((g) => {
+            const ativo = grupo === g.id;
+            const n = seloGrupo[g.id] ?? 0;
+            return (
+              <button key={g.id} onClick={() => setGrupo(g.id)}
+                className={`relative flex flex-1 md:flex-none flex-col md:flex-row items-center gap-0.5 md:gap-1.5 min-w-0 px-1 md:px-4 pt-2 pb-1.5 md:py-2.5 text-[11px] md:text-[13px] font-semibold whitespace-nowrap border-b-2 transition-colors cursor-pointer ${
+                  ativo ? 'border-amber-500 text-amber-700' : 'border-transparent text-zinc-400 hover:text-zinc-700'}`}>
+                <i className={`${g.icon} text-lg leading-none md:text-[13px] md:leading-normal`} />
+                {g.label}
+                {n > 0 && (
+                  <span className="absolute top-0.5 left-1/2 ml-2 md:static md:ml-0 text-[9px] font-black px-1.5 py-0.5 rounded-full text-white bg-red-500 leading-none md:leading-normal">{n}</span>
+                )}
+              </button>
+            );
+          })}
         </div>
+        {/* Pílulas do grupo Itens */}
+        {grupo === 'itens' ? (
+          <div className="py-2 md:py-2.5 -mx-4 md:mx-0 px-4 md:px-0 overflow-x-auto scrollbar-hide">
+            <div className="flex bg-zinc-100 p-1 rounded-xl w-max">
+              {pilulas.map((p) => (
+                <button key={p.id} onClick={() => setPilula(p.id)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 ${
+                    pilula === p.id ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>
+                  {p.label}{p.n != null && <span className="text-zinc-400 font-semibold">{p.n}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : <div className="h-1" />}
       </div>
 
-      {/* Content */}
-      <div className="p-4 md:p-6">
+      {/* Conteúdo */}
+      <div className="p-4 md:p-6 max-w-[1400px] mx-auto pb-28">
         {loading && (
           <div className="flex items-center justify-center py-20">
-            <div className="w-6 h-6 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
+            <div className="w-6 h-6 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
           </div>
         )}
-        {!loading && activeTab === 'destaques' && <DestaquesTab />}
-        {!loading && activeTab === 'itens' && <ItensTab entrada={entrada} onEntradaUsada={() => setEntrada(null)} />}
-        {!loading && activeTab === 'categorias' && <CategoriasTab />}
-        {!loading && activeTab === 'combos' && <CombosTab />}
-        {!loading && activeTab === 'obsGlobais' && <ObservacoesGlobaisTab />}
-        {!loading && activeTab === 'traducoes' && <TraducoesTab />}
-        {!loading && activeTab === 'opcoesEstoque' && <OpcoesEstoqueTab />}
+        {!loading && grupo === 'itens' && pilula === 'itens' && (
+          <ItensTab
+            entrada={entrada}
+            onEntradaUsada={() => setEntrada(null)}
+            resumo={resumo}
+            onResumoMudou={recarregarResumo}
+            novoItemSinal={novoItem}
+            ordenar={ordenar}
+            onPararOrdenar={() => setOrdenar(false)}
+            onIrDestaques={() => setGrupo('vender')}
+          />
+        )}
+        {!loading && grupo === 'itens' && pilula === 'categorias' && <CategoriasTab />}
+        {!loading && grupo === 'itens' && pilula === 'combos' && <CombosTab />}
+        {!loading && grupo === 'vender' && <DestaquesTab />}
+        {!loading && grupo === 'idiomas' && <TraducoesTab />}
+        {!loading && grupo === 'estoque' && <OpcoesEstoqueTab />}
+        {!loading && grupo === 'mais' && <ObservacoesGlobaisTab />}
       </div>
 
       {/* Modal Exportar / Importar */}
@@ -163,6 +209,7 @@ export default function CardapioPage() {
         onSuccess={() => {
           recarregar();
           notifyReload('menu');
+          if (user?.tenantId) publicarCardapio(user.tenantId);
         }}
       />
     </div>

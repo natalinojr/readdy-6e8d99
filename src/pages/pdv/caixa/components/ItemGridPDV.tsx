@@ -81,7 +81,7 @@ function InsumosFaltandoTooltip({ insumos, visible }: { insumos: InsumoFaltando[
 }
 
 export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItemObs }: Props) {
-  const { itensAtivos, categorias, numerosMap: globalNumberMap, itemNoHorario } = useCardapio();
+  const { itensAtivos, categorias, numerosMap: globalNumberMap, itemNoHorario, itemPausado } = useCardapio();
   const { itensDesabilitadosIds } = useEstoque();
   const { mapaItens: itensSemEstoque } = useItensSemEstoque();
   const [tooltipItemId, setTooltipItemId] = useState<string | null>(null);
@@ -103,6 +103,7 @@ export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItem
     const catsInativas = new Set(categorias.filter((c) => !c.ativo).map((c) => c.id));
     return itensAtivos
       .filter((item) => !catsInativas.has(item.categoriaId))
+      .filter((item) => !itemPausado(item)) // "Acabou hoje" no Cardápio: some até a loja abrir de novo
       .filter((item) => categoriaAtiva === 'todas' || item.categoriaId === categoriaAtiva)
       .filter((item) => {
         if (!busca) return true;
@@ -111,7 +112,7 @@ export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItem
         }
         return item.nome.toLowerCase().includes(busca.toLowerCase());
       });
-  }, [itensAtivos, categorias, categoriaAtiva, busca, searchNumber, globalNumberMap]);
+  }, [itensAtivos, categorias, categoriaAtiva, busca, searchNumber, globalNumberMap, itemPausado]);
 
   if (itens.length === 0) {
     return (

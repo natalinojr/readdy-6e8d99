@@ -265,7 +265,7 @@ function ItemOpcoes({
 }
 
 export default function DeliveryItemGrid({ onAdd }: Props) {
-  const { itensDelivery, categorias, itemNoHorario } = useCardapio();
+  const { itensDelivery, categorias, itemNoHorario, itemPausado } = useCardapio();
   const [catAtiva, setCatAtiva] = useState('todas');
   const [busca, setBusca] = useState('');
   const [itemModal, setItemModal] = useState<Item | null>(null);
@@ -296,11 +296,12 @@ export default function DeliveryItemGrid({ onAdd }: Props) {
     () =>
       itensDelivery.filter((i) => {
         if (catsInativas.has(i.categoriaId)) return false; // categoria desligada no Cardápio
+        if (itemPausado(i)) return false; // "Acabou hoje" no Cardápio
         if (catAtiva !== 'todas' && i.categoriaId !== catAtiva) return false;
         if (busca.trim() && !i.nome.toLowerCase().includes(busca.toLowerCase())) return false;
         return true;
       }),
-    [itensDelivery, catsInativas, catAtiva, busca],
+    [itensDelivery, catsInativas, catAtiva, busca, itemPausado],
   );
 
   const handleAdd = (ci: Omit<DeliveryCarrinhoItem, 'cartId'>) => {

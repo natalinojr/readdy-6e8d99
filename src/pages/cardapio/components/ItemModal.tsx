@@ -1,12 +1,12 @@
 import { useOptionGroupTemplates, type OptionGroupTemplate } from '@/hooks/useOptionGroupTemplates';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type ReactNode } from 'react';
 import type {
   Item, GrupoOpcoes, OpcaoItem, PromocaoItem, FichaTecnicaItem, SubproducaoItem, ConfiguracaoDelivery,
   Categoria, ObservacaoGlobal,
 } from '@/types/cardapio';
 const mockDiasSemana = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 import type { EstacaoCozinha } from '../../../contexts/CardapioContext';
-import FichaTecnicaTab from './FichaTecnicaTab';
+import FichaDoItem, { type FichaDoItemHandle } from './item/FichaDoItem';
 import FichaRetroativaModal from './FichaRetroativaModal';
 import { custoLinhaFicha } from '@/lib/unitConversion';
 import { insumosDaOpcao, comInsumos } from '@/lib/opcaoInsumos';
@@ -24,6 +24,10 @@ import { useProducao } from '@/contexts/ProducaoContext';
 import { useCardapio } from '@/contexts/CardapioContext';
 import type { Insumo } from '@/contexts/EstoqueContext';
 import type { ProductionRecipe } from '@/types/estoque';
+import { btn, confirmar, brl } from '@/components/kit';
+import { ABAS_ITEM, abaNova, itemComMesmoNome, validarItem, type AbaItem, type ErroItem, type TabLocal } from './item/itemAbas';
+
+export type { TabLocal } from './item/itemAbas';
 
 // Busca sem diferenciar maiúscula/minúscula nem acento ("pao" acha "PÃO").
 const semAcento = (t: string) => t.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase().trim();
@@ -48,7 +52,8 @@ interface Props {
   saving?: boolean;
   onSave: (item: Item) => void;
   onClose: () => void;
-  /** Abre já nesta aba (ex.: link "Fazer ficha" do Estoque › CMV abre na Ficha Técnica). */
+  /** Abre já nesta aba (ex.: link "Fazer ficha" do Estoque › CMV abre na Ficha Técnica → "Como é feito").
+   *  Aceita os nomes antigos (info, producao, ficha, fiscal, delivery) e os novos. */
   abaInicial?: TabLocal;
 }
 
@@ -86,7 +91,56 @@ const novaSubProducao = (estacaoNome = 'Grelha', estacaoId = ''): SubproducaoIte
   slaMinutos: 10,
 });
 
-export type TabLocal = 'info' | 'producao' | 'opcoes' | 'promocoes' | 'observacoes' | 'ficha' | 'delivery' | 'fiscal';
+// ── Peças visuais da janela (kit: âmbar com texto escuro, creme #FAF7F2, toque ≥ 44px) ──
+const CAMPO = 'w-full min-h-[44px] border border-zinc-200 rounded-xl px-3 py-2.5 text-sm bg-white text-zinc-800 focus:outline-none focus:border-amber-400 transition-colors';
+const ROTULO = 'block text-xs font-semibold text-zinc-600 mb-1.5';
+
+function Chave({ ligado, onClick, cor = 'amber', rotulo }: { ligado: boolean; onClick: () => void; cor?: 'amber' | 'teal'; rotulo: string }) {
+  const on = cor === 'teal' ? 'bg-teal-500' : 'bg-amber-500';
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={ligado}
+      aria-label={rotulo}
+      onClick={onClick}
+      className="flex-shrink-0 w-14 h-11 flex items-center justify-center cursor-pointer"
+    >
+      <span className={`relative w-11 h-6 rounded-full transition-colors ${ligado ? on : 'bg-zinc-300'}`}>
+        <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${ligado ? 'left-6' : 'left-1'}`} />
+      </span>
+    </button>
+  );
+}
+
+function Titulo({ children, extra }: { children: ReactNode; extra?: ReactNode }) {
+  return (
+    <h4 className="flex items-center justify-between gap-2 text-[13px] font-extrabold text-zinc-900 mt-1 mb-2">
+      <span className="flex items-center gap-2">{children}</span>
+      {extra}
+    </h4>
+  );
+}
+
+function Cartao({ children, className = '' }: { children: ReactNode; className?: string }) {
+  return <div className={`bg-white border border-zinc-200 rounded-2xl p-4 ${className}`}>{children}</div>;
+}
+
+/** Seção que abre e fecha (Avançado). Fechada mostra só o resumo. */
+function Sanfona({ titulo, resumo, aberta, onToggle, children }: { titulo: string; resumo: string; aberta: boolean; onToggle: () => void; children: ReactNode }) {
+  return (
+    <div className="bg-white border border-zinc-200 rounded-2xl">
+      <button type="button" onClick={onToggle} aria-expanded={aberta} className="w-full min-h-[56px] flex items-center gap-3 px-4 py-3 text-left cursor-pointer">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold text-zinc-900">{titulo}</p>
+          <p className="text-xs text-zinc-500 mt-0.5">{resumo}</p>
+        </div>
+        <i className={`ri-arrow-down-s-line text-xl text-zinc-400 transition-transform ${aberta ? 'rotate-180' : ''}`} />
+      </button>
+      {aberta && <div className="px-4 pb-4 pt-1 border-t border-zinc-100">{children}</div>}
+    </div>
+  );
+}
 
 export default function ItemModal({ item, categorias, obsGlobais, estacoes, saving, onSave, onClose, abaInicial }: Props) {
   const { user } = useAuth();
@@ -95,8 +149,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
   const { insumos } = useEstoque();
   const { recipes, getBatchesByRecipeId } = useProducao();
   const { itens: itensCardapio } = useCardapio();
-  const estacoesNomes = estacoes.map(e => e.nome);
-  const [tab, setTab] = useState<TabLocal>(abaInicial ?? 'info');
+  const [tab, setTab] = useState<AbaItem>(abaNova(abaInicial));
   const [nome, setNome] = useState(item?.nome ?? '');
   const [descricao, setDescricao] = useState(item?.descricao ?? '');
   const [preco, setPreco] = useState(String(item?.preco ?? ''));
@@ -121,6 +174,19 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
   const fotoInputRef = useRef<HTMLInputElement>(null);
   const [uploadingFoto, setUploadingFoto] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // Ficha técnica: componente sempre montado (rascunho não some ao trocar de aba); grava pelo Salvar único.
+  const fichaRef = useRef<FichaDoItemHandle>(null);
+  const [fichaSuja, setFichaSuja] = useState(false);
+  const [salvandoFicha, setSalvandoFicha] = useState(false);
+  // Depois de gravar a ficha: pergunta desde quando ela vale para as vendas já feitas, e só então salva o item
+  // (salvar o item fecha a janela).
+  const [perguntarVendas, setPerguntarVendas] = useState(false);
+  const itemPendente = useRef<Item | null>(null);
+  const [erro, setErro] = useState<ErroItem | null>(null);
+  const [abrirFiscal, setAbrirFiscal] = useState(abaInicial === 'fiscal');
+  const [abrirDelivery, setAbrirDelivery] = useState(abaInicial === 'delivery');
+  const abasRef = useRef<Partial<Record<AbaItem, HTMLButtonElement | null>>>({});
+  const corpoRef = useRef<HTMLDivElement>(null);
 
   // Sincroniza todos os estados quando o item prop muda (abre/fecha modal)
   // Usa JSON.stringify para detectar mudanças de conteúdo, não apenas de referência
@@ -145,14 +211,21 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
     setDeliveryConfig(item?.delivery);
     setFiscal(item?.fiscal ?? {});
     setHorario(item?.horario ?? null);
-    setTab('info');
+    setTab('basico');
     setNovaObs('');
     setUploadError(null);
+    setErro(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item ? JSON.stringify({ id: item.id, subproducao: item.subproducao, nome: item.nome, descricao: item.descricao, preco: item.preco, categoriaId: item.categoriaId, slaMinutos: item.slaMinutos, fotoUrl: item.fotoUrl, status: item.status, semPreparo: item.semPreparo, somenteDelivery: item.somenteDelivery, gruposOpcoes: item.gruposOpcoes, promocoes: item.promocoes, observacoesPadrao: item.observacoesPadrao, fichaTecnica: item.fichaTecnica, delivery: item.delivery, fiscal: item.fiscal, horario: item.horario }) : 'undefined', categorias]);
+  }, [item ? JSON.stringify({ id: item.id, subproducao: item.subproducao, nome: item.nome, descricao: item.descricao, preco: item.preco, categoriaId: item.categoriaId, slaMinutos: item.slaMinutos, fotoUrl: item.fotoUrl, status: item.status, semPreparo: item.semPreparo, somenteDelivery: item.somenteDelivery, gruposOpcoes: item.gruposOpcoes, promocoes: item.promocoes, observacoesPadrao: item.observacoesPadrao, fichaTecnica: item.fichaTecnica, delivery: item.delivery, fiscal: item.fiscal, horario: item.horario }) : 'undefined', categorias[0]?.id]); // só o id da 1ª categoria (item novo): recarregar o cardápio cria arrays novos e zerava o rascunho
 
-  // Abre na aba pedida: roda DEPOIS do efeito acima (que sempre volta para 'info') e só ao abrir o modal.
-  useEffect(() => { if (abaInicial) setTab(abaInicial); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Abre na aba pedida: roda DEPOIS do efeito acima (que sempre volta para 'basico') e só ao abrir o modal.
+  useEffect(() => { if (abaInicial) setTab(abaNova(abaInicial)); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Celular: a aba ativa fica centralizada na faixa rolável; o conteúdo volta para o topo.
+  useEffect(() => {
+    abasRef.current[tab]?.scrollIntoView?.({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+    if (corpoRef.current) corpoRef.current.scrollTop = 0;
+  }, [tab]);
 
   const slaCalculado = producaoDividida && subproducao.length > 0
     ? subproducao.reduce((acc, s) => acc + (s.slaMinutos || 0), 0)
@@ -177,25 +250,6 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
     // Reset input so same file can be re-selected if needed
     if (fotoInputRef.current) fotoInputRef.current.value = '';
   };
-
-  const tabs: { id: TabLocal; label: string; icon: string }[] = [
-    { id: 'info', label: 'Informações', icon: 'ri-information-line' },
-    {
-      id: 'producao',
-      label: semPreparo ? 'Produção (direta)' : producaoDividida ? `Produção (${subproducao.length})` : 'Produção',
-      icon: 'ri-tools-line',
-    },
-    { id: 'opcoes', label: `Opções (${grupos.length})`, icon: 'ri-list-check-2' },
-    { id: 'promocoes', label: `Promoções (${promocoes.length})`, icon: 'ri-price-tag-3-line' },
-    { id: 'observacoes', label: `Obs (${obs.length})`, icon: 'ri-chat-3-line' },
-    { id: 'ficha', label: `Ficha Técnica (${fichasCount})`, icon: 'ri-test-tube-line' },
-    { id: 'fiscal', label: fiscal.ncm ? `Fiscal (${fiscal.ncm})` : 'Fiscal', icon: 'ri-file-shield-2-line' },
-    {
-      id: 'delivery',
-      label: deliveryConfig?.ativo ? 'Delivery Próprio ✓' : 'Delivery Próprio',
-      icon: 'ri-e-bike-2-line',
-    },
-  ];
 
   const addGrupo = () => setGrupos(g => [...g, novosGrupo()]);
   const addGrupoCompleto = (grupo: GrupoOpcoes) => setGrupos(g => [...g, grupo]);
@@ -279,22 +333,44 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
     }
   };
 
-  const [erroOpcoes, setErroOpcoes] = useState<string | null>(null);
-  const handleSave = () => {
-    if (!nome.trim() || !preco) return;
-    if (erroHorario(horario)) {
-      // Horário incompleto: volta pra aba Informações e mostra o aviso (fica embaixo do editor).
-      setTab('info');
-      setTimeout(() => document.getElementById('item-horario-cardapio')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
-      return;
+  const mesmoNome = itemComMesmoNome(nome, itensCardapio, item?.id);
+
+  const irParaErro = (e: ErroItem) => {
+    setErro(e);
+    setTab(e.aba);
+    if (e.campo) {
+      const campo = e.campo;
+      setTimeout(() => {
+        const el = document.getElementById(campo);
+        el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (el instanceof HTMLInputElement) el.focus();
+      }, 80);
     }
+  };
+
+  const handleSave = async () => {
+    if (saving || salvandoFicha) return;
     const semQtd = grupos.flatMap(g => g.opcoes.filter(o => insumosDaOpcao(o).some(x => !(Number(x.quantidade) > 0))).map(o => o.nome || 'opção sem nome'));
-    if (semQtd.length) {
-      setErroOpcoes(`Informe quanto sai do estoque em: ${semQtd.join(', ')}.`);
-      setTab('opcoes');
+    const falha = validarItem({ nome, preco, erroHorario: erroHorario(horario), opcoesSemQuantidade: semQtd });
+    if (falha) {
+      if (falha.campo === 'item-preco' && !podeAlterarPreco) falha.texto += ' Seu perfil não pode alterar preços: peça a quem pode.';
+      irParaErro(falha);
       return;
     }
-    setErroOpcoes(null);
+    if (mesmoNome) {
+      const cat = categorias.find(c => c.id === mesmoNome.categoriaId)?.nome;
+      const ok = await confirmar({
+        titulo: 'Já existe um item com esse nome',
+        mensagem: `"${mesmoNome.nome}"${cat ? ` (${cat})` : ''} já está no cardápio. Salvar mesmo assim? Se não, a janela continua aberta e nada do que você digitou se perde.`,
+        confirmarLabel: 'Salvar mesmo assim',
+        cancelarLabel: 'Voltar e mudar o nome',
+      });
+      if (!ok) {
+        irParaErro({ aba: 'basico', campo: 'item-nome', texto: `Já existe um item chamado "${mesmoNome.nome}". Mude o nome ou salve mesmo assim.` });
+        return;
+      }
+    }
+    setErro(null);
     const saved: Item = {
       id: item?.id ?? `item-${Date.now()}`,
       categoriaId,
@@ -315,301 +391,373 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
       fiscal,
       horario,
     };
+    // 1) Ficha técnica (só se mudou). Se falhar, a janela fica aberta com tudo o que foi digitado.
+    if (fichaRef.current?.temMudanca()) {
+      setSalvandoFicha(true);
+      const r = await fichaRef.current.salvar();
+      setSalvandoFicha(false);
+      if (!r.ok) {
+        irParaErro({ aba: 'feito', texto: `A ficha técnica não foi salva (${r.erro ?? 'erro desconhecido'}). O item também não foi salvo. Nada do que você digitou se perdeu: confira e toque em Salvar de novo.` });
+        return;
+      }
+      // Ficha nova gravada: admin/gerente decide desde quando vale para as vendas já feitas; o item salva ao fechar.
+      if (user?.tenantId && item?.id && (user.perfil === 'admin' || user.perfil === 'gerente')) {
+        itemPendente.current = saved;
+        setPerguntarVendas(true);
+        return;
+      }
+    }
+    // 2) Item (mesmo caminho de sempre: onSave → salvarItem do Cardápio, que avisa se der erro).
     onSave(saved);
+  };
+
+  const fecharPerguntaVendas = () => {
+    setPerguntarVendas(false);
+    const pend = itemPendente.current;
+    itemPendente.current = null;
+    if (pend) onSave(pend);
+  };
+
+  const fechar = async () => {
+    if (fichaRef.current?.temMudanca()) {
+      const sair = await confirmar({
+        titulo: 'Sair sem salvar a ficha técnica?',
+        mensagem: 'Você mexeu na ficha técnica e ainda não salvou. Se sair agora, essas mudanças se perdem.',
+        confirmarLabel: 'Sair sem salvar',
+        cancelarLabel: 'Continuar editando',
+        perigo: true,
+      });
+      if (!sair) return;
+    }
+    onClose();
   };
 
   const estacoesUsadas = subproducao.map(s => s.estacao);
   const hasDuplicateEstacao = estacoesUsadas.length !== new Set(estacoesUsadas).size;
+  const categoriaAtual = categorias.find(c => c.id === categoriaId);
+  const ocupado = !!saving || salvandoFicha;
+
+  const contagem: Partial<Record<AbaItem, number>> = {
+    opcoes: grupos.length,
+    promocoes: promocoes.length,
+    observacoes: obs.length,
+  };
+
+  const resumoFiscal = fiscal.ncm
+    ? `NCM ${fiscal.ncm} só deste item.`
+    : `Herda da categoria "${categoriaAtual?.nome ?? ''}"${categoriaAtual?.fiscal?.ncm ? ` (NCM ${categoriaAtual.fiscal.ncm})` : ' (sem NCM próprio)'} e, depois, do padrão da loja.`;
+  const proprioDelivery = [
+    deliveryConfig?.preco != null ? `preço ${brl(deliveryConfig.preco)}` : null,
+    deliveryConfig?.descricao ? 'descrição' : null,
+    deliveryConfig?.embalagem ? 'embalagem' : null,
+    deliveryConfig?.slaMinutos ? `tempo ${deliveryConfig.slaMinutos} min` : null,
+    deliveryConfig?.quantidadeMinima || deliveryConfig?.quantidadeMaxima ? 'quantidade' : null,
+  ].filter(Boolean);
+  const resumoDelivery = disponibilidade === 'casa'
+    ? 'Este item não aparece no delivery ("Só balcão", no Básico).'
+    : proprioDelivery.length
+    ? `Próprio do delivery: ${proprioDelivery.join(', ')}.`
+    : 'Usa o mesmo preço e a mesma descrição da casa.';
+
+  const subtitulo = item
+    ? `${categoriaAtual?.nome ?? 'Sem categoria'} · ${brl(parseFloat(preco) || 0)}${status === 'inativo' ? ' · inativo' : ''}`
+    : 'Preencha o básico; o resto pode ficar para depois';
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-2xl flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between p-5 border-b border-gray-100 flex-shrink-0">
-          <h3 className="text-base font-semibold text-gray-800">
-            {item ? 'Editar Item' : 'Novo Item'}
-          </h3>
+    <div className="fixed inset-0 bg-black/40 flex items-stretch sm:items-center justify-center z-50 sm:p-4">
+      <div className="bg-[#FAF7F2] w-full h-[100dvh] sm:h-auto sm:max-h-[90vh] sm:max-w-2xl sm:rounded-2xl flex flex-col shadow-2xl">
+        {/* Cabeçalho */}
+        <div className="flex items-start justify-between gap-3 px-5 pt-4 pb-3 bg-white sm:rounded-t-2xl flex-shrink-0">
+          <div className="min-w-0">
+            <h3 className="text-[17px] font-extrabold text-zinc-900 leading-snug truncate">
+              {item ? (nome || item.nome || 'Editar item') : (nome || 'Novo item')}
+            </h3>
+            <p className="text-xs text-zinc-500 mt-0.5 truncate">{subtitulo}</p>
+          </div>
           <button
-            onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
+            onClick={fechar}
+            aria-label="Fechar"
+            className="w-11 h-11 flex-shrink-0 flex items-center justify-center text-zinc-500 bg-zinc-100 hover:bg-zinc-200 rounded-full transition-colors cursor-pointer"
           >
             <i className="ri-close-line text-lg" />
           </button>
         </div>
 
-        {/* Tabs */}
-        <div className="flex border-b border-gray-100 px-5 flex-shrink-0 overflow-x-auto">
-          {tabs.map(t => (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`flex items-center gap-1.5 px-3 py-3 text-xs font-medium border-b-2 transition-colors cursor-pointer whitespace-nowrap -mb-px ${
-                tab === t.id ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <i className={`${t.icon} text-sm`} />
-              {t.label}
-              {t.id === 'producao' && semPreparo && (
-                <span className="w-1.5 h-1.5 rounded-full bg-teal-500 ml-0.5" />
-              )}
-              {t.id === 'producao' && !semPreparo && producaoDividida && (
-                <span className="w-1.5 h-1.5 rounded-full bg-orange-500 ml-0.5" />
-              )}
-            </button>
-          ))}
+        {/* Abas (roláveis no celular; a ativa fica no meio) */}
+        <div className="bg-white border-b border-zinc-200 flex-shrink-0">
+          <div className="flex gap-1 px-3 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" role="tablist">
+            {ABAS_ITEM.map(a => {
+              const n = contagem[a.id];
+              const ativa = tab === a.id;
+              const comErro = erro?.aba === a.id;
+              return (
+                <button
+                  key={a.id}
+                  ref={el => { abasRef.current[a.id] = el; }}
+                  role="tab"
+                  aria-selected={ativa}
+                  onClick={() => setTab(a.id)}
+                  className={`flex items-center gap-1.5 min-h-[44px] px-3 text-[13px] font-bold border-b-[3px] transition-colors cursor-pointer whitespace-nowrap ${
+                    ativa ? 'border-amber-500 text-zinc-900' : 'border-transparent text-zinc-500 hover:text-zinc-800'
+                  }`}
+                >
+                  {a.rotulo}
+                  {n ? <span className="text-[11px] font-bold px-1.5 rounded-full bg-zinc-100 text-zinc-600">{n}</span> : null}
+                  {a.id === 'feito' && fichasCount > 0 && (
+                    <span className="text-[11px] font-bold px-1.5 rounded-full bg-zinc-100 text-zinc-600" title="Insumos na ficha técnica">{fichasCount}</span>
+                  )}
+                  {a.id === 'feito' && semPreparo && <span className="w-1.5 h-1.5 rounded-full bg-teal-500" title="Entrega direta" />}
+                  {a.id === 'feito' && !semPreparo && producaoDividida && <span className="w-1.5 h-1.5 rounded-full bg-amber-500" title="Produção dividida" />}
+                  {a.id === 'feito' && fichaSuja && <span className="text-[10px] font-bold text-amber-700" title="Ficha com mudança não salva">•</span>}
+                  {a.id === 'avancado' && status === 'inativo' && <span className="text-[10px] font-bold px-1.5 rounded-full bg-red-50 text-red-600">inativo</span>}
+                  {comErro && <i className="ri-error-warning-fill text-red-500 text-sm" />}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-5">
+        {/* Conteúdo */}
+        <div ref={corpoRef} className="flex-1 overflow-y-auto p-4 sm:p-5">
 
-          {/* ── INFO ── */}
-          {tab === 'info' && (
+          {erro && erro.aba === tab && erro.aba !== 'opcoes' && (
+            <div className="mb-4 flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700" role="alert">
+              <i className="ri-error-warning-line text-base mt-0.5" />
+              <span className="flex-1">{erro.texto}</span>
+              <button type="button" onClick={() => setErro(null)} aria-label="Fechar aviso" className="w-8 h-8 -mr-1 -mt-1 flex items-center justify-center text-red-400 hover:text-red-600 cursor-pointer">
+                <i className="ri-close-line" />
+              </button>
+            </div>
+          )}
+
+          {/* ── BÁSICO ── */}
+          {tab === 'basico' && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">Nome do Item *</label>
-                  <input
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-orange-400 transition-colors"
-                    placeholder="Ex: X-Burguer Clássico"
-                    value={nome}
-                    onChange={e => setNome(e.target.value)}
-                  />
-                </div>
+              <div>
+                <label className={ROTULO} htmlFor="item-nome">Nome do item *</label>
+                <input
+                  id="item-nome"
+                  className={CAMPO}
+                  placeholder="Ex: X-Burguer Clássico"
+                  value={nome}
+                  onChange={e => setNome(e.target.value)}
+                />
+                {mesmoNome && (
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mt-1.5">
+                    <i className="ri-alert-line mr-1" />
+                    Já existe um item chamado "{mesmoNome.nome}"{categorias.find(c => c.id === mesmoNome.categoriaId) ? ` em ${categorias.find(c => c.id === mesmoNome.categoriaId)!.nome}` : ''}.
+                  </p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">Preço (R$) *</label>
+                  <label className={ROTULO} htmlFor="item-preco">Preço (R$) *</label>
                   <input
+                    id="item-preco"
                     type="number"
                     step="0.01"
+                    inputMode="decimal"
                     disabled={!podeAlterarPreco}
                     title={!podeAlterarPreco ? 'Seu perfil não pode alterar preços' : undefined}
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-orange-400 transition-colors disabled:bg-zinc-100 disabled:text-zinc-400 disabled:cursor-not-allowed"
+                    className={`${CAMPO} disabled:bg-zinc-100 disabled:text-zinc-400 disabled:cursor-not-allowed`}
                     placeholder="0,00"
                     value={preco}
                     onChange={e => setPreco(e.target.value)}
                   />
                   {!podeAlterarPreco && (
-                    <p className="text-[10px] text-zinc-400 mt-1 flex items-center gap-1">
+                    <p className="text-[11px] text-zinc-400 mt-1 flex items-center gap-1">
                       <i className="ri-lock-line" /> Sem permissão para alterar preço
                     </p>
                   )}
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">
-                    SLA (minutos)
-                    {semPreparo && (
-                      <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 bg-teal-50 text-teal-600 rounded-full border border-teal-100">
-                        Entrega Direta
-                      </span>
-                    )}
-                    {slaCalculado !== null && !semPreparo && (
-                      <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 bg-orange-50 text-orange-600 rounded-full border border-orange-100">
-                        Calculado automaticamente
-                      </span>
-                    )}
-                  </label>
-                  <input
-                    type="number"
-                    className={`w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none transition-colors ${(slaCalculado !== null || semPreparo) ? 'bg-gray-50 text-gray-400 cursor-default' : 'focus:border-orange-400'}`}
-                    placeholder="10"
-                    value={semPreparo ? 0 : slaCalculado !== null ? slaCalculado : sla}
-                    readOnly={slaCalculado !== null || semPreparo}
-                    onChange={e => { if (slaCalculado === null && !semPreparo) setSla(e.target.value); }}
-                  />
-                  {semPreparo && (
-                    <p className="text-[10px] text-teal-500 mt-1">Sem preparo — entregue diretamente</p>
-                  )}
-                  {slaCalculado !== null && !semPreparo && (
-                    <p className="text-[10px] text-gray-400 mt-1">
-                      Soma: {subproducao.map(s => `${s.slaMinutos}min`).join(' + ')} = {slaCalculado}min
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">Categoria</label>
+                  <label className={ROTULO} htmlFor="item-categoria">Categoria</label>
                   <select
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-orange-400 transition-colors cursor-pointer"
+                    id="item-categoria"
+                    className={`${CAMPO} cursor-pointer`}
                     value={categoriaId}
                     onChange={e => setCategoriaId(e.target.value)}
                   >
                     {categorias.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
                   </select>
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">Status</label>
-                  <select
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-orange-400 transition-colors cursor-pointer"
-                    value={status}
-                    onChange={e => setStatus(e.target.value as 'ativo' | 'inativo')}
-                  >
-                    <option value="ativo">Ativo</option>
-                    <option value="inativo">Inativo</option>
-                  </select>
-                </div>
+              </div>
 
-                {/* Onde o item aparece: casa, delivery ou ambos */}
-                <div className="col-span-2">
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">Onde este item aparece</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    {([
-                      { key: 'ambos', label: 'Casa e delivery', icon: 'ri-restaurant-2-line' },
-                      { key: 'casa', label: 'Só na casa', icon: 'ri-home-4-line' },
-                      { key: 'delivery', label: 'Só delivery', icon: 'ri-e-bike-2-line' },
-                    ] as const).map(opt => {
-                      const sel = disponibilidade === opt.key;
-                      return (
-                        <button
-                          key={opt.key}
-                          type="button"
-                          onClick={() => setDisponibilidade(opt.key)}
-                          className={`flex flex-col items-center gap-1 py-3 rounded-xl border text-xs font-semibold transition-colors ${
-                            sel ? 'bg-orange-50 border-orange-300 text-orange-700' : 'bg-zinc-50 border-zinc-200 text-zinc-500 hover:border-zinc-300'
-                          }`}
-                        >
-                          <i className={opt.icon + ' text-lg'} />
-                          {opt.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <p className="text-xs text-gray-500 mt-1.5">
-                    {disponibilidade === 'delivery'
-                      ? 'Aparece só no delivery — oculto no caixa, garçom, mesa e autoatendimento.'
-                      : disponibilidade === 'casa'
-                      ? 'Aparece só nos canais presenciais (caixa, garçom, mesa, autoatendimento) — oculto no delivery.'
-                      : 'Aparece em todos os canais — presencial e delivery.'}
-                  </p>
-                </div>
-
-                {/* Horário em que o item aparece no cardápio do cliente */}
-                <div className="col-span-2" id="item-horario-cardapio">
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">Horário no cardápio</label>
-                  <HorarioExibicaoEditor
-                    value={horario}
-                    onChange={setHorario}
-                    canais={disponibilidade === 'ambos' ? ['casa', 'delivery'] : [disponibilidade]}
-                    ajuda="Fora desses horários o item some do cardápio do cliente (delivery, mesa/QR e autoatendimento). Cada horário pode valer para casa e delivery ou só para um deles. No caixa, garçom e PDV delivery ele continua, marcado como fora do horário."
-                  />
-                  {(() => {
-                    const cat = categorias.find(c => c.id === categoriaId);
-                    if (!cat || !temHorario(cat.horario)) return null;
+              {/* Onde o item aparece: balcão, delivery ou ambos */}
+              <div>
+                <label className={ROTULO}>Onde este item aparece</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {([
+                    { key: 'ambos', label: 'Balcão e delivery', icon: 'ri-restaurant-2-line' },
+                    { key: 'casa', label: 'Só balcão', icon: 'ri-home-4-line' },
+                    { key: 'delivery', label: 'Só delivery', icon: 'ri-e-bike-2-line' },
+                  ] as const).map(opt => {
+                    const sel = disponibilidade === opt.key;
                     return (
-                      <p className="text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2.5 py-1.5 mt-2">
-                        <i className="ri-information-line mr-1" />
-                        A categoria "{cat.nome}" só aparece {resumoHorario(cat.horario, disponibilidade === 'ambos' ? ['casa', 'delivery'] : [disponibilidade])}. O item precisa estar no horário dele e no da categoria.
-                      </p>
+                      <button
+                        key={opt.key}
+                        type="button"
+                        aria-pressed={sel}
+                        onClick={() => setDisponibilidade(opt.key)}
+                        className={`flex flex-col items-center justify-center gap-1 min-h-[64px] px-1 py-2.5 rounded-xl border text-xs font-bold transition-colors text-center cursor-pointer ${
+                          sel ? 'bg-amber-50 border-amber-400 text-zinc-900' : 'bg-white border-zinc-200 text-zinc-500 hover:border-zinc-300'
+                        }`}
+                      >
+                        <i className={opt.icon + ' text-lg'} />
+                        {opt.label}
+                      </button>
                     );
-                  })()}
+                  })}
                 </div>
+                <p className="text-xs text-zinc-500 mt-1.5">
+                  {disponibilidade === 'delivery'
+                    ? 'Aparece só no delivery — oculto no caixa, garçom, mesa e autoatendimento.'
+                    : disponibilidade === 'casa'
+                    ? 'Aparece só nos canais presenciais (caixa, garçom, mesa, autoatendimento) — oculto no delivery.'
+                    : 'Aparece em todos os canais — presencial e delivery.'}
+                  {' '}Balcão = caixa, totem, mesa e garçom.
+                </p>
+              </div>
 
-                <div className="col-span-2">
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">Descrição</label>
-                  <textarea
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-orange-400 transition-colors resize-none"
-                    rows={3}
-                    placeholder="Descreva os ingredientes e características do item..."
-                    value={descricao}
-                    onChange={e => setDescricao(e.target.value)}
-                  />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-xs font-medium text-gray-600 mb-1.5">Foto</label>
-                  <div className="flex items-start gap-3">
-                    <div className="w-20 h-20 rounded-xl overflow-hidden border border-gray-100 flex-shrink-0">
-                      <ItemImage src={fotoUrl} alt={nome || 'Novo Item'} className="w-full h-full" />
-                    </div>
-                    <div className="flex-1 space-y-2">
-                      <input
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-orange-400 transition-colors"
-                        placeholder="https://... (cole uma URL)"
-                        value={fotoUrl.startsWith('data:') ? '' : fotoUrl}
-                        onChange={e => setFotoUrl(e.target.value)}
-                      />
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => !uploadingFoto && fotoInputRef.current?.click()}
-                          disabled={uploadingFoto}
-                          className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-gray-600 bg-gray-50 border border-gray-200 rounded-lg hover:bg-gray-100 cursor-pointer whitespace-nowrap transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-                        >
-                          {uploadingFoto ? (
-                            <>
-                              <span className="w-3.5 h-3.5 border-2 border-gray-400/30 border-t-gray-500 rounded-full animate-spin" />
-                              Enviando...
-                            </>
-                          ) : (
-                            <>
-                              <i className="ri-upload-2-line text-sm" />
-                              Anexar do computador
-                            </>
-                          )}
-                        </button>
-                        {fotoUrl && !uploadingFoto && (
-                          <button
-                            type="button"
-                            onClick={() => setFotoUrl('')}
-                            className="text-xs text-red-400 hover:text-red-600 cursor-pointer font-medium"
-                          >
-                            Remover foto
-                          </button>
+              <div>
+                <label className={ROTULO}>Foto</label>
+                <div className="flex items-start gap-3">
+                  <div className="w-20 h-20 rounded-xl overflow-hidden border border-zinc-200 bg-white flex-shrink-0">
+                    <ItemImage src={fotoUrl} alt={nome || 'Novo Item'} className="w-full h-full" />
+                  </div>
+                  <div className="flex-1 min-w-0 space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => !uploadingFoto && fotoInputRef.current?.click()}
+                        disabled={uploadingFoto}
+                        className={btn('out')}
+                      >
+                        {uploadingFoto ? (
+                          <>
+                            <span className="w-3.5 h-3.5 border-2 border-zinc-400/30 border-t-zinc-500 rounded-full animate-spin" />
+                            Enviando...
+                          </>
+                        ) : (
+                          <>
+                            <i className="ri-upload-2-line text-sm" />
+                            Anexar foto
+                          </>
                         )}
-                      </div>
-                      {uploadError && (
-                        <p className="text-xs text-red-500 flex items-center gap-1">
-                          <i className="ri-error-warning-line" />
-                          {uploadError}
-                        </p>
+                      </button>
+                      {fotoUrl && !uploadingFoto && (
+                        <button type="button" onClick={() => setFotoUrl('')} className={btn('ghost')}>
+                          <span className="text-red-600">Remover foto</span>
+                        </button>
                       )}
-                      <input
-                        ref={fotoInputRef}
-                        type="file"
-                        accept="image/jpeg,image/png,image/webp,image/gif"
-                        className="hidden"
-                        onChange={handleFotoUpload}
-                      />
                     </div>
+                    <input
+                      className={CAMPO}
+                      placeholder="ou cole o link: https://..."
+                      value={fotoUrl.startsWith('data:') ? '' : fotoUrl}
+                      onChange={e => setFotoUrl(e.target.value)}
+                    />
+                    {uploadError && (
+                      <p className="text-xs text-red-500 flex items-center gap-1">
+                        <i className="ri-error-warning-line" />
+                        {uploadError}
+                      </p>
+                    )}
+                    <input
+                      ref={fotoInputRef}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,image/gif"
+                      className="hidden"
+                      onChange={handleFotoUpload}
+                    />
                   </div>
                 </div>
+              </div>
+
+              <div>
+                <label className={ROTULO} htmlFor="item-descricao">Descrição</label>
+                <textarea
+                  id="item-descricao"
+                  className={`${CAMPO} resize-none`}
+                  rows={3}
+                  placeholder="Descreva os ingredientes e características do item..."
+                  value={descricao}
+                  onChange={e => setDescricao(e.target.value)}
+                />
+              </div>
+
+              {/* Horário em que o item aparece no cardápio do cliente */}
+              <div id="item-horario-cardapio">
+                <label className={ROTULO}>Horário no cardápio</label>
+                <HorarioExibicaoEditor
+                  value={horario}
+                  onChange={setHorario}
+                  canais={disponibilidade === 'ambos' ? ['casa', 'delivery'] : [disponibilidade]}
+                  ajuda="Fora desses horários o item some do cardápio do cliente (delivery, mesa/QR e autoatendimento). Cada horário pode valer para casa e delivery ou só para um deles. No caixa, garçom e PDV delivery ele continua, marcado como fora do horário."
+                />
+                {(() => {
+                  const cat = categoriaAtual;
+                  if (!cat || !temHorario(cat.horario)) return null;
+                  return (
+                    <p className="text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-lg px-2.5 py-1.5 mt-2">
+                      <i className="ri-information-line mr-1" />
+                      A categoria "{cat.nome}" só aparece {resumoHorario(cat.horario, disponibilidade === 'ambos' ? ['casa', 'delivery'] : [disponibilidade])}. O item precisa estar no horário dele e no da categoria.
+                    </p>
+                  );
+                })()}
               </div>
             </div>
           )}
 
-          {/* ── PRODUÇÃO ── */}
-          {tab === 'producao' && (
-            <div className="space-y-5">
+          {/* ── COMO É FEITO: ficha técnica + produção + tempo de preparo ── */}
+          {/* A ficha fica montada o tempo todo (escondida fora desta aba) para não perder o rascunho. */}
+          <div className={tab === 'feito' ? 'mb-5' : 'hidden'}>
+            <Titulo extra={<span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-600">custo do item</span>}>
+              Ficha técnica
+            </Titulo>
+            <Cartao>
+              <FichaDoItem
+                key={item?.id ?? 'novo'}
+                ref={fichaRef}
+                itemId={item?.id}
+                onCountChange={setFichasCount}
+                onSujaChange={setFichaSuja}
+              />
+            </Cartao>
+          </div>
 
-              {/* ── Entrega Direta toggle ── */}
-              <div className={`flex items-start gap-4 p-4 rounded-xl border transition-colors ${semPreparo ? 'bg-teal-50 border-teal-200' : 'bg-zinc-50 border-zinc-200'}`}>
+          {tab === 'feito' && (
+            <div className="space-y-4">
+              <Titulo>Produção</Titulo>
+
+              {/* ── Entrega Direta ── */}
+              <div className={`flex items-start gap-3 p-4 rounded-2xl border transition-colors ${semPreparo ? 'bg-teal-50 border-teal-200' : 'bg-white border-zinc-200'}`}>
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-0.5">
-                    <p className="text-sm font-semibold text-gray-800">Entrega Direta — sem preparo</p>
+                    <p className="text-sm font-bold text-zinc-900">Entrega direta, sem preparo</p>
                     {semPreparo && (
                       <span className="text-[10px] font-bold px-2 py-0.5 bg-teal-100 text-teal-700 border border-teal-200 rounded-full">
                         ATIVO
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-gray-500 mt-0.5">
+                  <p className="text-xs text-zinc-500 mt-0.5">
                     Ative para itens que <strong>não precisam de preparo na cozinha</strong>. Ao chegar no KDS, o item pula direto para <strong>Pronto</strong>, aguardando apenas a entrega.
                   </p>
-                  <p className="text-xs text-teal-600 mt-1.5 font-medium">
+                  <p className="text-xs text-teal-700 mt-1.5 font-medium">
                     Ex: Refrigerante, Água Mineral, Bebidas embaladas, Itens pré-prontos.
                   </p>
                 </div>
-                <button
-                  onClick={() => handleToggleSemPreparo(!semPreparo)}
-                  className={`relative flex-shrink-0 w-11 h-6 rounded-full transition-colors cursor-pointer mt-0.5 ${semPreparo ? 'bg-teal-500' : 'bg-gray-200'}`}
-                >
-                  <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${semPreparo ? 'left-6' : 'left-1'}`} />
-                </button>
+                <Chave ligado={semPreparo} cor="teal" rotulo="Entrega direta, sem preparo" onClick={() => handleToggleSemPreparo(!semPreparo)} />
               </div>
 
-              {/* Info quando entrega direta ativa */}
               {semPreparo && (
                 <div className="flex items-start gap-2.5 p-3 bg-teal-50 border border-teal-100 rounded-xl">
                   <i className="ri-arrow-right-circle-line text-teal-500 text-base flex-shrink-0 mt-0.5" />
                   <div>
                     <p className="text-xs font-bold text-teal-700 mb-1">Como funciona no KDS:</p>
-                    <ul className="space-y-0.5 text-xs text-teal-600">
+                    <ul className="space-y-0.5 text-xs text-teal-700">
                       <li>• Ao entrar no KDS, o item já aparece como <strong>PRONTO</strong></li>
                       <li>• Operadores veem o badge <strong>&quot;ENTREGA DIRETA&quot;</strong> no card</li>
                       <li>• Pedidos mistos: itens sem preparo ficam prontos enquanto os outros são preparados</li>
@@ -621,34 +769,29 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
 
               {/* ── Produção dividida (bloqueada se semPreparo) ── */}
               <div className={semPreparo ? 'opacity-40 pointer-events-none select-none' : ''}>
-                <div className="flex items-start gap-4 p-4 bg-orange-50 rounded-xl border border-orange-100">
+                <div className="flex items-start gap-3 p-4 bg-white rounded-2xl border border-zinc-200">
                   <div className="flex-1">
-                    <p className="text-sm font-semibold text-gray-800">Produção dividida em múltiplas estações</p>
-                    <p className="text-xs text-gray-500 mt-0.5">
+                    <p className="text-sm font-bold text-zinc-900">Produção dividida em estações</p>
+                    <p className="text-xs text-zinc-500 mt-0.5">
                       Ative quando este item exige produção em mais de uma estação da cozinha.
                       O item só fica pronto quando <strong>todas as partes</strong> estiverem concluídas.
                     </p>
-                    <p className="text-xs text-orange-600 mt-1.5 font-medium">
+                    <p className="text-xs text-amber-700 mt-1.5 font-medium">
                       Ex: Hambúrguer (Grelha) + Batata inclusa (Frituras) — cada estação vê e controla sua parte.
                     </p>
                     {semPreparo && (
-                      <p className="text-xs text-gray-400 mt-1 italic">Indisponível quando &quot;Entrega Direta&quot; está ativo.</p>
+                      <p className="text-xs text-zinc-400 mt-1 italic">Indisponível quando &quot;Entrega Direta&quot; está ativo.</p>
                     )}
                   </div>
-                  <button
-                    onClick={() => handleToggleProducaoDividida(!producaoDividida)}
-                    className={`relative flex-shrink-0 w-11 h-6 rounded-full transition-colors cursor-pointer mt-0.5 ${producaoDividida ? 'bg-orange-500' : 'bg-gray-200'}`}
-                  >
-                    <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${producaoDividida ? 'left-6' : 'left-1'}`} />
-                  </button>
+                  <Chave ligado={producaoDividida} rotulo="Produção dividida em estações" onClick={() => handleToggleProducaoDividida(!producaoDividida)} />
                 </div>
 
                 {producaoDividida && (
                   <div className="space-y-3 mt-4">
                     <div className="flex items-center justify-between">
-                      <h4 className="text-sm font-semibold text-gray-700">Partes da Produção</h4>
+                      <h4 className="text-sm font-bold text-zinc-800">Partes da produção</h4>
                       {hasDuplicateEstacao && (
-                        <span className="text-xs text-amber-600 flex items-center gap-1">
+                        <span className="text-xs text-amber-700 flex items-center gap-1">
                           <i className="ri-alert-line" />
                           Estação duplicada
                         </span>
@@ -656,32 +799,33 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
                     </div>
 
                     {subproducao.map((parte, idx) => (
-                      <div key={parte.id} className="border border-gray-200 rounded-xl p-4 space-y-3">
+                      <div key={parte.id} className="bg-white border border-zinc-200 rounded-2xl p-4 space-y-3">
                         <div className="flex items-center justify-between mb-1">
-                          <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                          <span className="text-xs font-bold text-zinc-400 uppercase tracking-wider">
                             Parte {idx + 1}
                           </span>
                           <button
                             onClick={() => removeSubParte(parte.id)}
-                            className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg cursor-pointer transition-colors"
+                            aria-label={`Remover parte ${idx + 1}`}
+                            className="w-11 h-11 -mr-2 flex items-center justify-center text-zinc-400 hover:text-red-500 hover:bg-red-50 rounded-xl cursor-pointer transition-colors"
                           >
-                            <i className="ri-delete-bin-line text-sm" />
+                            <i className="ri-delete-bin-line text-base" />
                           </button>
                         </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <div className="col-span-2">
-                            <label className="block text-xs font-medium text-gray-600 mb-1.5">Nome da Parte *</label>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="sm:col-span-2">
+                            <label className={ROTULO}>Nome da parte *</label>
                             <input
-                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 transition-colors"
+                              className={CAMPO}
                               placeholder="Ex: Hambúrguer, Batata Frita, Molho..."
                               value={parte.nome}
                               onChange={e => updateSubParte(parte.id, { nome: e.target.value })}
                             />
                           </div>
                           <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1.5">Estação *</label>
+                            <label className={ROTULO}>Estação *</label>
                             <select
-                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 transition-colors cursor-pointer"
+                              className={`${CAMPO} cursor-pointer`}
                               value={parte.estacaoId ?? estacoes.find(e => e.nome === parte.estacao)?.id ?? ''}
                               onChange={e => {
                                 const estId = e.target.value;
@@ -695,23 +839,22 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
                             </select>
                           </div>
                           <div>
-                            <label className="block text-xs font-medium text-gray-600 mb-1.5">SLA desta parte (min)</label>
+                            <label className={ROTULO}>Tempo desta parte (min)</label>
                             <input
                               type="number"
                               min="1"
-                              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 transition-colors"
+                              inputMode="numeric"
+                              className={CAMPO}
                               value={parte.slaMinutos}
                               onChange={e => updateSubParte(parte.id, { slaMinutos: parseInt(e.target.value, 10) || 1 })}
                             />
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <div className="w-4 h-4 flex items-center justify-center">
-                            <i className="ri-map-pin-2-line text-orange-500 text-sm" />
-                          </div>
-                          <span className="text-xs text-gray-500">
+                          <i className="ri-map-pin-2-line text-amber-600 text-sm" />
+                          <span className="text-xs text-zinc-500">
                             Aparecerá no KDS da estação{' '}
-                            <strong className="text-orange-600">{parte.estacao || '—'}</strong>
+                            <strong className="text-zinc-800">{parte.estacao || '—'}</strong>
                             {parte.slaMinutos > 0 && (
                               <> com SLA de <strong>{parte.slaMinutos} min</strong></>
                             )}
@@ -722,26 +865,24 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
 
                     <button
                       onClick={addSubParte}
-                      className="w-full border-2 border-dashed border-gray-200 hover:border-orange-300 hover:bg-orange-50 text-gray-500 hover:text-orange-500 text-sm font-medium py-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                      className="w-full min-h-[48px] border-2 border-dashed border-zinc-200 hover:border-amber-300 hover:bg-amber-50 text-zinc-500 hover:text-zinc-800 text-sm font-bold py-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
                     >
-                      <i className="ri-add-line" /> Adicionar Parte
+                      <i className="ri-add-line" /> Adicionar parte
                     </button>
 
                     {subproducao.length >= 2 && (
-                      <div className="bg-gray-50 rounded-xl p-3 flex items-start gap-2">
-                        <div className="w-5 h-5 flex items-center justify-center flex-shrink-0 mt-0.5">
-                          <i className="ri-information-line text-sm text-gray-400" />
-                        </div>
+                      <div className="bg-white border border-zinc-200 rounded-xl p-3 flex items-start gap-2">
+                        <i className="ri-information-line text-sm text-zinc-400 mt-0.5" />
                         <div>
-                          <p className="text-xs text-gray-600 font-medium">Como funciona no KDS:</p>
+                          <p className="text-xs text-zinc-600 font-medium">Como funciona no KDS:</p>
                           <ul className="mt-1 space-y-0.5">
                             {subproducao.map((p, i) => (
-                              <li key={p.id} className="text-xs text-gray-500 flex items-center gap-1.5">
-                                <span className="w-4 h-4 rounded-full bg-orange-100 text-orange-600 text-[10px] font-bold flex items-center justify-center flex-shrink-0">{i + 1}</span>
+                              <li key={p.id} className="text-xs text-zinc-500 flex items-center gap-1.5">
+                                <span className="w-4 h-4 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold flex items-center justify-center flex-shrink-0">{i + 1}</span>
                                 Estação <strong>{p.estacao || '—'}</strong> vê e controla &quot;{p.nome || 'sem nome'}&quot;
                               </li>
                             ))}
-                            <li className="text-xs text-orange-600 font-medium flex items-center gap-1.5 mt-1">
+                            <li className="text-xs text-amber-800 font-medium flex items-center gap-1.5 mt-1">
                               <i className="ri-check-double-line" />
                               Item só fica PRONTO quando todas as partes estiverem prontas
                             </li>
@@ -753,16 +894,45 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
                 )}
 
                 {!producaoDividida && !semPreparo && (
-                  <div className="text-center py-8">
-                    <div className="w-12 h-12 flex items-center justify-center mx-auto bg-gray-100 rounded-xl mb-3">
-                      <i className="ri-tools-line text-2xl text-gray-400" />
-                    </div>
-                    <p className="text-sm text-gray-500">Produção simples — uma única estação</p>
-                    <p className="text-xs text-gray-400 mt-1">
-                      A estação usada é a da categoria do item.<br />
-                      Ative a produção dividida se este item precisar de múltiplas estações.
-                    </p>
-                  </div>
+                  <p className="text-xs text-zinc-500 mt-2 px-1">
+                    <i className="ri-tools-line mr-1 text-zinc-400" />
+                    Produção simples — uma única estação: a da categoria do item.
+                  </p>
+                )}
+              </div>
+
+              {/* Tempo de preparo (SLA) */}
+              <div>
+                <label className={ROTULO} htmlFor="item-sla">
+                  Tempo de preparo — SLA (minutos)
+                  {semPreparo && (
+                    <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 bg-teal-50 text-teal-700 rounded-full border border-teal-100">
+                      Entrega Direta
+                    </span>
+                  )}
+                  {slaCalculado !== null && !semPreparo && (
+                    <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 bg-amber-50 text-amber-800 rounded-full border border-amber-200">
+                      Calculado automaticamente
+                    </span>
+                  )}
+                </label>
+                <input
+                  id="item-sla"
+                  type="number"
+                  inputMode="numeric"
+                  className={`${CAMPO} max-w-[160px] ${(slaCalculado !== null || semPreparo) ? 'bg-zinc-50 text-zinc-400 cursor-default' : ''}`}
+                  placeholder="10"
+                  value={semPreparo ? 0 : slaCalculado !== null ? slaCalculado : sla}
+                  readOnly={slaCalculado !== null || semPreparo}
+                  onChange={e => { if (slaCalculado === null && !semPreparo) setSla(e.target.value); }}
+                />
+                {semPreparo && (
+                  <p className="text-[11px] text-teal-600 mt-1">Sem preparo — entregue diretamente</p>
+                )}
+                {slaCalculado !== null && !semPreparo && (
+                  <p className="text-[11px] text-zinc-400 mt-1">
+                    Soma: {subproducao.map(s => `${s.slaMinutos}min`).join(' + ')} = {slaCalculado}min
+                  </p>
                 )}
               </div>
             </div>
@@ -784,7 +954,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
               onRemoveOpcao={removeOpcao}
               onUpdateOpcao={updateOpcao}
               onMoveOpcao={moverOpcao}
-              erro={erroOpcoes}
+              erro={erro?.aba === 'opcoes' ? erro.texto : null}
               itemId={item?.id}
               itemNome={nome || item?.nome}
               vinculosSalvos={JSON.stringify(vinculosOpcoes(item?.gruposOpcoes ?? [])) === JSON.stringify(vinculosOpcoes(grupos))}
@@ -793,43 +963,48 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
 
           {/* ── PROMOÇÕES ── */}
           {tab === 'promocoes' && (
-            <div className="space-y-4">
+            <div className="space-y-3">
+              <Titulo>Promoções deste item</Titulo>
+              {promocoes.length === 0 && (
+                <p className="text-xs text-zinc-500 bg-white border border-zinc-200 rounded-2xl px-4 py-3">
+                  <b className="text-zinc-800">Nenhuma promoção.</b> Preço especial por dia da semana ou numa data.
+                </p>
+              )}
               {promocoes.map(promo => (
-                <div key={promo.id} className="border border-gray-100 rounded-xl p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
+                <div key={promo.id} className="bg-white border border-zinc-200 rounded-2xl p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <div className="flex flex-wrap items-center gap-2">
                       <select
-                        className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400 cursor-pointer"
+                        aria-label="Tipo da promoção"
+                        className={`${CAMPO} !w-auto cursor-pointer`}
                         value={promo.tipo}
                         onChange={e => updatePromocao(promo.id, { tipo: e.target.value as 'semanal' | 'pontual' })}
                       >
                         <option value="semanal">Semanal</option>
                         <option value="pontual">Pontual</option>
                       </select>
-                      <div className="flex items-center gap-1.5 border border-gray-200 rounded-lg px-3 py-2 text-sm">
-                        <span className="text-gray-400 text-xs">R$</span>
+                      <div className="flex items-center gap-1.5 min-h-[44px] border border-zinc-200 rounded-xl px-3 bg-white">
+                        <span className="text-zinc-400 text-xs">R$</span>
                         <input
                           type="number"
                           step="0.01"
-                          className="w-20 focus:outline-none text-sm"
+                          inputMode="decimal"
+                          aria-label="Preço na promoção"
+                          className="w-24 focus:outline-none text-sm bg-transparent"
                           placeholder="Preço promo"
                           value={promo.precoPromocional || ''}
                           onChange={e => updatePromocao(promo.id, { precoPromocional: parseFloat(e.target.value) })}
                         />
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => updatePromocao(promo.id, { ativo: !promo.ativo })}
-                        className={`relative w-9 h-5 rounded-full transition-colors cursor-pointer ${promo.ativo ? 'bg-orange-500' : 'bg-gray-200'}`}
-                      >
-                        <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all ${promo.ativo ? 'left-4' : 'left-0.5'}`} />
-                      </button>
+                    <div className="flex items-center gap-1">
+                      <Chave ligado={promo.ativo} rotulo="Promoção ativa" onClick={() => updatePromocao(promo.id, { ativo: !promo.ativo })} />
                       <button
                         onClick={() => removePromocao(promo.id)}
-                        className="w-7 h-7 flex items-center justify-center text-gray-400 hover:text-red-500 cursor-pointer rounded transition-colors"
+                        aria-label="Excluir promoção"
+                        className="w-11 h-11 flex items-center justify-center text-zinc-400 hover:text-red-500 cursor-pointer rounded-xl transition-colors"
                       >
-                        <i className="ri-delete-bin-line text-sm" />
+                        <i className="ri-delete-bin-line text-base" />
                       </button>
                     </div>
                   </div>
@@ -839,8 +1014,9 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
                         <button
                           key={idx}
                           onClick={() => toggleDia(promo.id, idx)}
-                          className={`px-3 py-1.5 text-xs font-medium rounded-full cursor-pointer transition-colors whitespace-nowrap ${
-                            promo.diasSemana.includes(idx) ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                          aria-pressed={promo.diasSemana.includes(idx)}
+                          className={`min-h-[44px] min-w-[48px] px-3 text-xs font-bold rounded-full cursor-pointer transition-colors whitespace-nowrap ${
+                            promo.diasSemana.includes(idx) ? 'bg-amber-500 text-zinc-900' : 'bg-zinc-100 text-zinc-500 hover:bg-zinc-200'
                           }`}
                         >
                           {dia}
@@ -849,10 +1025,10 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
                     </div>
                   ) : (
                     <div>
-                      <label className="text-xs text-gray-500 mb-1.5 block">Data específica</label>
+                      <label className="text-xs text-zinc-500 mb-1.5 block">Data específica</label>
                       <input
                         type="date"
-                        className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-400"
+                        className={`${CAMPO} !w-auto`}
                         value={promo.dataEspecifica ?? ''}
                         onChange={e => updatePromocao(promo.id, { dataEspecifica: e.target.value })}
                       />
@@ -862,44 +1038,42 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
               ))}
               <button
                 onClick={addPromocao}
-                className="w-full border-2 border-dashed border-gray-200 hover:border-orange-300 hover:bg-orange-50 text-gray-500 hover:text-orange-500 text-sm font-medium py-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                className="w-full min-h-[48px] border-2 border-dashed border-zinc-200 hover:border-amber-300 hover:bg-amber-50 text-zinc-500 hover:text-zinc-800 text-sm font-bold py-3 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
               >
-                <i className="ri-add-line" /> Nova Promoção
+                <i className="ri-add-line" /> Nova promoção
               </button>
             </div>
           )}
 
           {/* ── OBSERVAÇÕES ── */}
           {tab === 'observacoes' && (
-            <div className="space-y-4">
+            <div className="space-y-5">
               <div>
-                <p className="text-xs font-semibold text-gray-700 mb-2">Observações deste item</p>
-                <p className="text-xs text-gray-500 mb-2">Aparecem como opção exclusiva ao lançar este item</p>
+                <Titulo>Pedidos especiais só deste item</Titulo>
+                <p className="text-xs text-zinc-500 mb-2">Aparecem como opção exclusiva ao lançar este item</p>
                 <div className="flex gap-2 mb-3">
                   <input
-                    className="flex-1 border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-orange-400"
+                    className={`${CAMPO} flex-1`}
                     placeholder="Ex: Sem cebola, Pão sem glúten..."
                     value={novaObs}
                     onChange={e => setNovaObs(e.target.value)}
                     onKeyDown={e => e.key === 'Enter' && addObs()}
                   />
-                  <button
-                    onClick={addObs}
-                    className="bg-orange-500 hover:bg-orange-600 text-white px-4 rounded-lg text-sm font-medium transition-colors cursor-pointer whitespace-nowrap"
-                  >
+                  <button onClick={addObs} className={btn('p')}>
                     Adicionar
                   </button>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {obs.length === 0 && (
-                    <p className="text-xs text-gray-400 italic">Nenhuma obs. específica cadastrada</p>
+                    <p className="text-xs text-zinc-400 italic">Nenhuma obs. específica cadastrada</p>
                   )}
                   {obs.map((o, i) => (
-                    <span key={i} className="flex items-center gap-1.5 bg-orange-50 text-orange-700 text-xs px-3 py-1.5 rounded-full">
+                    <span key={i} className="flex items-center gap-1 bg-white border border-zinc-200 text-zinc-800 text-xs font-semibold pl-3 rounded-full">
                       {o}
                       <button
                         onClick={() => setObs(arr => arr.filter((_, j) => j !== i))}
-                        className="hover:text-red-500 cursor-pointer transition-colors"
+                        aria-label={`Tirar "${o}"`}
+                        className="w-10 h-10 flex items-center justify-center text-zinc-400 hover:text-red-500 cursor-pointer transition-colors"
                       >
                         <i className="ri-close-line" />
                       </button>
@@ -907,18 +1081,17 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
                   ))}
                 </div>
               </div>
-              <div className="border-t border-gray-100 pt-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <p className="text-xs font-semibold text-gray-700">Observações Globais</p>
-                  <span className="text-xs bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full font-medium">Aparecem em todos os itens</span>
-                </div>
-                <p className="text-xs text-gray-500 mb-3">
+              <div className="border-t border-zinc-200 pt-4">
+                <Titulo extra={<span className="text-[11px] bg-amber-50 text-amber-800 px-2 py-0.5 rounded-full font-bold">Aparecem em todos os itens</span>}>
+                  As que valem para todos os itens
+                </Titulo>
+                <p className="text-xs text-zinc-500 mb-3">
                   Gerenciadas na aba <strong>Obs. Globais</strong> do cardápio. Aparecem automaticamente como opção neste e em todos os outros itens.
                 </p>
                 <div className="flex flex-wrap gap-2">
                   {obsGlobais.filter(o => o.ativo).map(o => (
-                    <span key={o.id} className="flex items-center gap-1.5 bg-gray-100 text-gray-600 text-xs px-3 py-1.5 rounded-full">
-                      <i className="ri-global-line text-gray-400" />
+                    <span key={o.id} className="flex items-center gap-1.5 bg-zinc-100 text-zinc-600 text-xs px-3 py-1.5 rounded-full">
+                      <i className="ri-global-line text-zinc-400" />
                       {o.texto}
                     </span>
                   ))}
@@ -927,61 +1100,65 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
             </div>
           )}
 
-          {/* ── FICHA TÉCNICA ── */}
-          {tab === 'ficha' && (
-            <FichaTecnicaTab
-              itemId={item?.id}
-              itemNome={nome || item?.nome}
-              precoVenda={parseFloat(preco) || 0}
-              onCountChange={setFichasCount}
-            />
-          )}
+          {/* ── AVANÇADO: estado do item, nota fiscal, delivery próprio ── */}
+          {tab === 'avancado' && (
+            <div className="space-y-3">
+              <Titulo>Estado do item</Titulo>
+              <div className="flex items-center gap-3 bg-white border border-zinc-200 rounded-2xl px-4 py-3">
+                <div className="flex-1">
+                  <p className="text-sm font-bold text-zinc-900">Ativo no cardápio</p>
+                  <p className="text-xs text-zinc-500 mt-0.5">
+                    {status === 'ativo'
+                      ? 'Ativo: aparece para vender.'
+                      : 'Inativo: some para o cliente e para a venda, mas o item e a ficha continuam guardados.'}
+                  </p>
+                </div>
+                <Chave ligado={status === 'ativo'} rotulo="Ativo no cardápio" onClick={() => setStatus(status === 'ativo' ? 'inativo' : 'ativo')} />
+              </div>
 
-          {/* ── FISCAL ── */}
-          {tab === 'fiscal' && (
-            <FiscalFields
-              scope="item"
-              value={fiscal}
-              onChange={setFiscal}
-              heranca={(() => {
-                const cat = categorias.find(c => c.id === categoriaId);
-                const catNcm = cat?.fiscal?.ncm;
-                return catNcm ? `da categoria "${cat?.nome}" (NCM ${catNcm}) e, depois, do padrão da loja` : `da categoria "${cat?.nome ?? ''}" (sem NCM próprio) e, depois, do padrão da loja`;
-              })()}
-            />
-          )}
+              <Titulo>Nota fiscal</Titulo>
+              <Sanfona titulo="NCM e tributação" resumo={resumoFiscal} aberta={abrirFiscal} onToggle={() => setAbrirFiscal(v => !v)}>
+                <FiscalFields
+                  scope="item"
+                  value={fiscal}
+                  onChange={setFiscal}
+                  heranca={(() => {
+                    const cat = categoriaAtual;
+                    const catNcm = cat?.fiscal?.ncm;
+                    return catNcm ? `da categoria "${cat?.nome}" (NCM ${catNcm}) e, depois, do padrão da loja` : `da categoria "${cat?.nome ?? ''}" (sem NCM próprio) e, depois, do padrão da loja`;
+                  })()}
+                />
+              </Sanfona>
 
-          {/* ── DELIVERY ── */}
-          {tab === 'delivery' && (
-            <DeliveryTab
-              config={deliveryConfig}
-              precoBase={parseFloat(preco) || 0}
-              slaBase={parseInt(sla, 10) || 10}
-              descricaoBase={descricao}
-              onChange={setDeliveryConfig}
-            />
+              <Titulo>Delivery</Titulo>
+              <Sanfona titulo="Preço e descrição só no delivery" resumo={resumoDelivery} aberta={abrirDelivery} onToggle={() => setAbrirDelivery(v => !v)}>
+                <DeliveryTab
+                  config={deliveryConfig}
+                  precoBase={parseFloat(preco) || 0}
+                  slaBase={parseInt(sla, 10) || 10}
+                  descricaoBase={descricao}
+                  onChange={setDeliveryConfig}
+                />
+              </Sanfona>
+            </div>
           )}
         </div>
 
-        {/* Footer */}
-        <div className="flex gap-3 p-5 border-t border-gray-100 flex-shrink-0">
-          <button
-            onClick={onClose}
-            disabled={saving}
-            className="flex-1 border border-gray-200 text-gray-600 text-sm font-medium py-2.5 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer whitespace-nowrap disabled:opacity-50"
-          >
+        {/* Rodapé: um Salvar só (item + ficha técnica) */}
+        <div className="flex gap-2 px-4 sm:px-5 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] bg-white border-t border-zinc-200 sm:rounded-b-2xl flex-shrink-0">
+          <button onClick={fechar} disabled={ocupado} className={`${btn('out')} flex-1 min-h-[48px]`}>
             Cancelar
           </button>
-          <button
-            onClick={handleSave}
-            disabled={!nome.trim() || !preco || saving}
-            className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white text-sm font-medium py-2.5 rounded-lg transition-colors cursor-pointer whitespace-nowrap flex items-center justify-center gap-2"
-          >
-            {saving && <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-            {saving ? 'Salvando...' : item ? 'Salvar Alterações' : 'Criar Item'}
+          <button onClick={handleSave} disabled={ocupado} className={`${btn('p')} flex-1 min-h-[48px]`}>
+            {ocupado && <span className="w-3.5 h-3.5 border-2 border-zinc-900/20 border-t-zinc-900 rounded-full animate-spin" />}
+            {salvandoFicha ? 'Salvando a ficha...' : saving ? 'Salvando...' : item ? 'Salvar' : 'Criar item'}
           </button>
         </div>
       </div>
+
+      {perguntarVendas && item?.id && user?.tenantId && (
+        <FichaRetroativaModal tenantId={user.tenantId} itemId={item.id} itemNome={nome || item.nome || 'Item'} onFechar={fecharPerguntaVendas} />
+      )}
     </div>
   );
 }
