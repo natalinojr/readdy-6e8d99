@@ -30,7 +30,7 @@ export function rotuloPrazo(prazo: string | null, hoje: string): { texto: string
 
 const semPrefixo = (t: string) => t.replace(/^Falta o boleto:\s*/, '');
 /** Sem "Não vou fazer" genérico: têm saída própria (aqui ou na tela que o cartão abre). */
-const SEM_DESCARTE = new Set(['boleto_faltando', 'aprovacao', 'pedido_pagamento', 'pedido_pagamento_pagar', 'pagamento_grupo', 'pagamento_pendente',
+const SEM_DESCARTE = new Set(['folha_a_pagar', 'boleto_faltando', 'aprovacao', 'pedido_pagamento', 'pedido_pagamento_pagar', 'pagamento_grupo', 'pagamento_pendente',
   'compra_pelo_celular', 'sangria_sem_cupom', 'sangria_nao_saiu', 'sangria_valor_diferente', 'recebimento_sem_nota', 'boleto_email',
   // Avisos antes de virar problema (2026-10-03): saem por "Ciente"/"Já comprei" ou fecham sozinhos.
   'vendas_abaixo_ritmo', 'caixa_nao_cobre', 'insumo_antes_do_pico']);
@@ -105,6 +105,12 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
     if (dono && contasDe(item.juntas).length > 0) {
       add('foto', <BoletoPorFoto billIds={contasDe(item.juntas)} className={SECUNDARIO} onFeito={onMudou} />);
     }
+  } else if (p.kind === 'folha_a_pagar') {
+    // Folha (2026-10-05): uma linha por pessoa — dar baixa (pago por fora) ou abrir; a Conciliação baixa sozinha pelo Pix.
+    add('ver', <button onClick={() => alternar('folha')} className={aberto === 'folha' ? SECUNDARIO : PRINCIPAL}>
+      <i className={aberto === 'folha' ? 'ri-arrow-up-s-line' : 'ri-team-line'} /> {aberto === 'folha' ? 'Fechar' : 'Ver quem falta pagar'}
+    </button>);
+    add('rh', <button onClick={() => abrir(t, '/financeiro?tab=rh')} className={SECUNDARIO}><i className="ri-arrow-right-up-line" /> Abrir a folha</button>);
   } else if (item.tipo === 'boletos_fornecedor') {
     if (dono) add('pedir', <button onClick={() => pedirAoChat({ tipo: 'pedir', texto: textoPedirBoletos(item, item.juntas) })} className={PRINCIPAL}>
       <i className="ri-barcode-line" /> {item.pedidoHaDias != null ? 'Pedir de novo' : `Pedir os ${item.juntas.length} boletos`}
@@ -236,6 +242,14 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
           <ContasAtrasadasInline tenantId={t} soHoje={p.kind === 'conta_vence_hoje'}
             onPagarConta={dono ? async (billId) => { pedirAoChat({ tipo: 'pagar_conta', billId }); } : undefined}
             onAbrir={(billId) => abrir(t, `/financeiro?tab=contas-vencidas&foco=${encodeURIComponent(billId)}`)}
+            onMudou={onMudou} />
+        </div>
+      )}
+      {aberto === 'folha' && typeof p.payload?.competencia === 'string' && (
+        <div className="sm:pl-12">
+          <ContasAtrasadasInline tenantId={t} folha={p.payload.competencia}
+            onPagarConta={dono ? async (billId) => { pedirAoChat({ tipo: 'pagar_conta', billId }); } : undefined}
+            onAbrir={(billId) => abrir(t, `/financeiro?tab=pagar&foco=${encodeURIComponent(billId)}`)}
             onMudou={onMudou} />
         </div>
       )}
