@@ -12,7 +12,7 @@ const mapa = (e: Array<[string, { custo: number | null; alvo: string; tipo: 'ite
 function pedido(id: string, itens: Array<{ nome: string; qtd: number; total: number; complementos?: Array<{ nome: string; grupo: string | null; qtd: number; preco: number }> }>, chega: number, custos: MapaCustos): PedidoArea {
   const linhas = itens.map((i) => {
     const base = custos.get(`item|${i.nome.toLowerCase()}`);
-    return { nome: i.nome, qtd: i.qtd, total: i.total, comida: base?.custo == null ? null : base.custo * i.qtd, semFicha: base?.custo == null ? [i.nome] : [], balcao: null, alvo: base?.alvo ?? null };
+    return { nome: i.nome, qtd: i.qtd, total: i.total, comida: base?.custo == null ? null : base.custo * i.qtd, semFicha: base?.custo == null ? [i.nome] : [], balcao: null, alvo: base?.alvo ?? null, partes: { item: base?.custo == null ? null : base.custo * i.qtd, complementos: [] } };
   });
   return {
     id, numero: id, loja: 'L1', at: new Date('2026-10-05T15:00:00Z'), dia: '2026-10-05', cliente: null, cancelado: false, fin: null, venda: 0, comissaoETaxas: null,

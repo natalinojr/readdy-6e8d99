@@ -328,7 +328,7 @@ export default function DetalhePedidoIfood({ p, lojas, acesso, tenantId, modo, o
         {!o ? (
           <p className="text-[12.5px] text-zinc-500">Itens não disponíveis (pedido de antes de ligar os pedidos no ERPOS).</p>
         ) : o.itens.length === 0 ? (
-          <p className="text-[12.5px] text-zinc-500">Os itens ainda estão chegando do iFood. Use “Reler do iFood”.</p>
+          <p className="text-[12.5px] text-zinc-500">{Date.now() - p.at.getTime() > 2 * 86_400_000 ? "O iFood não devolve mais os itens deste pedido (pedido antigo, lido depois)." : "Os itens ainda estão chegando do iFood. Use “Reler do iFood”."}</p>
         ) : (
           <div className="divide-y divide-zinc-100">
             {o.itens.map((it, idx) => {
@@ -341,12 +341,20 @@ export default function DetalhePedidoIfood({ p, lojas, acesso, tenantId, modo, o
                   <div className="w-6 h-6 rounded-lg bg-zinc-100 text-zinc-600 text-[12px] font-extrabold flex items-center justify-center flex-none">{it.qtd}</div>
                   <div className="flex-1 min-w-0">
                     <b className="block text-[13.5px] font-bold leading-snug">{it.nome}</b>
+                    {/* Custo por parte (dono 06/10): a ficha do próprio item, quando tem custo. */}
+                    {acesso.dinheiro && !p.cancelado && l?.partes.item != null && l.partes.item > 0.005 && (
+                      <span className="block text-[11.5px] text-zinc-400">{l.alvo ? `${l.alvo}: ` : 'ficha do item: '}comida {brl(l.partes.item)}</span>
+                    )}
                     {it.complementos.map((c, k) => {
                       const faltaEsta = acesso.dinheiro && !p.cancelado && !!l?.semFicha.includes(c.nome);
+                      const custoEsta = acesso.dinheiro && !p.cancelado ? l?.partes.complementos[k] : undefined;
                       return (
-                        <span key={k} className="block text-[12px] text-zinc-500">
-                          + {c.qtd > 1 ? `${c.qtd}× ` : ''}{c.nome}{c.preco > 0.005 ? ` (${brl(c.preco)})` : ''}
-                          {faltaEsta && <span className="text-orange-600 font-semibold"> · sem ficha{acesso.itens && <> · <button type="button" onClick={() => irLigar(chaveComplementoIfood(c.nome, c.grupo))} className="underline font-extrabold cursor-pointer">Ligar</button></>}</span>}
+                        <span key={k} className="flex items-baseline justify-between gap-2 text-[12px] text-zinc-500">
+                          <span className="min-w-0">
+                            + {c.qtd > 1 ? `${c.qtd}× ` : ''}{c.nome}{c.preco > 0.005 ? ` (${brl(c.preco)})` : ''}
+                            {faltaEsta && <span className="text-orange-600 font-semibold"> · sem ficha{acesso.itens && <> · <button type="button" onClick={() => irLigar(chaveComplementoIfood(c.nome, c.grupo))} className="underline font-extrabold cursor-pointer">Ligar</button></>}</span>}
+                          </span>
+                          {custoEsta != null && custoEsta > 0.005 && <span className="flex-none text-[11.5px] text-zinc-400 tabular-nums">comida {brl(custoEsta)}</span>}
                         </span>
                       );
                     })}

@@ -135,3 +135,10 @@ describe('combo de escolhas', () => {
     expect(item.escolhas?.[1].custoUnit).toBeCloseTo(3.1, 2);
   });
 });
+
+describe('pedido antigo sem itens', () => {
+  it('a linha "Sem itens selecionados" do iFood não vira produto', () => {
+    const o = montarPedidoOrder(row, [{ order_row_id: 'r1', idx: 1, name: 'Sem itens selecionados', quantity: 1, total_price: 87.81, observations: null, options: [] }]);
+    expect(o.itens).toEqual([]);
+  });
+});
