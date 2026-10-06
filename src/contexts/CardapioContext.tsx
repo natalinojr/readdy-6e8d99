@@ -56,6 +56,8 @@ interface DBOpcao {
   consumption_unit?: string | null;
   /** insumos da opção (option_ingredients, fn_get_full_menu) */
   ingredientes?: Array<{ ingredient_id: string; production_recipe_id: string | null; quantity: number | string; unit: string }> | null;
+  /** produto vinculado (options.linked_item_id) */
+  linked_item_id?: string | null;
 }
 
 interface DBGrupoOpcoes {
@@ -199,6 +201,7 @@ function mapOpcao(o: DBOpcao, ingredientNameMap?: Map<string, string>): OpcaoIte
     productionRecipeId: o.production_recipe_id ?? null,
     consumptionQuantity: o.consumption_quantity ? Number(o.consumption_quantity) : undefined,
     consumptionUnit: o.consumption_unit ?? undefined,
+    linkedItemId: o.linked_item_id ?? null,
     ingredientes: Array.isArray(o.ingredientes)
       ? o.ingredientes.map((x) => ({
           ingredientId: x.ingredient_id, productionRecipeId: x.production_recipe_id ?? null,
@@ -731,6 +734,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
             production_recipe_id: o.productionRecipeId ?? null,
             consumption_quantity: o.consumptionQuantity ?? null,
             consumption_unit: o.consumptionUnit ?? null,
+            linked_item_id: o.linkedItemId ?? null,
             // lista de insumos (vários por opção); o servidor grava em option_ingredients
             ingredientes: insumosDaOpcao(o).map((x) => ({
               ingredient_id: x.ingredientId, production_recipe_id: x.productionRecipeId ?? null, quantity: x.quantidade ?? null, unit: x.unidade,

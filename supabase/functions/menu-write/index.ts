@@ -45,12 +45,16 @@ async function salvarInsumosOpcao(
       tenant_id: tenantId, option_id: optionId, ingredient_id: x.ingredient_id, production_recipe_id: isValidUuid(x.production_recipe_id) ? x.production_recipe_id : null,
       quantity: Number(x.quantity), unit: (x.unit && String(x.unit).trim()) || unidades.get(String(x.ingredient_id)), sort_order: i,
     }));
-  const { error: delErr } = await admin.from('option_ingredients').delete().eq('option_id', optionId).eq('tenant_id', tenantId);
+  // Só as linhas digitadas na opção (from_item_id nulo): as que vêm do produto vinculado são refeitas por
+  // fn_option_sync_linked, que roda de novo no fim (insumo à mão igual ao do produto ganha a linha do produto).
+  const { error: delErr } = await admin.from('option_ingredients').delete().eq('option_id', optionId).eq('tenant_id', tenantId).is('from_item_id', null);
   if (delErr) throw new Error(`insumos da opção: ${delErr.message}`);
   if (linhas.length) {
-    const { error } = await admin.from('option_ingredients').insert(linhas);
+    const { error } = await admin.from('option_ingredients').upsert(linhas.map((l) => ({ ...l, from_item_id: null })), { onConflict: 'option_id,ingredient_id' });
     if (error) throw new Error(`insumos da opção: ${error.message}`);
   }
+  const { error: syncErr } = await admin.rpc('fn_option_sync_linked', { p_option_id: optionId });
+  if (syncErr) throw new Error(`produto da opção: ${syncErr.message}`);
 }
 
 function isValidUuid(v: unknown): boolean {
@@ -420,6 +424,16 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
               consumption_quantity: opt.consumption_quantity ?? null,
               consumption_unit: opt.consumption_unit ?? null,
             };
+            // Produto vinculado (2026-10-06): só mexe quando vem no payload (tela antiga em cache não manda e não apaga).
+            // null desfaz; outro item da mesma loja liga (não o próprio item).
+            if (opt.linked_item_id !== undefined) {
+              let linked: string | null = null;
+              if (isValidUuid(opt.linked_item_id) && opt.linked_item_id !== itemId) {
+                const { data: alvo } = await admin.from('menu_items').select('id').eq('id', opt.linked_item_id).eq('tenant_id', tenantId).maybeSingle();
+                linked = alvo?.id ?? null;
+              }
+              optPayload.linked_item_id = linked;
+            }
             let savedOptId: string | null = opt.id ?? null;
             if (opt.id) {
               console.log(`[menu-write] Updating option ${opt.id}`);
@@ -596,13 +610,13 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       const { data: opts } = await admin.from('options').select('id').in('id', lista.map((v) => v.option_id)).eq('tenant_id', tenantId).is('deleted_at', null);
       const validas = new Set(((opts ?? []) as Array<{ id: string }>).map((o) => o.id));
       const { data: ordens } = validas.size
-        ? await admin.from('option_ingredients').select('option_id, sort_order').in('option_id', [...validas]).eq('tenant_id', tenantId)
+        ? await admin.from('option_ingredients').select('option_id, sort_order').in('option_id', [...validas]).eq('tenant_id', tenantId).is('from_item_id', null)
         : { data: [] };
       const proxima = new Map<string, number>();
       for (const r of (ordens ?? []) as Array<{ option_id: string; sort_order: number }>) proxima.set(r.option_id, Math.max(proxima.get(r.option_id) ?? 0, r.sort_order + 1));
       const linhas = lista.filter((v) => validas.has(v.option_id)).map((v) => ({
         tenant_id: tenantId, option_id: v.option_id, ingredient_id, production_recipe_id: production_recipe_id ?? null,
-        quantity: Number(v.quantity), unit: consumption_unit, sort_order: proxima.get(v.option_id) ?? 0,
+        quantity: Number(v.quantity), unit: consumption_unit, sort_order: proxima.get(v.option_id) ?? 0, from_item_id: null,
       }));
       if (!linhas.length) return errResp('Opções não encontradas nesta loja', 404);
       const { error } = await admin.from('option_ingredients').upsert(linhas, { onConflict: 'option_id,ingredient_id' });

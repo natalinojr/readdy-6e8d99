@@ -21,6 +21,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { useEstoque } from '@/contexts/EstoqueContext';
 import { useProducao } from '@/contexts/ProducaoContext';
+import { useCardapio } from '@/contexts/CardapioContext';
 import type { Insumo } from '@/contexts/EstoqueContext';
 import type { ProductionRecipe } from '@/types/estoque';
 
@@ -93,6 +94,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
   const podeAlterarPreco = hasPermissao('cardapio_alterar_preco');
   const { insumos } = useEstoque();
   const { recipes, getBatchesByRecipeId } = useProducao();
+  const { itens: itensCardapio } = useCardapio();
   const estacoesNomes = estacoes.map(e => e.nome);
   const [tab, setTab] = useState<TabLocal>(abaInicial ?? 'info');
   const [nome, setNome] = useState(item?.nome ?? '');
@@ -772,6 +774,7 @@ export default function ItemModal({ item, categorias, obsGlobais, estacoes, savi
               grupos={grupos}
               insumos={insumos}
               recipes={recipes}
+              produtos={itensCardapio}
               getBatchesByRecipeId={getBatchesByRecipeId}
               onAddGrupo={addGrupo}
               onAddGrupoCompleto={addGrupoCompleto}
@@ -989,6 +992,8 @@ interface OpcoesTabProps {
   grupos: GrupoOpcoes[];
   insumos: Insumo[];
   recipes: ProductionRecipe[];
+  /** itens do cardápio: a opção pode apontar para um produto inteiro */
+  produtos: Item[];
   getBatchesByRecipeId: (recipeId: string) => Array<{ unitCost: number }>;
   onAddGrupo: () => void;
   onAddGrupoCompleto?: (grupo: GrupoOpcoes) => void;
@@ -1007,20 +1012,23 @@ interface OpcoesTabProps {
 
 // Vínculos das opções com o estoque (para saber se há mudança não salva)
 const vinculosOpcoes = (gs: GrupoOpcoes[]) =>
-  gs.flatMap(g => g.opcoes.flatMap(o => insumosDaOpcao(o).map(x => [o.id, x.ingredientId, Number(x.quantidade ?? 0), x.unidade ?? '']))).map(v => v.join('|')).sort();
+  gs.flatMap(g => g.opcoes.flatMap(o => [
+    ...insumosDaOpcao(o).map(x => [o.id, x.ingredientId, Number(x.quantidade ?? 0), x.unidade ?? '']),
+    ...(o.linkedItemId ? [[o.id, `produto:${o.linkedItemId}`, 0, '']] : []),
+  ])).map(v => v.join('|')).sort();
 
 function OpcoesTab({
-  grupos, insumos, recipes, getBatchesByRecipeId,
+  grupos, insumos, recipes, produtos, getBatchesByRecipeId,
   onAddGrupo, onAddGrupoCompleto, onRemoveGrupo, onUpdateGrupo,
   onAddOpcao, onRemoveOpcao, onUpdateOpcao, onMoveOpcao,
   erro, itemId, itemNome, vinculosSalvos,
 }: OpcoesTabProps) {
   const { user } = useAuth();
   const [aplicarVendas, setAplicarVendas] = useState(false);
-  const temVinculo = grupos.some(g => g.opcoes.some(o => insumosDaOpcao(o).length > 0));
+  const temVinculo = grupos.some(g => g.opcoes.some(o => insumosDaOpcao(o).length > 0 || !!o.linkedItemId));
   const podeAplicar = !!itemId && !itemId.startsWith('item-') && (user?.perfil === 'admin' || user?.perfil === 'gerente');
   const [openVinculo, setOpenVinculo] = useState<string | null>(null);
-  const [vinculoTab, setVinculoTab] = useState<'ingredient' | 'production'>('ingredient');
+  const [vinculoTab, setVinculoTab] = useState<'ingredient' | 'production' | 'product'>('ingredient');
   const [buscaInsumo, setBuscaInsumo] = useState('');
   // O que sai de uma produção aparece só na aba "Produção", uma vez por receita.
   const insumosUsoFinal = insumos.filter(
@@ -1114,6 +1122,12 @@ function OpcoesTab({
   };
   const vincularInsumo = (grupoId: string, opcId: string, insumo: Insumo) =>
     acrescentarInsumo(grupoId, opcId, { ingredientId: insumo.id, productionRecipeId: null, unidade: insumo.unidade, source: 'ingredient' });
+  // Produto inteiro (2026-10-06): a opção segue a ficha técnica atual dele; uma opção liga a um produto só
+  const vincularProduto = (grupoId: string, opcId: string, produto: Item) => {
+    onUpdateOpcao(grupoId, opcId, { linkedItemId: produto.id });
+    setOpenVinculo(null);
+    setBuscaInsumo('');
+  };
   const vincularProducao = (grupoId: string, opcId: string, recipe: ProductionRecipe) => {
     if (!recipe.outputIngredientId) return;
     acrescentarInsumo(grupoId, opcId, { ingredientId: recipe.outputIngredientId, productionRecipeId: recipe.id, unidade: recipe.unit, source: 'production' });
@@ -1598,6 +1612,30 @@ function OpcoesTab({
                   )}
                 </div>
 
+                {/* Produto vinculado (2026-10-06) */}
+                {opc.linkedItemId && (() => {
+                  const prod = produtos.find(p => p.id === opc.linkedItemId);
+                  const nIns = prod?.fichaTecnica?.length ?? 0;
+                  return (
+                    <div className="bg-sky-50 border border-sky-200 rounded-lg px-3 py-2 flex flex-wrap items-center gap-2">
+                      <i className="ri-restaurant-line text-sky-600 text-sm" />
+                      <span className="text-xs font-medium text-sky-800 min-w-[90px] flex-1 truncate">
+                        Produto: {prod?.nome ?? 'produto removido'}
+                      </span>
+                      {!prod
+                        ? <span className="text-[10px] text-red-500">não encontrei esse produto</span>
+                        : nIns === 0
+                          ? <span className="text-[10px] text-red-500">o produto está sem ficha técnica — nada sai do estoque</span>
+                          : <span className="text-[10px] text-sky-700" title="Baixa e custo seguem a ficha técnica atual do produto">ficha atual · {nIns} {nIns === 1 ? 'insumo' : 'insumos'}</span>}
+                      <button
+                        onClick={() => onUpdateOpcao(grp.id, opc.id, { linkedItemId: null })}
+                        className="text-[10px] text-sky-600 hover:text-red-500 font-medium cursor-pointer whitespace-nowrap transition-colors"
+                      >
+                        Remover
+                      </button>
+                    </div>
+                  );
+                })()}
                 {/* Vínculo com estoque — um ou mais insumos (2026-09-26) */}
                 {insumosDaOpcao(opc).length > 0 && (
                   <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 space-y-1.5">
@@ -1649,8 +1687,8 @@ function OpcoesTab({
                   }}
                   className="flex items-center gap-1.5 text-[11px] text-gray-500 hover:text-amber-600 font-medium cursor-pointer transition-colors"
                 >
-                  <i className={openVinculo === `${grp.id}-${opc.id}` ? 'ri-close-line' : insumosDaOpcao(opc).length ? 'ri-add-line' : 'ri-link-m'} />
-                  {openVinculo === `${grp.id}-${opc.id}` ? 'Fechar' : insumosDaOpcao(opc).length ? 'Adicionar outro insumo' : 'Vincular ao estoque'}
+                  <i className={openVinculo === `${grp.id}-${opc.id}` ? 'ri-close-line' : (insumosDaOpcao(opc).length || opc.linkedItemId) ? 'ri-add-line' : 'ri-link-m'} />
+                  {openVinculo === `${grp.id}-${opc.id}` ? 'Fechar' : (insumosDaOpcao(opc).length || opc.linkedItemId) ? 'Adicionar outro insumo ou produto' : 'Vincular ao estoque'}
                 </button>
 
                 {/* Painel de seleção de insumo/produção */}
@@ -1669,6 +1707,12 @@ function OpcoesTab({
                       >
                         Produção
                       </button>
+                      <button
+                        onClick={() => setVinculoTab('product')}
+                        className={`flex-1 py-1.5 text-[11px] font-medium rounded-md transition-colors cursor-pointer whitespace-nowrap ${vinculoTab === 'product' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500 hover:text-zinc-700'}`}
+                      >
+                        Produtos
+                      </button>
                     </div>
                     <div className="relative">
                       <i className="ri-search-line absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 text-xs" />
@@ -1681,7 +1725,26 @@ function OpcoesTab({
                       />
                     </div>
                     <div className="max-h-40 overflow-y-auto space-y-0.5">
-                      {vinculoTab === 'ingredient' ? (
+                      {vinculoTab === 'product' ? (
+                        (() => {
+                          const lista = produtos
+                            .filter(p => p.id !== itemId && semAcento(p.nome).includes(semAcento(buscaInsumo)))
+                            .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+                          if (lista.length === 0) return <p className="text-xs text-zinc-400 text-center py-2">Nenhum produto encontrado</p>;
+                          return lista.map(p => (
+                            <button
+                              key={p.id}
+                              onClick={() => vincularProduto(grp.id, opc.id, p)}
+                              className="w-full flex items-center justify-between gap-2 px-2.5 py-1.5 text-xs rounded-lg hover:bg-white cursor-pointer transition-colors text-left"
+                            >
+                              <span className="text-zinc-700 font-medium truncate">{p.nome}</span>
+                              <span className="text-[10px] text-zinc-400 whitespace-nowrap">
+                                {(p.fichaTecnica?.length ?? 0) > 0 ? `${p.fichaTecnica.length} na ficha` : 'sem ficha'}
+                              </span>
+                            </button>
+                          ));
+                        })()
+                      ) : vinculoTab === 'ingredient' ? (
                         insumosUsoFinal.filter(ins =>
                           semAcento(ins.nome).includes(semAcento(buscaInsumo))
                         ).length === 0 ? (
