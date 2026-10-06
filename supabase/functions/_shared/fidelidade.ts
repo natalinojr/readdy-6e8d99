@@ -68,6 +68,8 @@ export interface Premio {
 
 export interface FidelidadeConfig {
   nome_programa: string;
+  /** WhatsApp da loja que o cliente salva nos contatos pela página do clube (só dígitos; vazio = telefone da loja). */
+  whatsapp_loja: string;
   pontos: {
     ativo: boolean;
     pontos_por_real: number;
@@ -106,6 +108,7 @@ export function novoId(prefixo: string): string {
 export function configPadrao(): FidelidadeConfig {
   return {
     nome_programa: 'Clube de vantagens',
+    whatsapp_loja: '',
     pontos: {
       ativo: true,
       pontos_por_real: 1,
@@ -210,6 +213,7 @@ export function normalizarConfig(bruto: unknown): FidelidadeConfig {
 
   return {
     nome_programa: txt(c.nome_programa, p.nome_programa, 60),
+    whatsapp_loja: String(c.whatsapp_loja ?? '').replace(/\D/g, '').slice(0, 13),
     pontos: {
       ativo: bool(pt.ativo, p.pontos.ativo),
       pontos_por_real: num(pt.pontos_por_real, p.pontos.pontos_por_real, 0, 100),

@@ -78,7 +78,7 @@ function Acesso({ tenantId, programa, onEntrou }: { tenantId: string; programa: 
   const [nome, setNome] = useState('');
   const [celular, setCelular] = useState('');
   const [nascimento, setNascimento] = useState('');
-  const [aceita, setAceita] = useState(false);
+  const [aceita, setAceita] = useState(true);
   const [ofertas, setOfertas] = useState(true);
   const [erro, setErro] = useState('');
   const [enviando, setEnviando] = useState(false);
@@ -166,6 +166,41 @@ function Roleta({ fatias, giros, token, onFim }: { fatias: { id: string; nome: s
       <button onClick={() => { void girar(); }} disabled={girando} className="px-8 py-3 rounded-xl bg-white text-fuchsia-700 font-black text-lg cursor-pointer disabled:opacity-60">
         {girando ? 'Girando…' : 'GIRAR'}
       </button>
+    </section>
+  );
+}
+
+// ── Salvar a loja nos contatos (cartão .vcf) ───────────────────────────────
+// Com o número salvo, as mensagens da loja no WhatsApp chegam com o nome dela
+// (e os links das ofertas abrem). iPhone abre "Novo contato"; Android baixa o
+// cartão e abre nos Contatos.
+function SalvarContato({ contato, programaNome }: { contato: { nome: string; whatsapp: string }; programaNome: string }) {
+  const tel = `+${contato.whatsapp}`;
+  const salvar = () => {
+    const esc = (t: string) => t.replace(/[\\,;]/g, (m) => `\\${m}`);
+    const vcf = [
+      'BEGIN:VCARD', 'VERSION:3.0',
+      `FN:${esc(contato.nome)}`, `ORG:${esc(contato.nome)}`,
+      `TEL;TYPE=CELL;waid=${contato.whatsapp}:${tel}`,
+      `URL:${window.location.origin}${window.location.pathname}`,
+      `NOTE:${esc(programaNome)}`,
+      'END:VCARD', '',
+    ].join('\r\n');
+    const url = URL.createObjectURL(new Blob([vcf], { type: 'text/vcard;charset=utf-8' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${contato.nome.normalize('NFD').replace(/[^\w ]/g, '').trim() || 'loja'}.vcf`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  };
+  return (
+    <section className="bg-white rounded-2xl border border-emerald-200 p-4 flex items-center gap-3">
+      <div className="w-11 h-11 rounded-full bg-emerald-500 text-white flex items-center justify-center text-2xl shrink-0"><i className="ri-whatsapp-line" /></div>
+      <div className="flex-1 min-w-0">
+        <p className="font-black text-sm leading-tight">Salve a {contato.nome} nos seus contatos</p>
+        <p className="text-xs text-zinc-500 mt-0.5">Para receber ofertas e avisos no WhatsApp.</p>
+      </div>
+      <button onClick={salvar} className="px-3.5 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold whitespace-nowrap cursor-pointer">Salvar contato</button>
     </section>
   );
 }
@@ -297,6 +332,8 @@ export default function ClubePage() {
               )}
               {r.vence_30d > 0 && <p className="text-xs mt-2 font-semibold">⏳ {pts(r.vence_30d)} pontos vencem nos próximos 30 dias.</p>}
             </section>
+
+            {programa.contato && <SalvarContato contato={programa.contato} programaNome={programa.nome} />}
 
             {r.giros > 0 && programa.roleta && programa.roleta.fatias.length >= 2 && (
               <Roleta fatias={programa.roleta.fatias} giros={r.giros} token={token} onFim={() => { void recarregar(token); }} />

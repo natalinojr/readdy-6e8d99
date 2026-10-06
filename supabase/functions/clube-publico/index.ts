@@ -61,10 +61,16 @@ Deno.serve(async (req: Request) => {
       const { data: prog } = await admin.from("loyalty_programs").select("enabled, config").eq("tenant_id", tenantId).maybeSingle();
       if (!prog?.enabled) return null;
       const c = normalizarConfig(prog.config);
-      const { data: produtos } = await admin.from("menu_items").select("id, photo_url, price")
-        .in("id", c.recompensas.map((r) => r.produto_id).filter(Boolean) as string[]);
+      const [{ data: produtos }, { data: loja }] = await Promise.all([
+        admin.from("menu_items").select("id, photo_url, price").in("id", c.recompensas.map((r) => r.produto_id).filter(Boolean) as string[]),
+        admin.from("tenants").select("name, phone").eq("id", tenantId).maybeSingle(),
+      ]);
+      // WhatsApp que o cliente salva nos contatos: o da config do clube, senão o telefone da loja.
+      let whats = c.whatsapp_loja || String(loja?.phone ?? "").replace(/\D/g, "");
+      if (whats.length === 10 || whats.length === 11) whats = "55" + whats;
       return {
         nome: c.nome_programa,
+        contato: whats.length >= 12 ? { nome: loja?.name ?? "", whatsapp: whats } : null,
         pontos: c.pontos.ativo ? {
           pontos_por_real: c.pontos.pontos_por_real, pedido_minimo: c.pontos.pedido_minimo, validade_meses: c.pontos.validade_meses,
           bonus_cadastro: c.pontos.bonus_cadastro, bonus_aniversario: c.pontos.bonus_aniversario, canais: c.pontos.canais,
