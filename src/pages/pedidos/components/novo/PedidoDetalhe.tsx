@@ -10,6 +10,7 @@ import { Etiqueta, MenuMais, brl, btn } from '@/components/kit';
 import type { TipoImpressao } from '../../lib/acoesTipos';
 import EmitirNfModal from '../EmitirNfModal';
 import { clienteNome } from '../utils';
+import { textoErroNota } from '@/lib/fiscal';
 import PassosPedido from './PassosPedido';
 import DetalheIfood from './DetalheIfood';
 import PagosJuntos, {
@@ -197,7 +198,7 @@ function DetalheUnico(props: PropsDetalhe) {
   const textoSemNota = naoPago
     ? 'Dá para emitir assim que for pago.'
     : recusada
-      ? (doc?.sefaz_message || doc?.error_message || 'A SEFAZ não aceitou a nota.')
+      ? (doc?.sefaz_message || textoErroNota(doc?.error_message) || 'A SEFAZ não aceitou a nota.')
       : doc?.status === 'cancelled'
         ? 'A nota deste pedido foi cancelada.'
         : 'A loja emite NFC-e e este pedido ficou sem.';

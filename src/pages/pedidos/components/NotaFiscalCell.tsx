@@ -1,6 +1,6 @@
 import type { PedidoRecente } from '@/types/pdv';
 import type { FiscalDocumentRow } from '@/lib/fiscal';
-import { STATUS_LABEL, cancelMinutesLeft } from '@/lib/fiscal';
+import { STATUS_LABEL, cancelMinutesLeft, textoErroNota } from '@/lib/fiscal';
 import { useEffect, useState } from 'react';
 import EmitirNfModal from './EmitirNfModal';
 import { clienteNome } from './utils';
@@ -131,12 +131,12 @@ function NotaFiscalCellInner({ pedido, fiscal, onToast, compact }: Props) {
       <div className="min-w-0" onClick={stop}>
         <button onClick={emitirTodos} disabled={isBusy}
           className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-md border cursor-pointer whitespace-nowrap disabled:opacity-50 ${d.status === 'skipped' ? 'bg-white text-zinc-600 border-zinc-200 hover:bg-zinc-50' : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'}`}
-          title={d.error_message ?? STATUS_LABEL[d.status]}>
+          title={textoErroNota(d.error_message) || STATUS_LABEL[d.status]}>
           <i className={`${isBusy ? 'ri-loader-4-line animate-spin' : d.status === 'skipped' ? 'ri-file-add-line' : 'ri-error-warning-line'} text-[11px]`} />
           {isBusy ? 'Emitindo' : d.status === 'skipped' ? 'Emitir NF' : 'Reemitir'}
         </button>
         {!compact && d.error_message && (
-          <p className="text-[10px] text-red-500 truncate max-w-[160px] mt-0.5" title={d.error_message}>{d.error_message}</p>
+          <p className="text-[10px] text-red-500 truncate max-w-[160px] mt-0.5" title={textoErroNota(d.error_message)}>{textoErroNota(d.error_message)}</p>
         )}
         {modalEl}
       </div>

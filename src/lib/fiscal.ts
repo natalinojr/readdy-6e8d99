@@ -196,3 +196,17 @@ export function cancelMinutesLeft(emittedAt: string | null, now: number = Date.n
   const left = (new Date(emittedAt).getTime() + CANCEL_WINDOW_MIN * 60_000 - now) / 60_000;
   return left <= 0 ? 0 : Math.ceil(left);
 }
+
+/**
+ * Mensagem de erro da nota pronta para a tela. Quando o Brasil NFe cai, o Cloudflare
+ * dele devolve uma página HTML no lugar do JSON e ela ficava gravada como motivo
+ * (nota do pedido #P0510260010, 05/10). A sequência da série não pulou, então a nota
+ * não saiu e tentar de novo é seguro.
+ */
+export const PROVEDOR_FORA_DO_AR = 'O provedor da nota (Brasil NFe) estava fora do ar e não respondeu. A nota não saiu: é só tentar de novo.';
+export function textoErroNota(msg: string | null | undefined): string {
+  const m = (msg ?? '').trim();
+  if (!m) return '';
+  if (m.startsWith('<') || /<!doctype|<html/i.test(m)) return PROVEDOR_FORA_DO_AR;
+  return m;
+}
