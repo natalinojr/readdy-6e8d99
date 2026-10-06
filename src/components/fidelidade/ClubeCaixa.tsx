@@ -156,7 +156,7 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
             <>
               <p className="text-xs text-zinc-600">
                 {resumo.nivel ? <><b style={{ color: resumo.nivel.cor }}>{resumo.nivel.emoji} {resumo.nivel.nome}</b> · </> : null}
-                {resumo.compras_janela} compras{resumo.proximo ? ` · faltam ${resumo.faltam_compras} p/ ${resumo.proximo.nome}` : ''}. Este pedido soma pontos quando for pago.
+                {resumo.compras_janela} compras{resumo.proximo ? ` · faltam ${resumo.faltam_compras} ${resumo.faltam_compras === 1 ? 'compra' : 'compras'} para ${resumo.proximo.nome}` : ''}. Este pedido soma pontos quando for pago.
               </p>
               {reservas.map((r) => (
                 <div key={r.hold_id} className="flex items-center gap-2 text-xs bg-white border border-emerald-200 rounded-lg px-2.5 py-1.5">

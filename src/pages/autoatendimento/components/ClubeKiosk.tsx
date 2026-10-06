@@ -84,7 +84,7 @@ function CartaoNivel({ r }: { r: ClubeResumo }) {
           <div className="flex justify-between text-xs mb-1">
             <span className="text-zinc-400">{r.compras_janela} compra{r.compras_janela === 1 ? '' : 's'}</span>
             <span className="text-zinc-300 font-semibold">
-              {faltam > 0 ? <>Faltam <b className="text-white">{faltam}</b> para {r.proximo.emoji} {r.proximo.nome}</> : <>Próxima compra: {r.proximo.emoji} {r.proximo.nome}</>}
+              {faltam > 0 ? <>Faltam <b className="text-white">{faltam}</b> {faltam === 1 ? 'compra' : 'compras'} para {r.proximo.emoji} {r.proximo.nome}</> : <>Próxima compra: {r.proximo.emoji} {r.proximo.nome}</>}
             </span>
           </div>
           <div className="h-3 bg-zinc-800 rounded-full overflow-hidden">
