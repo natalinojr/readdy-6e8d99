@@ -180,8 +180,9 @@ d95420e); foi **desfeita** no mesmo dia porque o dono escolheu este desenho. Apr
   Brasil NFe da Paranaguá): entrega + CPF + endereço + intermediador (CNPJ iFood 14.380.200/0001-21 + merchant id)
   → AUTORIZADA; sem CPF → 787; intermediador com indPres 1 → recusado pelo Brasil NFe. **O Brasil NFe liberou os dois
   em 06/10** (dest com `<idEstrangeiro/>` vazio + nome + endereço quando indPres 4 sem CpfCnpj; intermediador com
-  indPres 1). **Regra (branch `claude/ifood-nfce-sem-cpf`, publicar só depois da homologação com a versão nova e do
-  OK da contadora sobre o idEstrangeiro vazio = "estrangeiro sem documento"):** entrega com endereço completo →
+  indPres 1). **Homologação SEFAZ-PR 06/10 com a versão nova: entrega SEM CPF (dest com `<idEstrangeiro/>` + nome +
+  endereço + intermediador) AUTORIZADA; retirada indPres 1 + intermediador AUTORIZADA. Publicado 06/10.** Falta só o OK
+  da contadora sobre o idEstrangeiro vazio ("estrangeiro sem documento") antes de ligar a chave numa loja. **Regra:** entrega com endereço completo →
   indPres 4 + intermediador + destinatário (CPF só se o cliente pediu); retirada/no local/endereço incompleto →
   presencial + intermediador. Código IBGE pelo CEP (ViaCEP, depois lista do IBGE).
 - **Partes da ficha montada do iFood (dono 05/10: dividir o preço entre comida e bebida)** — `fiscal-write/valores.ts
