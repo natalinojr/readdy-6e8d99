@@ -32,7 +32,8 @@ function useCascaLocalSemLoja(): boolean | null {
     supabase.auth.getSession().then(({ data }) => {
       const id = data.session?.user?.id;
       let lido = false;
-      try { lido = !!id && localStorage.getItem(`erpos.casca_nova:${id}`) === '1'; } catch { /* sem storage */ }
+      // Casca nova ligada por padrão para todos (06/10): só '0' (voltou ao menu antigo) desliga.
+      try { lido = !!id && localStorage.getItem(`erpos.casca_nova:${id}`) !== '0'; } catch { /* sem storage */ }
       if (vivo) setV(lido);
     }).catch(() => { if (vivo) setV(false); });
     return () => { vivo = false; };

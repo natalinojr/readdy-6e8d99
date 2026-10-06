@@ -1,14 +1,13 @@
 /**
  * Chave da casca nova (menu em 6 grupos, topo novo, barra de baixo no celular), por pessoa — 2026-10-05.
  * Preferência 'casca_nova' em user_preferences ('1' ligada, '0' desligada). Sem preferência gravada:
- * ligada só para o dono (ADMIN_MASTER_EMAIL), desligada para os demais.
+ * ligada para todo mundo (decisão do dono, 06/10; antes só ele). '0' = a pessoa voltou ao menu antigo.
  * A tabela é por (pessoa, loja): ao trocar, gravamos em todas as lojas da pessoa, para valer em qualquer
  * loja. O último valor fica também no aparelho (localStorage) para a casca não piscar ao abrir.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
-import { ADMIN_MASTER_EMAIL } from '@/constants/telas';
 
 export const PREF_CASCA_NOVA = 'casca_nova';
 const CHAVE_LOCAL = 'erpos.casca_nova';
@@ -29,7 +28,7 @@ function gravarLocal(userId: string, v: boolean) {
 
 export function useCascaNova(): { ligada: boolean; setLigada: (v: boolean) => Promise<void> } {
   const { user, availableTenants } = useAuth();
-  const padrao = (user?.email ?? '').toLowerCase() === ADMIN_MASTER_EMAIL;
+  const padrao = true;
   const [valor, setValor] = useState<boolean | null>(() => lerLocal(user?.id));
 
   // Troca de pessoa no mesmo aparelho: começa pelo que está guardado para ela.
