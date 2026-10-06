@@ -6,9 +6,9 @@ export default function ExplicaLucro({ item = false }: { item?: boolean }) {
     <Ajuda titulo="Como é a conta do lucro bruto">
       {item ? (
         <>
-          <b>Lucro bruto por unidade</b> = o que chega na loja deste item − a comida pela ficha técnica (com os complementos escolhidos).
+          <b>Lucro bruto por unidade (sem promoções)</b> = preço do item no iFood − comissão e taxa de pagamento do iFood − a comida pela ficha técnica (com os complementos escolhidos).
           <br /><br />
-          "O que chega" de cada item é a parte dele no que o pedido deixou depois de comissão, taxa de pagamento e desconto pago pela loja (proporcional ao preço do item no pedido).
+          Comissão e taxa são a média da loja nos últimos 30 dias, calculadas sobre o preço do item. Promoções (desconto da loja, entrega grátis) não entram aqui: são de cada pedido — veja o custo real em Pedidos › Custos.
         </>
       ) : (
         <>

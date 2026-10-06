@@ -161,7 +161,7 @@ export default function HojeAba({ tenantId, loja, lojas, acesso, dados, dados30,
 
   // ── Precisa de você: leitura de 30 dias
   const pedidos30 = useMemo(() => dados30.pedidos.filter((p) => !loja || p.loja === loja), [dados30.pedidos, loja]);
-  const itens30 = useMemo(() => itensDosPedidos(pedidos30, dados30.custos), [pedidos30, dados30.custos]);
+  const itens30 = useMemo(() => itensDosPedidos(pedidos30, dados30.custos, dados30.taxaTeorica), [pedidos30, dados30.custos, dados30.taxaTeorica]);
   const resumo30 = useMemo(() => resumirItens(itens30), [itens30]);
   const fin30 = useMemo(() => dados30.fin.filter((p) => !loja || p.loja === loja), [dados30.fin, loja]);
 

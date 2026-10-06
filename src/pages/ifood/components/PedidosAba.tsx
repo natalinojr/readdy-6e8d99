@@ -7,12 +7,16 @@ import { nomeLoja, type AbaProps } from '../lib/tipos';
 import LinhaPedido, { LinhaPedidoTabela, situacaoDaArea } from './LinhaPedido';
 import DetalhePedidoIfood from './DetalhePedidoIfood';
 import { rotuloPeriodo } from './PeriodoFolha';
+import CustosPedidosTabela from './CustosPedidosTabela';
+import CustosLojaFolha, { useCustosLoja } from './CustosLojaFolha';
+import { colunasDoPedido, resultadoDoPedido, type CustoExtra } from '@/lib/ifoodCustosPedido';
 
 // Aba Pedidos da área iFood (protótipo docs/prototipos/ifood-proposta.html): uma linha por pedido, com o
 // que o cliente pediu, o desconto (loja × iFood), quanto o iFood ficou e o lucro bruto. No computador o
 // pedido abre ao lado da lista; no celular abre a folha (a página cuida disso por abrirPedido).
 
 type Filtro = 'todos' | 'andando' | 'prejuizo' | 'descontoLoja' | 'novos' | 'semFicha' | 'cancelados';
+type Visao = 'lista' | 'custos';
 
 const soDinheiro = (v: number) => v.toFixed(2).replace('.', ',');
 const celula = (v: string | number) => {
@@ -59,9 +63,11 @@ function useTelaGrande(): boolean {
   return grande;
 }
 
-function baixarPlanilha(lista: PedidoArea[], lojas: AbaProps['lojas'], periodo: string, dinheiro: boolean) {
+function baixarPlanilha(lista: PedidoArea[], lojas: AbaProps['lojas'], periodo: string, dinheiro: boolean, custos: CustoExtra[] = []) {
+  const ativos = custos.filter((c) => c.ativo);
   const cab = ['Nº do iFood', 'Data', 'Hora', 'Loja', 'Cliente', 'Cliente novo?', 'Itens', 'Venda (R$)', 'Desconto da loja (R$)', 'Desconto do iFood (R$)',
-    ...(dinheiro ? ['Comissão e taxas (R$)', 'Chega na loja (R$)', 'Comida (R$)', 'Lucro bruto (R$)', 'Estimado?'] : [])];
+    ...(dinheiro ? ['Entrega grátis da loja (R$)', 'Comissão (R$)', 'Taxa de pagamento (R$)', 'Outras do iFood (R$)', 'Comissão e taxas (R$)', 'Chega na loja (R$)',
+      'Comida (R$)', 'Lucro bruto (R$)', ...ativos.map((c) => `${c.nome} (R$)`), 'Resultado (R$)', 'Valor da nota fiscal (R$)', 'Estimado?'] : [])];
   const linhas = lista.map((p) => {
     const d = p.at.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
     const h = p.at.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
@@ -70,7 +76,12 @@ function baixarPlanilha(lista: PedidoArea[], lojas: AbaProps['lojas'], periodo: 
     const v = (n: number | null) => (n == null ? '' : soDinheiro(n));
     return [
       p.numero ?? '', d, h, nomeLoja(lojas, p.loja), p.cliente ?? '', novo, itens, soDinheiro(p.venda), soDinheiro(p.promoLoja), soDinheiro(p.promoIfood),
-      ...(dinheiro ? [v(p.comissaoETaxas), v(p.chega), v(p.comida), v(p.sobra), p.estimado ? 'sim' : 'não'] : []),
+      ...(dinheiro ? (() => {
+        const col = colunasDoPedido(p);
+        const res = resultadoDoPedido(col, ativos);
+        return [v(col.entregaGratis), v(col.comissao), v(col.taxaPagamento), v(col.outrasIfood), v(p.comissaoETaxas), v(p.chega), v(p.comida), v(p.sobra),
+          ...res.custos.map((x) => (p.cancelado ? '' : v(x))), p.cancelado ? '' : v(res.resultado), p.cancelado ? '' : v(col.nota), p.estimado ? 'sim' : 'não'];
+      })() : []),
     ];
   });
   const csv = [cab, ...linhas].map((l) => l.map(celula).join(';')).join('\n');
@@ -90,6 +101,10 @@ export default function PedidosAba({ tenantId, loja, lojas, periodo, acesso, dad
   const [filtro, setFiltro] = useState<Filtro>('todos');
   const [busca, setBusca] = useState('');
   const [aberto, setAberto] = useState<string | null>(null);
+  // Lista × tabela de custos (dono 06/10: todos os custos reais em colunas + custos da loja).
+  const [visao, setVisao] = useState<Visao>('lista');
+  const [editarCustos, setEditarCustos] = useState(false);
+  const { custos, lido: custosLidos, recarregar: recarregarCustos } = useCustosLoja(tenantId);
 
   const todos = useMemo(() => dados.pedidos.filter((p) => !loja || p.loja === loja), [dados.pedidos, loja]);
   const validos = useMemo(() => todos.filter((p) => !p.cancelado), [todos]);
@@ -153,7 +168,8 @@ export default function PedidosAba({ tenantId, loja, lojas, periodo, acesso, dad
 
   const menu = (
     <MenuMais itens={[
-      { rotulo: 'Baixar planilha', icone: 'ri-file-excel-2-line', onClick: () => baixarPlanilha(lista, lojas, periodo, acesso.dinheiro), oculto: lista.length === 0 },
+      { rotulo: 'Baixar planilha', icone: 'ri-file-excel-2-line', onClick: () => baixarPlanilha(lista, lojas, periodo, acesso.dinheiro, custos), oculto: lista.length === 0 },
+      { rotulo: 'Custos da loja (impostos, royalties…)', icone: 'ri-percent-line', onClick: () => setEditarCustos(true), oculto: !acesso.dinheiro || !acesso.configurar },
       { rotulo: 'Atualizar agora', icone: 'ri-refresh-line', onClick: () => { dados.recarregar(); } },
     ]} />
   );
@@ -221,8 +237,34 @@ export default function PedidosAba({ tenantId, loja, lojas, periodo, acesso, dad
       </div>
       <Chips<Filtro> opcoes={opcoes} valor={filtro} onChange={setFiltro} />
 
+      {acesso.dinheiro && (
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-xl border border-zinc-200 bg-white p-0.5">
+            {([['lista', 'Lista', 'ri-list-check'], ['custos', 'Custos', 'ri-table-line']] as const).map(([v, t, ic]) => (
+              <button key={v} type="button" onClick={() => setVisao(v)}
+                className={`inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-[12.5px] font-bold ${visao === v ? 'bg-zinc-900 text-white' : 'text-zinc-600 hover:bg-zinc-50'}`}>
+                <i className={ic} /> {t}
+              </button>
+            ))}
+          </div>
+          {visao === 'custos' && (
+            <>
+              <p className="text-[12px] text-zinc-500 flex-1 min-w-[180px]">Custos reais de cada pedido{custos.some((c) => c.ativo) ? ' e os da loja' : ''}. Toque no pedido para ver o detalhe.</p>
+              {acesso.configurar && (
+                <button type="button" onClick={() => setEditarCustos(true)}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-xl border border-amber-300 bg-amber-50 text-[12.5px] font-bold text-amber-800 hover:bg-amber-100">
+                  <i className="ri-percent-line" /> {custos.length ? 'Custos da loja' : 'Incluir impostos, royalties…'}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
       {lista.length === 0 ? (
         <Vazio icone="ri-search-line" titulo="Nenhum pedido assim">Tire o filtro ou mude a busca.</Vazio>
+      ) : acesso.dinheiro && visao === 'custos' ? (
+        <CustosPedidosTabela pedidos={lista} custos={custos} onAbrir={abrirPedido} nomeLoja={multiLoja ? (p) => nomeLoja(lojas, p.loja) : undefined} />
       ) : grande ? (
         <div className={selecionado ? 'grid gap-4 grid-cols-[minmax(0,1fr)_380px] items-start' : ''}>
           {tabela}
@@ -239,6 +281,10 @@ export default function PedidosAba({ tenantId, loja, lojas, periodo, acesso, dad
             <LinhaPedido key={p.id} p={p} onAbrir={aoAbrir} mostrarDinheiro={acesso.dinheiro} nomeLoja={multiLoja ? nomeLoja(lojas, p.loja) : undefined} />
           ))}
         </div>
+      )}
+
+      {acesso.dinheiro && acesso.configurar && (
+        <CustosLojaFolha aberta={editarCustos} tenantId={tenantId} custos={custos} lido={custosLidos} onFechar={() => setEditarCustos(false)} onSalvou={recarregarCustos} />
       )}
 
       {lista.some((p) => !p.order) && <p className="text-[11px] text-zinc-400 bg-zinc-50 rounded-xl px-3 py-2">Itens não disponíveis: pedido de antes de ligar os pedidos no ERPOS (só o dinheiro foi lido).</p>}

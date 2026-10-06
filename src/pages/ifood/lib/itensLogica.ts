@@ -129,6 +129,6 @@ export function fraseItens(p: {
   const s = p.de100.sobra;
   return {
     manchete: s >= 0 ? `De cada R$ 100 em itens, ficam ${R(s)} de lucro bruto` : `De cada R$ 100 em itens, você perde ${R(s)}`,
-    sub: `Depois do iFood (${R(p.de100.ifood)}) e da comida (${R(p.de100.comida)}). ${prej} e ${sem}.${fecho}`,
+    sub: `Sem promoções: depois da comissão e taxa do iFood (${R(p.de100.ifood)}) e da comida (${R(p.de100.comida)}). ${prej} e ${sem}.${fecho}`,
   };
 }

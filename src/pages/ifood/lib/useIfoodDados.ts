@@ -4,7 +4,7 @@ import { fetchPedidosIfood, type PedidoIfood } from '@/lib/ifoodDashboard';
 import { fetchCustosIfood } from '@/lib/ifoodCusto';
 import { getPeriodDates } from '@/lib/dateUtils';
 import {
-  montarPedidoOrder, montarPedidosArea, taxaMediaPorLoja,
+  montarPedidoOrder, montarPedidosArea, taxaMediaPorLoja, taxaTeoricaPorLoja,
   type MapaCustos, type OrderRow, type ItemRow, type PedidoArea, type PedidoOrder,
 } from '@/lib/ifoodArea';
 
@@ -120,7 +120,9 @@ export function useIfoodDados(tenantId: string | undefined, periodo: string) {
   }, [tenantId, comHoje, carregar, from, to]);
 
   const taxaMedia = useMemo(() => taxaMediaPorLoja(fin30), [fin30]);
+  // Taxa do iFood sem promoção (CMV puro da aba Itens e CMV e dos cartões de item da Hoje).
+  const taxaTeorica = useMemo(() => taxaTeoricaPorLoja(fin30), [fin30]);
   const pedidos: PedidoArea[] = useMemo(() => montarPedidosArea(orders, fin, custos, taxaMedia), [orders, fin, custos, taxaMedia]);
 
-  return { from, to, orders, fin, fin30, custos, lojas, pedidos, taxaMedia, carregando, erro, semDinheiro, recarregar: carregar };
+  return { from, to, orders, fin, fin30, custos, lojas, pedidos, taxaMedia, taxaTeorica, carregando, erro, semDinheiro, recarregar: carregar };
 }

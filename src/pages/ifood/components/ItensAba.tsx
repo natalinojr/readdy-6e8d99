@@ -8,7 +8,7 @@ import { btn, brl, brlInteiro, CartaoAcao, Chips, Faixa, Nota, Vazio, type Opcao
 import { Folha } from '@/components/kit';
 import type { AbaProps } from '../lib/tipos';
 import {
-  bloqueadoPorComplemento, classeMargem, descricaoLigacao, fatorDoPeriodo, fraseItens, listaDoChip, semFichaDe, type ChipItens,
+  bloqueadoPorComplemento, classeMargem, descricaoLigacao, fraseItens, listaDoChip, semFichaDe, type ChipItens,
 } from '../lib/itensLogica';
 import { rotuloPeriodo } from './PeriodoFolha';
 import LigarFichaFolha, { type ItemFila } from './LigarFichaFolha';
@@ -56,7 +56,7 @@ export default function ItensAba({ tenantId, loja, lojas, periodo, acesso, dados
     const soTeste = daLoja.every((p) => !p.order || p.order.teste);
     return soTeste ? daLoja : daLoja.filter((p) => !p.order?.teste);
   }, [dados.pedidos, loja]);
-  const itensPedidos = useMemo(() => itensDosPedidos(pedidosLoja, dados.custos), [pedidosLoja, dados.custos]);
+  const itensPedidos = useMemo(() => itensDosPedidos(pedidosLoja, dados.custos, dados.taxaTeorica), [pedidosLoja, dados.custos, dados.taxaTeorica]);
 
   // Dias do período antes do primeiro pedido com itens: só o relatório importado cobre.
   const primeiroDia = useMemo(() => {
@@ -98,11 +98,11 @@ export default function ItensAba({ tenantId, loja, lojas, periodo, acesso, dados
     return { de: a, ate: b };
   }, [linhasCardapio]);
 
-  // Quanto chega de cada R$ 1 vendido no período (só para o relatório de Cardápio, que não traz a taxa de cada pedido).
+  // Quanto chega de cada R$ 1 vendido SEM promoção (relatório de Cardápio, que não traz a taxa de cada pedido).
   const fatorPeriodo = useMemo(() => {
-    const fin = dados.fin.length ? dados.fin : dados.fin30;
-    return fatorDoPeriodo(fin, loja);
-  }, [dados.fin, dados.fin30, loja]);
+    const t = (loja ? dados.taxaTeorica.get(loja) : undefined) ?? dados.taxaTeorica.get('*');
+    return t == null ? null : 1 - t;
+  }, [dados.taxaTeorica, loja]);
 
   const itens = useMemo(
     () => (fonte === 'cardapio' ? itensDoCardapio(linhasCardapio, dados.custos, fatorPeriodo) : itensPedidos),
@@ -392,8 +392,8 @@ function ContaDoItem({ i, dinheiro, bloqueado, onLigarEscolha }: { i: ItemArea; 
       <div className="mt-2">
         <Linha rot={complemento ? 'Preço médio no iFood' : 'Preço médio no iFood'} valor={brl(i.precoMedio)} />
         {dinheiro && !complemento && (
-          <Linha rot="Chega na loja" valor={i.chegaUnit == null ? '—' : brl(i.chegaUnit)}
-            sub={i.fator == null ? 'ainda sem o fechamento do iFood' : `de cada R$ 100, chegam R$ ${(i.fator * 100).toFixed(0)}${i.fatorMedio ? ' (média do período)' : ''}`} />
+          <Linha rot="Chega na loja · sem promoções" valor={i.chegaUnit == null ? '—' : brl(i.chegaUnit)}
+            sub={i.fator == null ? 'ainda sem cobranças do iFood para calcular a comissão da loja' : `de cada R$ 100, chegam R$ ${(i.fator * 100).toFixed(0)} — só comissão e taxa de pagamento (média da loja); promoção é do pedido, veja em Pedidos`} />
         )}
         <Linha rot="Comida" valor={i.custoUnit == null ? 'sem ficha' : brl(i.custoUnit)}
           sub={i.custoUnit == null

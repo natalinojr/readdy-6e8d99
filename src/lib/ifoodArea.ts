@@ -248,6 +248,31 @@ export function custoDaLinha(mapa: MapaCustos, it: ItemPedidoIfood): CustoLinha 
 
 // ── Pedido da área (pedido + dinheiro + comida) ──────────────────────────────
 
+/**
+ * Taxa do iFood SEM promoção, por loja (dono 06/10: Itens e CMV é o CMV puro, sem incidência de promoção).
+ * O iFood cobra comissão e taxa de pagamento sobre o valor dos itens já com o desconto da loja (ex.: 21% + 2,6% sobre
+ * 26,01 num churros de 31 com 4,99 de desconto); a entrega grátis paga pela loja não muda essa base. Então:
+ *   taxa = (comissão + transação + sob demanda + outros − ajustes) ÷ (vendas − desconto da loja nos itens)
+ * e um item vendido a preço cheio, sem promoção, deixa na loja preço × (1 − taxa).
+ */
+export function taxaTeoricaPorLoja(fin: PedidoIfood[]): Map<string, number> {
+  const acc = new Map<string, { taxas: number; base: number }>();
+  for (const p of fin) {
+    if (p.cancelado || p.semTaxas || p.vendas <= 0.005) continue;
+    const base = p.vendas - Math.max(0, p.promoLoja - (p.promoLojaEntrega ?? 0));
+    if (base <= 0.005) continue;
+    const a = acc.get(p.loja) ?? { taxas: 0, base: 0 };
+    a.taxas += p.comissao + p.transacao + p.entregaSobDemanda + p.outrosServicos - p.ajustes;
+    a.base += base;
+    acc.set(p.loja, a);
+  }
+  const out = new Map<string, number>();
+  let tt = 0, tb = 0;
+  for (const [loja, a] of acc) { out.set(loja, a.taxas / a.base); tt += a.taxas; tb += a.base; }
+  if (tb > 0) out.set('*', tt / tb);
+  return out;
+}
+
 /** Média das taxas do iFood por loja (comissão, transação, sob demanda, outros − ajustes) ÷ vendas, pedidos não cancelados. */
 export function taxaMediaPorLoja(fin: PedidoIfood[]): Map<string, number> {
   const acc = new Map<string, { taxas: number; vendas: number }>();
@@ -357,7 +382,7 @@ function montarUm(o: PedidoOrder | null, f: PedidoIfood | null, custos: MapaCust
     numero: o?.numero ?? null,
     loja, at, dia: diaBR(at),
     cliente: o?.cliente ?? null,
-    order: o, fin: f, cancelado, venda: r2(venda), comissaoETaxas, promoLoja: r2(promoLoja), promoIfood: r2(promoIfood), promoLojaEntrega: o?.promoLojaEntrega ?? 0, pedidosAntes: o?.pedidosAntes ?? null, chega: chega == null ? null : r2(chega), estimado,
+    order: o, fin: f, cancelado, venda: r2(venda), comissaoETaxas, promoLoja: r2(promoLoja), promoIfood: r2(promoIfood), promoLojaEntrega: r2(Math.min(promoLoja, o?.promoLojaEntrega ?? f?.promoLojaEntrega ?? 0)), pedidosAntes: o?.pedidosAntes ?? null, chega: chega == null ? null : r2(chega), estimado,
     linhas, comida, sobra,
     sobraBalcao: balcao == null || comida == null ? null : r2(balcao - comida),
     semFicha,
@@ -410,10 +435,13 @@ export interface EscolhaItem {
 }
 
 /**
- * Itens a partir dos pedidos (módulo Pedidos): cada linha leva a parte do "chega" do pedido proporcional
- * ao valor dela. Complementos com preço viram linhas próprias (o valor deles já está no item).
+ * Itens a partir dos pedidos (módulo Pedidos). Complementos com preço viram linhas próprias (o valor deles já está
+ * no item). "Chega" do item:
+ * - com `taxaTeorica` (aba Itens e CMV, cartões da Hoje — dono 06/10): conta TEÓRICA, sem promoção = valor do item ×
+ *   (1 − taxa da loja sem promoção, taxaTeoricaPorLoja). Promoção é do pedido, não do item;
+ * - sem ela: a parte do "chega" real de cada pedido, proporcional ao valor do item (com as promoções do pedido).
  */
-export function itensDosPedidos(pedidos: PedidoArea[], custos: MapaCustos): ItemArea[] {
+export function itensDosPedidos(pedidos: PedidoArea[], custos: MapaCustos, taxaTeorica?: Map<string, number>): ItemArea[] {
   type Acc = { nivel: 'item' | 'complemento'; nome: string; grupo: string | null; qtd: number; faturado: number; chega: number; comida: number | null };
   const m = new Map<string, Acc>();
   // Por item: o que os clientes escolheram nele (chave do complemento → quantidade e valor).
@@ -422,7 +450,10 @@ export function itensDosPedidos(pedidos: PedidoArea[], custos: MapaCustos): Item
     if (p.cancelado || !p.order) continue;
     const totalItens = p.order.itens.reduce((s, i) => s + i.total, 0);
     // Pedido sem "chega" (sem fechamento e sem média da loja) ainda conta quantidade e faturado.
-    const fatorPedido = p.chega != null && totalItens > 0.005 ? p.chega / totalItens : null;
+    const taxaLoja = taxaTeorica ? taxaTeorica.get(p.loja) ?? taxaTeorica.get('*') ?? null : undefined;
+    const fatorPedido = taxaLoja !== undefined
+      ? (taxaLoja == null ? null : 1 - taxaLoja)
+      : p.chega != null && totalItens > 0.005 ? p.chega / totalItens : null;
     p.order.itens.forEach((it, idx) => {
       const k = chaveItemIfood(it.nome);
       const a = m.get(k) ?? { nivel: 'item', nome: it.nome, grupo: null, qtd: 0, faturado: 0, chega: 0, comida: 0 };

@@ -36,6 +36,8 @@ export interface PedidoIfood {
   comissao: number;
   transacao: number;
   promoLoja: number;
+  /** Parte de promoLoja que é entrega grátis paga pela loja ("custeada pela loja no delivery"). */
+  promoLojaEntrega?: number;
   promoIfood: number;
   entregaSobDemanda: number;
   entregaCliente: number; // taxa de entrega que o cliente pagou no pedido
@@ -98,7 +100,7 @@ export function montarPedidos(rows: EntryRow[], lojaDoImport: Record<string, str
       const [y, m, d] = dia.split('-').map(Number);
       p = {
         id: r.order_id, loja: lojaDoImport[r.import_id] ?? '', at, dia, hora, semana: new Date(Date.UTC(y, m - 1, d)).getUTCDay(),
-        vendas: 0, bruto: 0, comissao: 0, transacao: 0, promoLoja: 0, promoIfood: 0, entregaSobDemanda: 0, entregaCliente: 0, outrosServicos: 0,
+        vendas: 0, bruto: 0, comissao: 0, transacao: 0, promoLoja: 0, promoLojaEntrega: 0, promoIfood: 0, entregaSobDemanda: 0, entregaCliente: 0, outrosServicos: 0,
         ajustes: 0, liquido: 0, pagamento: '', logistica: 'propria', cancelado: false, parcial: false, motivo: null,
         _temEntregaIfood: false, _temPropria: false, _temSobDemanda: false,
       };
@@ -124,7 +126,7 @@ export function montarPedidos(rows: EntryRow[], lojaDoImport: Record<string, str
       if (/entrega ifood/.test(d)) p._temEntregaIfood = true;
       if (/entrega pr[oó]pria/.test(d)) p._temPropria = true;
     } else if (t.includes('subs')) {
-      if (/custeada pela loja/.test(d)) p.promoLoja += -valor; else p.promoIfood += valor;
+      if (/custeada pela loja/.test(d)) { p.promoLoja += -valor; if (/delivery|entrega/.test(d)) p.promoLojaEntrega = (p.promoLojaEntrega ?? 0) - valor; } else p.promoIfood += valor;
     } else if (t.includes('reten') && /taxa entrega/.test(d)) {
       p._temEntregaIfood = true;
     }
