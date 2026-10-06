@@ -440,9 +440,9 @@ export default function HojeAba({ tenantId, loja, lojas, acesso, dados, dados30,
             if (!autorizada(l.id)) {
               return (
                 <LinhaLoja key={l.id} bola="apagada"
-                  titulo={`${l.nome}: pedidos ainda não chegam aqui`}
-                  sub="Falta autorizar essa loja"
-                  direita={acesso.configurar ? <button type="button" className={btn('p', 'sm')} onClick={() => irPara('conexao')}>Autorizar</button> : undefined} />
+                  titulo={`${l.nome}: os pedidos dela ainda não chegam ao ERPOS`}
+                  sub="O dinheiro (repasse e taxas) já chega. Para ver os pedidos e os itens na hora, o iFood pede um código: Conectar › colar o código no Portal do Parceiro (2 min)."
+                  direita={acesso.configurar ? <button type="button" className={btn('p', 'sm')} onClick={() => irPara('conexao')}>Receber os pedidos</button> : undefined} />
               );
             }
             const sit = situacoes[l.id];
@@ -505,7 +505,7 @@ export default function HojeAba({ tenantId, loja, lojas, acesso, dados, dados30,
       </div>
 
       <Nota>
-        Pedido e itens chegam na hora. Taxas, promoções e repasse chegam no dia seguinte; até lá a sobra é estimada pela média da loja (marcada com *).
+        Pedido e itens chegam na hora. Taxas, promoções e repasse chegam no dia seguinte; até lá o lucro bruto é estimado pela média da loja (marcado com *).
       </Nota>
     </div>
   );
