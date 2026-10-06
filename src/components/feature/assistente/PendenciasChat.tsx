@@ -623,6 +623,11 @@ export default function PendenciasChat({ call, meuId, onFechar, versao, onMudou,
             onAbrir={() => onAbrir({ ...p, rota: '/financeiro?tab=pagar' })}
             onMudou={() => { recarregar(); onMudou?.(); }} />
         )}
+        {expandida === p.id && p.kind === 'folha_a_pagar' && typeof p.payload?.competencia === 'string' && (
+          <ContasAtrasadasInline tenantId={p.tenantId} folha={p.payload.competencia} onPagarConta={onPagarConta}
+            onAbrir={(billId) => onAbrir({ ...p, rota: `/financeiro?tab=pagar&foco=${encodeURIComponent(billId)}` })}
+            onMudou={() => { recarregar(); onMudou?.(); }} />
+        )}
         {expandida === p.id && p.kind === 'conta_atrasada' && (
           <ContasAtrasadasInline tenantId={p.tenantId} onPagarConta={onPagarConta}
             onAbrir={(billId) => onAbrir({ ...p, rota: `/financeiro?tab=contas-vencidas&foco=${encodeURIComponent(billId)}` })}
@@ -842,6 +847,7 @@ const RESOLVE_AQUI: Record<string, { label: string; icone: string }> = {
   tarefa_vencida: { label: 'Ver tarefas', icone: 'ri-task-line' },
   conta_atrasada: { label: 'Ver contas', icone: 'ri-file-list-3-line' },
   conta_vence_hoje: { label: 'Ver contas', icone: 'ri-file-list-3-line' },
+  folha_a_pagar: { label: 'Ver quem falta pagar', icone: 'ri-team-line' },
 };
 
 const brl = (n: number) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -916,6 +922,7 @@ const GRUPO_DRE: Record<string, string> = { cost: 'Custos', expense: 'Despesas' 
 interface ContaAtrasada {
   id: string; description: string; supplier: string | null; amount: number; paid_amount: number | null; due_date: string;
   dre_category_id: string | null; reference_type: string | null; boleto_digitavel: string | null; boleto_pix_copia: string | null;
+  reference_id?: string | null;
 }
 
 // Contas atrasadas da loja, mais antiga primeiro, com quantos dias de atraso. Leitura direta: a RLS
@@ -923,9 +930,12 @@ interface ContaAtrasada {
 // Ação em cada conta (dono, 2026-09-25): Pagar (boleto/Pix guardado → Inter → PIN), Dar baixa (já pagou
 // por fora — mesmo pay_bill da aba Contas Vencidas) e Abrir (a conta em Contas Vencidas).
 // soHoje (2026-10-02): mesma lista para a pendência "Vence hoje" — só as que vencem hoje.
-export function ContasAtrasadasInline({ tenantId, soHoje = false, onPagarConta, onAbrir, onMudou }: {
+// folha (2026-10-05): competência 'YYYY-MM' → as contas da folha ainda em aberto, vencidas ou não. A conta
+// da folha fica FORA das listas de atrasadas/vence hoje (o cartão "Folha a pagar" já mostra).
+export function ContasAtrasadasInline({ tenantId, soHoje = false, folha, onPagarConta, onAbrir, onMudou }: {
   tenantId: string;
   soHoje?: boolean;
+  folha?: string;
   onPagarConta?: (billId: string) => Promise<void>;
   onAbrir: (billId: string) => void;
   onMudou: () => void;
@@ -935,13 +945,29 @@ export function ContasAtrasadasInline({ tenantId, soHoje = false, onPagarConta, 
   const [baixaDe, setBaixaDe] = useState<string | null>(null);
   const [ocupada, setOcupada] = useState<string | null>(null);
   const [errosConta, setErrosConta] = useState<Record<string, string>>({});
+  // Folha: contas cujo funcionário tem chave Pix ligada no RH → "Pagar Pix" (o servidor usa essa chave)
+  const [comChave, setComChave] = useState<Set<string>>(new Set());
   const hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
   const carregar = useCallback(() => {
-    supabase.from('fin_accounts_payable').select('id, description, supplier, amount, paid_amount, due_date, dre_category_id, reference_type, boleto_digitavel, boleto_pix_copia')
-      .eq('tenant_id', tenantId).not('status', 'in', '(paid,cancelled)')[soHoje ? 'eq' : 'lt']('due_date', hoje)
-      .order('due_date', { ascending: true }).limit(100)
-      .then(({ data: d, error }) => { if (error) setErro(error.message); setContas((d as ContaAtrasada[]) ?? []); });
-  }, [tenantId, hoje, soHoje]);
+    const base = supabase.from('fin_accounts_payable').select('id, description, supplier, amount, paid_amount, due_date, dre_category_id, reference_type, reference_id, boleto_digitavel, boleto_pix_copia')
+      .eq('tenant_id', tenantId).not('status', 'in', '(paid,cancelled)');
+    const q = folha
+      ? base.eq('reference_type', 'hr_payroll').not('reference_id', 'is', null).eq('competence_month', `${folha}-01`)
+      : base[soHoje ? 'eq' : 'lt']('due_date', hoje).or('reference_type.is.null,reference_type.neq.hr_payroll,reference_id.is.null');
+    q.order('due_date', { ascending: true }).limit(100)
+      .then(async ({ data: d, error }) => {
+        if (error) setErro(error.message);
+        const lista = ((d as ContaAtrasada[]) ?? []);
+        if (folha && lista.length) {
+          const refs = lista.map((c) => c.reference_id).filter((x): x is string => !!x);
+          const { data: fs } = await supabase.from('hr_payroll').select('id, hr_employees(pix_favorecido_id)').eq('tenant_id', tenantId).in('id', refs);
+          const ok = new Set(((fs ?? []) as unknown as Array<{ id: string; hr_employees: { pix_favorecido_id: string | null } | null }>)
+            .filter((f) => f.hr_employees?.pix_favorecido_id).map((f) => f.id));
+          setComChave(new Set(lista.filter((c) => c.reference_id && ok.has(c.reference_id)).map((c) => c.id)));
+        }
+        setContas(lista);
+      });
+  }, [tenantId, hoje, soHoje, folha]);
   useEffect(() => { carregar(); }, [carregar]);
 
   const pagar = async (c: ContaAtrasada) => {
@@ -957,18 +983,20 @@ export function ContasAtrasadasInline({ tenantId, soHoje = false, onPagarConta, 
   return (
     <div className="mt-2.5 space-y-1.5">
       {erro && <p className="text-xs text-red-600">{erro}</p>}
-      {!contas.length && !erro && <p className="text-xs font-semibold text-emerald-700"><i className="ri-check-line" /> {soHoje ? 'Nenhuma conta vence hoje.' : 'Nenhuma conta atrasada.'}</p>}
+      {!contas.length && !erro && <p className="text-xs font-semibold text-emerald-700"><i className="ri-check-line" /> {folha ? 'Folha toda paga.' : soHoje ? 'Nenhuma conta vence hoje.' : 'Nenhuma conta atrasada.'}</p>}
       {contas.map((c) => {
         const dias = Math.max(1, Math.floor((agora - new Date(`${c.due_date}T12:00:00-03:00`).getTime()) / 86400000));
         const saldo = Number(c.amount) - Number(c.paid_amount ?? 0);
-        const temBoleto = !!(c.boleto_digitavel || c.boleto_pix_copia);
+        const temBoleto = !!(c.boleto_digitavel || c.boleto_pix_copia) || comChave.has(c.id);
         return (
           <div key={c.id} className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2">
             <div className="flex items-start gap-2">
               <div className="flex-1 min-w-0">
                 <p className="text-[13px] font-semibold text-zinc-800 break-words leading-snug">{c.supplier || c.description}</p>
                 {c.supplier && c.description && c.description !== c.supplier && <p className="text-[11px] text-zinc-500 break-words">{c.description}</p>}
-                {soHoje
+                {folha && c.due_date >= hoje
+                  ? <p className={`text-[11px] mt-0.5 ${c.due_date === hoje ? 'text-amber-700 font-semibold' : 'text-zinc-500'}`}>{c.due_date === hoje ? 'vence hoje' : `vence ${data(c.due_date)}`}</p>
+                  : soHoje
                   ? <p className="text-[11px] text-amber-700 font-semibold mt-0.5">vence hoje</p>
                   : <p className="text-[11px] text-red-600 mt-0.5">venceu {data(c.due_date)} · {dias} dia{dias > 1 ? 's' : ''}</p>}
               </div>

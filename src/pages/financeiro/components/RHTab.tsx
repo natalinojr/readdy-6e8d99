@@ -80,16 +80,31 @@ function EmployeeModal({
 }: {
   employee: Partial<Employee> | null;
   onClose: () => void;
-  onSave: (data: Partial<Employee>) => void;
+  onSave: (data: Partial<Employee>) => unknown;
 }) {
+  const { user } = useAuth();
   const [form, setForm] = useState<Partial<Employee>>(
     employee ?? { status: 'active', department: 'Geral', salary: 0, vacation_days_per_year: 30, thirteenth_status: 'pending' }
   );
   const set = (k: keyof Employee, v: unknown) => setForm(f => ({ ...f, [k]: v }));
+  // Chave Pix (2026-10-05): um dos Pix permitidos da loja (a lista branca só se edita no Assistente, com PIN).
+  // Grava à parte, por fn_funcionario_pix (só administrador/gerente): é o destino do "Pagar Pix" da folha.
+  const [favId, setFavId] = useState(employee?.pix_favorecido_id ?? '');
+  const [favs, setFavs] = useState<Array<{ id: string; name: string; chave: string }> | null>(null);
+  const [erroPix, setErroPix] = useState<string | null>(null);
+  useEffect(() => {
+    if (!user?.tenantId || !form.id) return;
+    supabase.rpc('fn_pix_favorecidos_opcoes', { p_tenant: user.tenantId })
+      .then(({ data, error }) => setFavs(error ? [] : (data ?? []) as Array<{ id: string; name: string; chave: string }>));
+  }, [user?.tenantId, form.id]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(form);
+    if (form.id && user?.tenantId && (favId || null) !== (employee?.pix_favorecido_id ?? null)) {
+      const { error } = await supabase.rpc('fn_funcionario_pix', { p_tenant: user.tenantId, p_employee: form.id, p_pix_favorecido_id: favId || null });
+      if (error) { setErroPix(error.message); return; }
+    }
+    await onSave(form);
     onClose();
   };
 
@@ -163,6 +178,20 @@ function EmployeeModal({
                 <label className="block text-xs font-semibold text-zinc-600 mb-1">E-mail</label>
                 <input type="email" value={form.email ?? ''} onChange={e => set('email', e.target.value)}
                   className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-amber-400" />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs font-semibold text-zinc-600 mb-1">Chave Pix (dos Pix permitidos)</label>
+                {form.id ? (
+                  <select value={favId} onChange={e => { setFavId(e.target.value); setErroPix(null); }}
+                    className="w-full border border-zinc-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-amber-400 bg-white">
+                    <option value="">{favs === null ? 'Carregando…' : 'Sem chave: pago pelo app do banco'}</option>
+                    {(favs ?? []).map(f => <option key={f.id} value={f.id}>{f.name} · {f.chave}</option>)}
+                  </select>
+                ) : (
+                  <p className="text-xs text-zinc-500">Cadastre o funcionário e depois edite para ligar a chave.</p>
+                )}
+                <p className="text-[11px] text-zinc-400 mt-0.5">Usada no "Pagar Pix" da folha. Não está na lista? Cadastre em Assistente › Configurações › Pix permitidos (com o seu PIN).</p>
+                {erroPix && <p className="text-xs text-red-600 mt-1">{erroPix}</p>}
               </div>
             </div>
           </div>

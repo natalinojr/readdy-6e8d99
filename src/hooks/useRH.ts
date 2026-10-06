@@ -22,6 +22,8 @@ export interface Employee {
   phone?: string;
   email?: string;
   notes?: string;
+  /** Chave Pix do funcionário = um dos Pix permitidos (só muda por fn_funcionario_pix, admin/gerente). */
+  pix_favorecido_id?: string | null;
   // Férias
   vacation_days_per_year?: number;
   vacation_days_taken?: number;
@@ -207,8 +209,9 @@ export function useEmployees() {
 
   const upsert = async (payload: Partial<Employee>) => {
     if (!user?.tenantId) return { error: 'Sem tenant' };
-    const { tenant_id: _t, created_at: _c, updated_at: _u, ...data } = payload;
-    void _t; void _c; void _u;
+    // pix_favorecido_id fica fora da escrita genérica: só muda por fn_funcionario_pix (o banco recusa por aqui)
+    const { tenant_id: _t, created_at: _c, updated_at: _u, pix_favorecido_id: _p, ...data } = payload;
+    void _t; void _c; void _u; void _p;
     const cleanData = Object.fromEntries(
       Object.entries(data).filter(([, v]) => v !== undefined),
     );

@@ -809,12 +809,22 @@ Deno.serve(async (req) => {
 
     if (action === 'conta_pagar') {
       const { data: b } = await admin.from('fin_accounts_payable')
-        .select('id, tenant_id, supplier, description, amount, paid_amount, status, boleto_digitavel, boleto_pix_copia')
+        .select('id, tenant_id, supplier, description, amount, paid_amount, status, boleto_digitavel, boleto_pix_copia, reference_type, reference_id')
         .eq('id', String(body.bill_id ?? '')).maybeSingle();
       if (!b) return fail('Conta não encontrada.', 404);
       if (!(await ehGestor(admin, user.id, String(b.tenant_id)))) return fail('Sem acesso a essa loja.', 403);
       if (['paid', 'cancelled'].includes(String(b.status))) return fail(b.status === 'paid' ? 'Essa conta já está paga.' : 'Essa conta foi cancelada.');
       const saldo = Math.round((Number(b.amount) - Number(b.paid_amount ?? 0)) * 100) / 100;
+      // Conta da folha (2026-10-05): sem boleto, o Pix vai para a chave ligada ao funcionário no RH — que é
+      // sempre um Pix permitido (hr_employees.pix_favorecido_id, só admin/gerente liga; inter-bank confere de novo).
+      if (!body.supplier_id && !body.favorecido_id && !b.boleto_digitavel && !b.boleto_pix_copia
+          && b.reference_type === 'hr_payroll' && b.reference_id) {
+        const { data: fp } = await admin.from('hr_payroll').select('employee_id, hr_employees(pix_favorecido_id)')
+          .eq('id', String(b.reference_id)).eq('tenant_id', String(b.tenant_id)).maybeSingle();
+        const fav = (fp?.hr_employees as { pix_favorecido_id?: string | null } | null)?.pix_favorecido_id ?? null;
+        if (!fav) return fail('Esse funcionário não tem chave Pix ligada. Ligue em Financeiro › RH › Funcionários (a chave precisa estar nos Pix permitidos) ou dê baixa se já pagou.');
+        body.favorecido_id = fav;
+      }
       // Sem boleto: Pix na chave de quem JÁ está cadastrado — Fornecedores com chave ou Pix permitidos
       // (dono, 2026-10-02). Nada é cadastrado aqui; o inter-bank confere a chave de novo (lista branca).
       if (body.supplier_id || body.favorecido_id) {

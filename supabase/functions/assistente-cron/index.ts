@@ -1530,6 +1530,7 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
         select count(*)::int n, coalesce(sum(amount - coalesce(paid_amount, 0)), 0)::float total
           from fin_accounts_payable
          where tenant_id = ${t.id} and status not in ('paid', 'cancelled')
+           and not (reference_type = 'hr_payroll' and reference_id is not null)  -- folha: cartão "Folha a pagar"
            and due_date < (now() at time zone 'America/Sao_Paulo')::date`;
       if (atr.n > 0) {
         await admin.rpc('fn_pendencia_upsert', {
@@ -1552,6 +1553,7 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
         select count(*)::int n, coalesce(sum(amount - coalesce(paid_amount, 0)), 0)::float total
           from fin_accounts_payable
          where tenant_id = ${t.id} and status not in ('paid', 'cancelled')
+           and not (reference_type = 'hr_payroll' and reference_id is not null)  -- folha: cartão "Folha a pagar"
            and due_date = (now() at time zone 'America/Sao_Paulo')::date`;
       const refHoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
       if (hj.n > 0) {

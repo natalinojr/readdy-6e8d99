@@ -44,6 +44,8 @@ export const KIND_CONFIG: Record<string, { label: string; icone: string; corBg: 
   pagamento_pendente: { label: 'Pagamento', icone: 'ri-money-dollar-circle-line', corBg: 'bg-emerald-100', corTexto: 'text-emerald-700' },
   conta_atrasada: { label: 'Conta atrasada', icone: 'ri-alarm-warning-line', corBg: 'bg-red-100', corTexto: 'text-red-700' },
   conta_vence_hoje: { label: 'Vence hoje', icone: 'ri-calendar-event-line', corBg: 'bg-amber-100', corTexto: 'text-amber-800' },
+  // Folha importada/lançada (2026-10-05): um cartão por loja e competência até todos estarem pagos (gatilhos da folha).
+  folha_a_pagar: { label: 'Folha a pagar', icone: 'ri-team-line', corBg: 'bg-rose-100', corTexto: 'text-rose-700' },
   item_sem_classe: { label: 'Classificar item', icone: 'ri-price-tag-3-line', corBg: 'bg-violet-100', corTexto: 'text-violet-700' },
   conta_sem_dre: { label: 'Categoria DRE', icone: 'ri-pie-chart-line', corBg: 'bg-sky-100', corTexto: 'text-sky-700' },
   // Nota de entrada com boleto vencendo que ninguém lançou (2026-09-21): até ser
