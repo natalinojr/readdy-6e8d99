@@ -14,6 +14,7 @@ import type { ItemCardapioPublico } from '@/types/mesaCliente';
 import { saveMenuCache, getMenuCache } from '@/lib/offlineDB';
 import { useMenuPing, agendarPublicacao } from '@/hooks/useMenuPing';
 import { aplicarMudanca, estaPausado, fraseMudanca, payloadLote, pausaAteDe, type MudancaLote } from '@/lib/cardapioLista';
+import { comboIndisponivel, idsQueTravamCombo } from '@/lib/acabouHoje';
 import { CANAIS_HORARIO, agoraBrasilia, horarioDoCanal, normalizarHorario, temHorario, visivelEm, type CanalHorario } from '@/lib/horarioExibicao';
 import { useRelogioMinuto } from '@/hooks/useRelogioMinuto';
 
@@ -1199,8 +1200,11 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
       });
 
     // Combos ativos (não deletados) — aparecem como categoria 'Combos'
+    // Combo com item que acabou hoje, desligado ou apagado = indisponível (some; volta sozinho quando o item volta).
+    const travamCombo = idsQueTravamCombo(itens, pausadosAgora);
+    const idsExistentes = new Set(itens.map(i => i.id));
     const combosAtivos: ItemCardapioPublico[] = combos
-      .filter(c => c.ativo)
+      .filter(c => c.ativo && !comboIndisponivel(c, travamCombo, idsExistentes))
       .map((combo) => ({
         id: combo.id,
         nome: combo.nome,
@@ -1218,7 +1222,7 @@ export function CardapioProvider({ children }: { children: ReactNode }) {
 
     return [...itensNormais, ...combosAtivos];
   },
-    [itensAtivos, categorias, combos, destaques, itemNoHorario, foraDoHorario, pausadosAgora],
+    [itens, itensAtivos, categorias, combos, destaques, itemNoHorario, foraDoHorario, pausadosAgora],
   );
 
   return (

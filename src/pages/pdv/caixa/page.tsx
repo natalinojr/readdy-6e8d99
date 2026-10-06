@@ -36,6 +36,7 @@ import EstoqueZerarModal from './components/EstoqueZerarModal';
 import { useEstoqueAlertaPDV, type InsumoZerando } from '@/hooks/useEstoqueAlertaPDV';
 import { useDeliveryState } from '@/hooks/useDeliveryState';
 import { useCaixaPing } from '@/hooks/useCaixaPing';
+import { useAvisoAcabouHoje } from '@/hooks/useAvisoAcabouHoje';
 
 type ModalState = 'none' | 'opcoes' | 'destino' | 'pagamento' | 'sangria'
   | 'iniciar_sessao' | 'abertura_caixa' | 'fechar_sessao' | 'abrir_mesa';
@@ -142,6 +143,7 @@ function PDVOperacional({ onFechar, irPara }: PDVOperacionalProps) {
   const { user } = useAuth();
   const { hasPermissao, loading: carregandoPermissoes } = usePermissoes();
   const { total, clearCart, destino, setDestino, addItem, carrinho, removeItem, enviarParaCozinha, finalizarPedido } = usePDV();
+  const avisoAcabouHoje = useAvisoAcabouHoje();
   const { success: toastSuccess, error: toastError } = useToast();
   const { pedidos: kdsPedidos } = useKDS();
   // Configurações › Operação: a loja pode desligar o "Enviar para Cozinha" (pedido sem pagamento).
@@ -506,7 +508,14 @@ function PDVOperacional({ onFechar, irPara }: PDVOperacionalProps) {
   }, [verificarEstoque, carrinho]);
 
   // Finalizar: check destino first
-  const handlePagar = () => {
+  const handlePagar = async () => {
+    // "Acabou hoje": item que entrou no pedido antes de ser pausado no Cardápio. Tirar = remove e para aqui
+    // (a pessoa confere o total e finaliza de novo); Vender assim mesmo = segue.
+    const tirar = await avisoAcabouHoje(carrinho);
+    if (tirar) {
+      carrinho.filter((ci) => tirar.has(ci.itemId)).forEach((ci) => removeItem(ci.cartId));
+      return;
+    }
     const executarPagamento = () => {
       if (!destino) {
         setPendingAction('pagamento');

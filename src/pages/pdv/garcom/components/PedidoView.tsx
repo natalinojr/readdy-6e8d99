@@ -6,6 +6,7 @@ import { useKDS } from '../../../../contexts/KDSContext';
 import { useItensSemEstoque } from '@/hooks/useItensSemEstoque';
 import type { InsumoFaltando } from '@/hooks/useItensSemEstoque';
 import { useEstoqueAlertaPDV } from '@/hooks/useEstoqueAlertaPDV';
+import { useAvisoAcabouHoje } from '@/hooks/useAvisoAcabouHoje';
 import type { InsumoZerando } from '@/hooks/useEstoqueAlertaPDV';
 import type { Rodada } from '../types';
 import { useRodadasMesa } from '../hooks/useRodadasMesa';
@@ -93,6 +94,7 @@ export default function PedidoView({
 
   const { mapaItens: itensSemEstoque } = useItensSemEstoque();
   const { verificarEstoque } = useEstoqueAlertaPDV();
+  const avisoAcabouHoje = useAvisoAcabouHoje();
 
   const handleMouseEnterSemEstoque = useCallback((itemId: string) => {
     if (tooltipTimer.current) clearTimeout(tooltipTimer.current);
@@ -710,6 +712,12 @@ export default function PedidoView({
 
               <button
                 onClick={async () => {
+                  // "Acabou hoje": item que entrou no pedido antes de ser pausado no Cardápio. Tirar = remove e para aqui.
+                  const tirar = await avisoAcabouHoje(carrinho);
+                  if (tirar) {
+                    carrinho.filter((ci) => tirar.has(ci.itemId)).forEach((ci) => (onRemoveItem ? onRemoveItem(ci.cartId) : onUpdateQty(ci.cartId, -ci.quantidade)));
+                    return;
+                  }
                   // Verifica estoque antes de mostrar confirmação
                   const { temAlerta, insumosZerando } = await verificarEstoque(
                     carrinho.map((ci) => ({ ...ci, itemId: ci.itemId ?? '' }))

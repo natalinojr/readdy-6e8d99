@@ -4,7 +4,7 @@ import { deductStockForSkipKdsItems, runStockInBackground } from "../_shared/sto
 import { descontoClubeServidor, idsValidos, sessaoDoClube, vincularClube } from "../_shared/clube-servidor.ts";
 import { activeLocales, normalizeLocale, loadTranslations, decorate, decorateHighlights, translationsPayload } from "../_shared/menu-i18n.ts";
 import { promoPrecosDeHoje } from "../_shared/promo-item.ts";
-import { idsPausados } from "../_shared/cardapio-pausa.ts";
+import { combosIndisponiveis, idsPausados } from "../_shared/cardapio-pausa.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -262,6 +262,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       for (const m of menuRes.data ?? []) if (m.is_active && m.deleted_at == null) menuMap.set(String(m.id), m);
       const comboMap = new Map<string, Record<string, unknown>>();
       for (const c of comboRes.data ?? []) if (c.is_active) comboMap.set(String(c.id), c);
+      // Combo com item que acabou hoje / desligado / apagado = indisponível, igual ao item.
+      for (const cid of await combosIndisponiveis(admin, tenant_id, [...comboMap.keys()])) comboMap.delete(cid);
 
       const categoryIds = [...new Set([...menuMap.values()].map((m) => m.category_id).filter(Boolean).map(String))];
       const groupIds = [...new Set((optRes.data ?? []).map((o: Record<string, unknown>) => o.group_id).filter(Boolean).map(String))];

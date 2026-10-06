@@ -20,6 +20,7 @@ import type { InsumoFaltando } from '@/hooks/useItensSemEstoque';
 import { reportError } from '@/lib/errorReporter';
 import { visivelAgora } from '@/lib/horarioExibicao';
 import { estaPausado } from '@/lib/cardapioLista';
+import { comboIndisponivel, idsQueTravamCombo } from '@/lib/acabouHoje';
 
 const FN = 'autoatendimento.itemEscondido';
 // Horário de exibição (2026-10-02) esconde de propósito — não é sumiço a investigar.
@@ -65,7 +66,12 @@ function motivo(id: string, e: Entrada): { curto: string; detalhe?: unknown } {
   const raw = e.itens.find((i) => i.id === id);
   if (!raw) {
     const combo = e.combos.find((c) => c.id === id);
-    if (combo) return { curto: combo.ativo ? 'combo fora do cardápio público' : 'combo desligado' };
+    if (combo && !combo.ativo) return { curto: 'combo desligado' };
+    if (combo) {
+      const pausados = new Set(e.itens.filter((i) => estaPausado(i.pausadoAte)).map((i) => i.id));
+      const travado = comboIndisponivel(combo, idsQueTravamCombo(e.itens, pausados), new Set(e.itens.map((i) => i.id)));
+      return { curto: travado ? 'combo com item que acabou hoje, desligado ou apagado' : 'combo fora do cardápio público' };
+    }
     return { curto: 'não veio no cardápio carregado' };
   }
   if (raw.status !== 'ativo') return { curto: 'desligado no cardápio' };

@@ -14,6 +14,7 @@ import DeliveryClienteModal from './components/DeliveryClienteModal';
 import DeliveryPagamentoModal from './components/DeliveryPagamentoModal';
 import DeliveryEntregaConfirmModal from './components/DeliveryEntregaConfirmModal';
 import { useImpressoras } from '@/contexts/ImpressorasContext';
+import { useAvisoAcabouHoje } from '@/hooks/useAvisoAcabouHoje';
 
 type ModalType = 'none' | 'cliente' | 'confirmar_entrega' | 'pagamento';
 
@@ -74,6 +75,15 @@ export default function PDVDeliveryPage() {
     setCliente(null);
     setTaxaEntrega(0);
   }, []);
+
+  // "Acabou hoje": item que entrou no pedido antes de ser pausado no Cardápio. Tirar = remove e para aqui
+  // (a pessoa confere o total e finaliza de novo); Vender assim mesmo = segue para a confirmação.
+  const avisoAcabouHoje = useAvisoAcabouHoje();
+  const handleFinalizarClique = async () => {
+    const tirar = await avisoAcabouHoje(carrinho.map((ci) => ({ itemId: ci.itemId, nome: ci.itemNome })));
+    if (tirar) { setCarrinho((prev) => prev.filter((c) => !tirar.has(c.itemId))); return; }
+    setModal('confirmar_entrega');
+  };
 
   const subtotal = useMemo(() => carrinho.reduce((acc, ci) => acc + ci.precoUnitario * ci.quantidade, 0), [carrinho]);
   const total = subtotal + taxaEntrega;
@@ -531,7 +541,7 @@ export default function PDVDeliveryPage() {
               onAlterarQty={handleAlterarQty}
               onSetCliente={() => setModal('cliente')}
               onSetTaxa={setTaxaEntrega}
-              onFinalizar={() => setModal('confirmar_entrega')}
+              onFinalizar={handleFinalizarClique}
               onLimpar={handleLimpar}
             />
           ) : (

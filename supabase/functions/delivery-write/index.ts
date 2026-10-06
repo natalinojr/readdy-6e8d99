@@ -4,7 +4,7 @@ import { deductStockForSkipKdsItems, runStockInBackground } from "../_shared/sto
 import { descontoClubeServidor, idsValidos, sessaoDoClube, vincularClube } from "../_shared/clube-servidor.ts";
 import { activeLocales, normalizeLocale, loadTranslations, decorate, decorateHighlights, translationsPayload } from "../_shared/menu-i18n.ts";
 import { promoPrecosDeHoje } from "../_shared/promo-item.ts";
-import { idsPausados } from "../_shared/cardapio-pausa.ts";
+import { combosIndisponiveis, idsPausados } from "../_shared/cardapio-pausa.ts";
 import { dentroDoHorario, minutosAteFechar, normalizarHorarioDelivery, type HorarioDelivery } from "../_shared/horario-delivery.ts";
 import { temPermissao } from "../_shared/permissao-servidor.ts";
 
@@ -1874,8 +1874,10 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
 
       const comboPriceMap = new Map<string, number>();
       const comboNameMap = new Map<string, string>();
+      // Combo com item que acabou hoje / desligado / apagado = indisponível, igual ao item.
+      const combosTravados = await combosIndisponiveis(admin, tenant_id, comboIds);
       for (const c of combosRes.data) {
-        if (c.is_active) {
+        if (c.is_active && !combosTravados.has(String(c.id))) {
           comboPriceMap.set(c.id as string, Number(c.price ?? 0));
           comboNameMap.set(c.id as string, c.name as string);
         }
