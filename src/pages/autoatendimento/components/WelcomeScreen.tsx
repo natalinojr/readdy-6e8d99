@@ -117,6 +117,20 @@ export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
   // Vídeos/fotos da loja no fundo (Configurações › Loja); sem eles, o fundo decorativo
   const [temMidia, setTemMidia] = useState(false);
 
+  // Logo da loja (Configurações › Loja) acima do nome; sem logo ou com erro, o 🍔 de sempre
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!tenantId) return;
+    let ativo = true;
+    supabase
+      .from('tenants')
+      .select('logo_url')
+      .eq('id', tenantId)
+      .maybeSingle()
+      .then(({ data }) => { if (ativo) setLogoUrl((data as { logo_url?: string | null } | null)?.logo_url || null); });
+    return () => { ativo = false; };
+  }, [tenantId]);
+
   return (
     // Tocar em qualquer lugar começa o pedido — com vídeo passando, ninguém procura o botão
     <div onClick={handleIniciar} className="fixed inset-0 bg-zinc-950 flex flex-col items-center justify-between p-10 [@media(max-height:820px)]:p-6 overflow-hidden cursor-pointer">
@@ -130,9 +144,18 @@ export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
 
       {/* Logo + Nome da loja */}
       <div className="flex flex-col items-center gap-3 [@media(max-height:820px)]:gap-2 mt-8 [@media(max-height:820px)]:mt-2 relative z-10">
-        <div className="w-32 h-32 [@media(max-height:820px)]:w-20 [@media(max-height:820px)]:h-20 flex items-center justify-center bg-amber-500 rounded-3xl">
-          <span className="text-7xl [@media(max-height:820px)]:text-5xl">🍔</span>
-        </div>
+        {logoUrl ? (
+          <img
+            src={logoUrl}
+            alt={nomeLoja}
+            onError={() => setLogoUrl(null)}
+            className="w-32 h-32 [@media(max-height:820px)]:w-20 [@media(max-height:820px)]:h-20 object-cover rounded-3xl shadow-lg"
+          />
+        ) : (
+          <div className="w-32 h-32 [@media(max-height:820px)]:w-20 [@media(max-height:820px)]:h-20 flex items-center justify-center bg-amber-500 rounded-3xl">
+            <span className="text-7xl [@media(max-height:820px)]:text-5xl">🍔</span>
+          </div>
+        )}
         <p className="text-white font-black text-4xl [@media(max-height:820px)]:text-3xl tracking-wide text-center">{nomeLoja}</p>
         <p className="text-white/40 text-lg [@media(max-height:820px)]:text-base font-semibold tracking-widest uppercase">{t('cliente.terminalAuto')}</p>
       </div>
