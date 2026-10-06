@@ -1288,7 +1288,7 @@ function AutoatendimentoPageInner() {
             />
           </div>
         ) : null}
-        <WelcomeScreen onIniciar={handleIniciar} />
+        <WelcomeScreen onIniciar={handleIniciar} comFaixaIdioma={idiomaCardapio.temSeletor} />
         {showConfigModal && <KioskConfigModal onClose={() => setShowConfigModal(false)} />}
         {/* Botão de configuração — canto superior direito */}
         <button

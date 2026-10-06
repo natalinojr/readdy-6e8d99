@@ -10,6 +10,8 @@ import FundoMidiaKiosk from './FundoMidiaKiosk';
 
 interface WelcomeScreenProps {
   onIniciar: (nome: string) => void;
+  /** A faixa de idiomas fica fixa no topo: reserva o espaço dela para não cobrir a logo */
+  comFaixaIdioma?: boolean;
 }
 
 function useFullscreen() {
@@ -55,7 +57,7 @@ const CHAVE_FORMA: Record<string, string> = {
   'Vale-refeição': 'cliente.formaVale',
 };
 
-export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
+export default function WelcomeScreen({ onIniciar, comFaixaIdioma }: WelcomeScreenProps) {
   const { t, i18n } = useTranslation();
   const traduzForma = (rotulo: string) => (CHAVE_FORMA[rotulo] ? t(CHAVE_FORMA[rotulo]) : rotulo);
   const { settings } = useSystemSettings();
@@ -133,7 +135,7 @@ export default function WelcomeScreen({ onIniciar }: WelcomeScreenProps) {
 
   return (
     // Tocar em qualquer lugar começa o pedido — com vídeo passando, ninguém procura o botão
-    <div onClick={handleIniciar} className="fixed inset-0 bg-zinc-950 flex flex-col items-center justify-between p-10 [@media(max-height:820px)]:p-6 overflow-hidden cursor-pointer">
+    <div onClick={handleIniciar} className="fixed inset-0 bg-zinc-950 flex flex-col items-center justify-between p-10 [@media(max-height:820px)]:p-6 overflow-hidden cursor-pointer" style={comFaixaIdioma ? { paddingTop: '4.5rem' } : undefined}>
       <FundoMidiaKiosk tenantId={tenantId} onTemMidia={setTemMidia} />
       {!temMidia ? (
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
