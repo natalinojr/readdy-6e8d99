@@ -32,6 +32,8 @@ export interface AbaProps {
   acesso: AcessoIfood;
   /** Dados do período (pedidos + dinheiro + custo). Hoje e Pedidos usam; as outras podem buscar o próprio período. */
   dados: DadosIfood;
+  /** Últimos 30 dias (mesma leitura para a Hoje e a bolinha da aba Itens). */
+  dados30: DadosIfood;
   irPara: (aba: AbaIfood, params?: Record<string, string>) => void;
   /** Abre a folha de um pedido (id do iFood). */
   abrirPedido: (id: string) => void;

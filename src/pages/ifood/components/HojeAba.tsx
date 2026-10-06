@@ -10,7 +10,6 @@ import { somarDias, todayBrasilia } from '@/lib/dateUtils';
 import type { InsumoSituacao } from '@/lib/estoqueRegras';
 import { useEstoqueSituacao } from '@/hooks/useEstoqueSituacao';
 import { btn, brl, brlInteiro, CartaoAcao, Faixa, Nota, SecaoTitulo, Vazio } from '@/components/kit';
-import { useIfoodDados } from '../lib/useIfoodDados';
 import { nomeLoja, type AbaProps } from '../lib/tipos';
 import LinhaPedido, { LinhaPedidoTabela, situacaoDaArea } from './LinhaPedido';
 import ExplicaLucro from './ExplicaLucro';
@@ -98,7 +97,7 @@ interface RepasseRow {
   detalhe?: { sem_conta?: boolean } | null;
 }
 
-export default function HojeAba({ tenantId, loja, lojas, acesso, dados, irPara, abrirPedido, periodo }: AbaProps) {
+export default function HojeAba({ tenantId, loja, lojas, acesso, dados, dados30, irPara, abrirPedido, periodo }: AbaProps) {
   // Abre em Hoje; o botão de período do topo troca (dono, 05/10).
   const ehHoje = periodo === 'Hoje';
   const nomePeriodo = ehHoje ? 'hoje' : rotuloPeriodo(periodo).toLowerCase();
@@ -161,7 +160,6 @@ export default function HojeAba({ tenantId, loja, lojas, acesso, dados, irPara, 
   }, [tenantId, config, chaveLojas]);
 
   // ── Precisa de você: leitura de 30 dias
-  const dados30 = useIfoodDados(tenantId, '30 dias');
   const pedidos30 = useMemo(() => dados30.pedidos.filter((p) => !loja || p.loja === loja), [dados30.pedidos, loja]);
   const itens30 = useMemo(() => itensDosPedidos(pedidos30, dados30.custos), [pedidos30, dados30.custos]);
   const resumo30 = useMemo(() => resumirItens(itens30), [itens30]);

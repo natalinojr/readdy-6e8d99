@@ -3,8 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { useIfoodDados } from './lib/useIfoodDados';
-import { supabase } from '@/lib/supabase';
-import { custoDoItem } from '@/lib/ifoodArea';
+import { itensDosPedidos, resumoItens } from '@/lib/ifoodArea';
 import type { AbaIfood, AcessoIfood, AbaProps } from './lib/tipos';
 import IfoodCabecalho from './components/Cabecalho';
 import PeriodoIfoodFolha from './components/PeriodoFolha';
@@ -64,18 +63,14 @@ export default function IfoodPage() {
   const periodo = !PERIODO_PADRAO[abaEfetiva] ? 'Hoje' : (periodos[abaEfetiva] ?? PERIODO_PADRAO[abaEfetiva]!);
   const dados = useIfoodDados(tenantId || undefined, periodo);
 
-  // Bolinha da aba "Itens e CMV": itens do iFood vendidos nos últimos 30 dias ainda sem custo de ficha.
-  const [vendidos30, setVendidos30] = useState<string[]>([]);
-  useEffect(() => {
-    if (!tenantId || !acesso.itens) { setVendidos30([]); return; }
-    let vivo = true;
-    supabase.rpc('fn_ifood_itens_vendidos', { p_tenant: tenantId, p_dias: 30 }).then(({ data }) => {
-      if (!vivo) return;
-      setVendidos30(((data ?? []) as Array<{ level: string; name: string; vendidos: number }>).filter((r) => r.level === 'item' && Number(r.vendidos) > 0).map((r) => r.name));
-    });
-    return () => { vivo = false; };
-  }, [tenantId, acesso.itens, dados.custos]);
-  const nItensSemFicha = useMemo(() => vendidos30.filter((n) => custoDoItem(dados.custos, n)?.custo == null).length, [vendidos30, dados.custos]);
+  // Últimos 30 dias (a Hoje usa nos cartões) e a bolinha da aba "Itens e CMV": a MESMA conta do cartão
+  // "N itens do iFood sem ficha" da Hoje (itens e complementos com preço, pela hora do pedido).
+  const dados30 = useIfoodDados(tenantId || undefined, '30 dias');
+  const nItensSemFicha = useMemo(() => {
+    if (!acesso.itens) return 0;
+    const ps = dados30.pedidos.filter((p) => !loja || p.loja === loja);
+    return resumoItens(itensDosPedidos(ps, dados30.custos)).semFicha.length;
+  }, [acesso.itens, dados30.pedidos, dados30.custos, loja]);
 
   // Loja escolhida que sumiu da lista (troca de loja do ERPOS): volta para "todas".
   useEffect(() => { if (loja && !dados.lojas.some((l) => l.id === loja)) setLoja(null); }, [dados.lojas, loja]);
@@ -91,7 +86,7 @@ export default function IfoodPage() {
 
   if (!tenantId) return null;
 
-  const props: AbaProps = { tenantId, loja, lojas: dados.lojas, periodo, acesso, dados, irPara, abrirPedido };
+  const props: AbaProps = { tenantId, loja, lojas: dados.lojas, periodo, acesso, dados, dados30, irPara, abrirPedido };
   const temPeriodo = !!PERIODO_PADRAO[abaEfetiva];
 
   return (
