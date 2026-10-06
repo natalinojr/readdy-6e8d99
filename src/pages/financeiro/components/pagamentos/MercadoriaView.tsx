@@ -3,16 +3,18 @@
 // para pagar" com os dois em dia. Itens no estoque são importantes, mas não travam o pagamento.
 // Decisão do dono: não chegou / chegou diferente só AVISA e pede o motivo — quem decide é a pessoa.
 import { GRUPO_MERC, grupoMercadoria, trilhos, type AvisoPagar, type GrupoMerc, type Mercadoria, type NotaSemCompra, type Passo } from '@/lib/pagamentos';
+import { useState } from 'react';
+import LigarItensCompra from './LigarItensCompra';
 import { AcoesPagar, brl, Cartao, ddmm, diaBR, Pilula, PRINCIPAL, SECUNDARIO, Secao, Vazio } from './comum';
 
 interface Props {
   compras: Mercadoria[]; notas: NotaSemCompra[]; avisos: Record<string, AvisoPagar[]>;
-  mostrarLoja: boolean; dono: boolean; financeiro: boolean; onMudou: () => void; irPara: (tenantId: string, rota: string) => void;
+  mostrarLoja: boolean; dono: boolean; financeiro: boolean; onMudou: () => void; irPara: (tenantId: string, rota: string) => void; tenantAtual: string | null;
 }
 
 const ORDEM: GrupoMerc[] = ['nao_pague', 'sem_boleto', 'pronta', 'paga'];
 
-export default function MercadoriaView({ compras, notas, avisos, mostrarLoja, dono, financeiro, onMudou, irPara }: Props) {
+export default function MercadoriaView({ compras, notas, avisos, mostrarLoja, dono, financeiro, onMudou, irPara, tenantAtual }: Props) {
   const porGrupo = new Map<GrupoMerc, Mercadoria[]>();
   for (const c of compras) { const g = grupoMercadoria(c, avisos); porGrupo.set(g, [...(porGrupo.get(g) ?? []), c]); }
   return (
@@ -24,7 +26,7 @@ export default function MercadoriaView({ compras, notas, avisos, mostrarLoja, do
       {!compras.length && !notas.length && <Vazio texto="Nenhuma compra a prazo em aberto." />}
       {ORDEM.slice(0, 1).map((g) => (porGrupo.get(g)?.length ? (
         <Secao key={g} titulo={GRUPO_MERC[g].titulo} n={porGrupo.get(g)!.length} tom={GRUPO_MERC[g].tom}>
-          {porGrupo.get(g)!.map((c) => <CartaoCompra key={c.id} c={c} avisos={avisos} mostrarLoja={mostrarLoja} dono={dono} financeiro={financeiro} onMudou={onMudou} irPara={irPara} />)}
+          {porGrupo.get(g)!.map((c) => <CartaoCompra key={c.id} c={c} avisos={avisos} mostrarLoja={mostrarLoja} dono={dono} financeiro={financeiro} onMudou={onMudou} irPara={irPara} tenantAtual={tenantAtual} />)}
         </Secao>
       ) : null))}
       {notas.length > 0 && (
@@ -35,7 +37,7 @@ export default function MercadoriaView({ compras, notas, avisos, mostrarLoja, do
       {ORDEM.slice(1).map((g) => (porGrupo.get(g)?.length ? (
         <Secao key={g} titulo={GRUPO_MERC[g].titulo} n={porGrupo.get(g)!.length} tom={GRUPO_MERC[g].tom}
           dica={g === 'sem_boleto' ? 'Chegou certo, mas o código do boleto ainda não está no sistema. O prazo muda a cada compra, então aqui é só aviso.' : undefined}>
-          {porGrupo.get(g)!.map((c) => <CartaoCompra key={c.id} c={c} avisos={avisos} mostrarLoja={mostrarLoja} dono={dono} financeiro={financeiro} onMudou={onMudou} irPara={irPara} />)}
+          {porGrupo.get(g)!.map((c) => <CartaoCompra key={c.id} c={c} avisos={avisos} mostrarLoja={mostrarLoja} dono={dono} financeiro={financeiro} onMudou={onMudou} irPara={irPara} tenantAtual={tenantAtual} />)}
         </Secao>
       ) : null))}
     </div>
@@ -62,9 +64,10 @@ function Passos({ titulo, quem, nomes, passos, subs }: { titulo: string; quem: s
   );
 }
 
-function CartaoCompra({ c, avisos, mostrarLoja, dono, financeiro, onMudou, irPara }: {
-  c: Mercadoria; avisos: Record<string, AvisoPagar[]>; mostrarLoja: boolean; dono: boolean; financeiro: boolean; onMudou: () => void; irPara: (t: string, r: string) => void;
+function CartaoCompra({ c, avisos, mostrarLoja, dono, financeiro, onMudou, irPara, tenantAtual }: {
+  c: Mercadoria; avisos: Record<string, AvisoPagar[]>; mostrarLoja: boolean; dono: boolean; financeiro: boolean; onMudou: () => void; irPara: (t: string, r: string) => void; tenantAtual: string | null;
 }) {
+  const [ligar, setLigar] = useState(false);
   const g = grupoMercadoria(c, avisos);
   const t = trilhos(c);
   const abertas = c.contas.filter((x) => x.status !== 'paid');
@@ -96,10 +99,11 @@ function CartaoCompra({ c, avisos, mostrarLoja, dono, financeiro, onMudou, irPar
       {g !== 'paga' && (
         <p className="text-xs text-zinc-500 mt-2 pt-2 border-t border-dashed border-zinc-200 flex flex-wrap items-center gap-2">
           <Pilula tom={c.itens_ligados >= c.itens ? 'green' : 'amber'}><i className="ri-archive-line" /> Estoque: {c.itens_ligados} de {c.itens} itens ligados</Pilula>
-          {c.itens_ligados < c.itens && <button onClick={() => irPara(c.tenant_id, '/financeiro?tab=itens')} className="text-sky-700 font-semibold cursor-pointer">ligar depois</button>}
+          {c.itens_ligados < c.itens && <button onClick={() => setLigar((v) => !v)} className="text-sky-700 font-semibold cursor-pointer">{ligar ? 'fechar' : 'ligar agora'}</button>}
           <span>· não trava o pagamento</span>
         </p>
       )}
+      {ligar && <LigarItensCompra tenantId={c.tenant_id} purchaseId={c.id} podeCriar={c.tenant_id === tenantAtual} onMudou={onMudou} />}
       {avisosDaCompra.length > 0 && (
         <ul className="mt-2 rounded-xl bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900 space-y-1">
           {avisosDaCompra.map((a) => <li key={a.texto}><i className="ri-error-warning-line" /> {a.texto}</li>)}
