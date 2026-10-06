@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useFinanceiroDashboard, useBankAccounts, useTopDespesas } from '@/hooks/useFinanceiro';
 import { useSalesReportBySession } from '@/hooks/useSalesReport';
 import { useModoFaturamento } from '@/contexts/ModoFaturamentoContext';
@@ -6,6 +7,8 @@ import ModoFaturamentoToggle from '@/components/feature/ModoFaturamentoToggle';
 import SessaoSelector from '@/components/feature/SessaoSelector';
 import type { SessionInfo } from '@/hooks/useSessions';
 import { formatCurrency } from '@/lib/formatters';
+import { todayBrasilia } from '@/lib/dateUtils';
+import { saldoDaConta } from '@/lib/contasAbertas';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchRevenueSources, fetchPixRecebidos, fetchCashSales } from '@/lib/revenueSources';
@@ -198,6 +201,7 @@ const RvDTooltip = ({ active, payload, label }: { active?: boolean; payload?: { 
 
 export default function VisaoGeralFinTab() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const temPdv = empresaTemPdv(user?.tenantKind);
   const { modo } = useModoFaturamento();
   // Empresa sem PDV não tem sessão de caixa — o Modo Sessão é exclusivo do PDV.
@@ -470,10 +474,8 @@ export default function VisaoGeralFinTab() {
 
   // contasVencendo vem do banco com TUDO que vence até +7 dias, incluindo o que
   // JÁ passou do prazo. Separar: vencida (dívida em atraso) ≠ vencendo em breve.
-  const hojeStr = (() => {
-    const n = new Date();
-    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
-  })();
+  // Dia de Brasília (regra única de "vencida", 2026-10-07) — não o relógio do computador.
+  const hojeStr = todayBrasilia();
   const contasVencidas = dashboard.contasVencendo.filter((b) => b.due_date && b.due_date < hojeStr);
   const contasAVencer = dashboard.contasVencendo.filter((b) => !b.due_date || b.due_date >= hojeStr);
   const totalVencidas = contasVencidas.reduce((s, b) => s + Number(b.amount ?? 0) - Number(b.paid_amount ?? 0), 0);
@@ -635,9 +637,12 @@ export default function VisaoGeralFinTab() {
                 <i className="ri-arrow-up-circle-line text-red-500 text-xl" />
               </div>
               <div>
-                <p className="text-xs text-zinc-500">Total a Pagar (pendente)</p>
+                <p className="text-xs text-zinc-500">A pagar: vencidas + próximos 7 dias</p>
                 <p className="text-xl font-bold text-red-600">{formatCurrency(dashboard.totalAPagar)}</p>
               </div>
+              <button onClick={() => navigate('/financeiro?tab=pagamentos')} className="ml-auto text-xs font-semibold text-amber-600 hover:text-amber-700 cursor-pointer whitespace-nowrap">
+                Ver em que pé está <i className="ri-arrow-right-line" />
+              </button>
             </div>
             {dashboard.totalComprometido > dashboard.totalAPagar && (
               <div className="mb-3 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
@@ -728,13 +733,14 @@ export default function VisaoGeralFinTab() {
                 <i className="ri-bank-line text-zinc-400" /> Saldo por Conta Bancária
               </h3>
               <span className="text-xs text-zinc-400">
-                Total: <span className="font-bold text-zinc-700">{formatCurrency(bankAccounts.reduce((s, a) => s + Number(a.current_balance), 0))}</span>
+                Total: <span className="font-bold text-zinc-700">{formatCurrency(bankAccounts.reduce((s, a) => s + saldoDaConta(a), 0))}</span>
               </span>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
               {bankAccounts.map(acc => {
-                const bal = Number(acc.current_balance);
-                const total = bankAccounts.reduce((s, a) => s + Math.max(0, Number(a.current_balance)), 0);
+                // Saldo do banco quando sincronizado (a mesma régua do Painel e da Hoje)
+                const bal = saldoDaConta(acc);
+                const total = bankAccounts.reduce((s, a) => s + Math.max(0, saldoDaConta(a)), 0);
                 const pct = total > 0 ? Math.max(0, (bal / total) * 100) : 0;
                 return (
                   <div key={acc.id} className="rounded-xl border border-zinc-100 p-3.5 overflow-hidden relative">

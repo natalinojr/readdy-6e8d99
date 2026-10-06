@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { todayBrasilia, somarDias } from '@/lib/dateUtils';
+import { aPagar, type ContaEmAberto } from '@/lib/contasAbertas';
 
 export interface FinanceiroAlerta {
   tipo: 'conta_vencida' | 'conta_vencendo' | 'folha_pendente' | 'orcamento_expirando' | 'compra_recebida_pendente';
@@ -48,15 +49,8 @@ export function useFinanceiroAlertas(): FinanceiroAlertasSummary {
 
     const [billsRes, payrollRes, budgetsRes, comprasRecebidasRes] = await Promise.all([
       // Contas a pagar vencidas ou vencendo em 7 dias
-      supabase
-        .from('fin_accounts_payable')
-        .select('id, description, amount, paid_amount, due_date, status')
-        .eq('tenant_id', user.tenantId)
-        // 'partial' também é dívida em aberto (ver P31 do FINANCEIRO_MAP): uma
-        // conta paga pela metade e prestes a vencer não gerava alerta nenhum.
-        .in('status', ['pending', 'overdue', 'partial'])
-        .lte('due_date', sevenDaysLater)
-        .order('due_date'),
+      // Regra única de "em aberto" (fn_contas_em_aberto, 2026-10-07): a mesma do Painel, da Hoje e de Pagamentos
+      supabase.rpc('fn_contas_em_aberto', { p_tenants: [user.tenantId] }),
 
       // Folha pendente do mês atual
       supabase
@@ -81,24 +75,32 @@ export function useFinanceiroAlertas(): FinanceiroAlertasSummary {
       // Compras com mercadoria recebida mas pagamento pendente
       supabase
         .from('fin_purchases')
-        .select('id, supplier, total_amount, delivery_confirmed_at, payment_status')
+        .select('id, supplier, total_amount, delivery_confirmed_at, payment_status, notes')
         .eq('tenant_id', user.tenantId)
         .not('delivery_confirmed_at', 'is', null)
         .in('payment_status', ['pending', 'partial']),
     ]);
 
-    const comprasRecebidasPendentes = comprasRecebidasRes.data ?? [];
+    // compra "já paga por … na entrega" não está aguardando pagamento (o Receber deixa pendente até o extrato)
+    const comprasRecebidasPendentes = ((comprasRecebidasRes.data ?? []) as Array<{ total_amount: number; notes: string | null }>)
+      .filter((c) => !/já paga /i.test(c.notes ?? ''));
 
-    const bills = (billsRes.data ?? []).map(b => ({
-      ...b,
-      // O que pesa no caixa é o SALDO DEVEDOR, não o valor cheio da conta.
-      amount: Number(b.amount) - Number(b.paid_amount ?? 0),
-      status: b.status !== 'paid' && b.due_date < today ? 'overdue' : b.status,
-    })).filter(b => b.amount > 0.005);
+    // Saldo devedor (valor − pago), sem cancelada e sem compra já paga na entrega; vencidas + até 7 dias
+    const bills = aPagar((billsRes.data ?? []) as ContaEmAberto[])
+      .filter((c) => c.vencimento <= sevenDaysLater)
+      .map((c) => ({ id: c.id, description: c.nome, amount: Number(c.valor), due_date: c.vencimento, status: c.vencimento < today ? 'overdue' : c.status }));
 
     const vencidas = bills.filter(b => b.status === 'overdue');
     const vencendo = bills.filter(b => b.status !== 'overdue');
-    const payrollPending = payrollRes.data ?? [];
+    // Folha pendente SEM conta a pagar: desde 2026-10-06 a folha gera conta (que já entra acima) — antes contava 2×
+    const payrollAll = payrollRes.data ?? [];
+    const idsFolha = payrollAll.map((p) => p.id);
+    const { data: contasFolha } = idsFolha.length
+      ? await supabase.from('fin_accounts_payable').select('reference_id').eq('tenant_id', user.tenantId)
+        .eq('reference_type', 'hr_payroll').in('reference_id', idsFolha).neq('status', 'cancelled')
+      : { data: [] as Array<{ reference_id: string }> };
+    const folhaComConta = new Set((contasFolha ?? []).map((c) => String(c.reference_id)));
+    const payrollPending = payrollAll.filter((p) => !folhaComConta.has(String(p.id)));
     const budgets = budgetsRes.data ?? [];
 
     const totalVencidas = vencidas.reduce((s, b) => s + Number(b.amount), 0);

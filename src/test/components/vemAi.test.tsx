@@ -40,7 +40,7 @@ describe('VemAi', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Ajustar' }));
     expect(abrir).toHaveBeenCalledWith('A', '/config-delivery?aba=horario');
     fireEvent.click(screen.getByRole('button', { name: 'Ver' }));
-    expect(abrir).toHaveBeenCalledWith('A', '/financeiro?tab=pagar');
+    expect(abrir).toHaveBeenCalledWith('A', '/financeiro?tab=pagamentos&ver=pacote');
   });
 
   it('erro de leitura vira aviso discreto, sem derrubar a Hoje', async () => {

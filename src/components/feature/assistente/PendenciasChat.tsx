@@ -958,7 +958,16 @@ export function ContasAtrasadasInline({ tenantId, soHoje = false, folha, onPagar
     q.order('due_date', { ascending: true }).limit(100)
       .then(async ({ data: d, error }) => {
         if (error) setErro(error.message);
-        const lista = ((d as ContaAtrasada[]) ?? []);
+        let lista = ((d as ContaAtrasada[]) ?? []);
+        // Regra única de "em aberto" (fn_contas_em_aberto, 2026-10-07): a lista bate com o número do cartão — tira
+        // saldo zerado e compra "já paga por … na entrega" (o cartão "N contas atrasadas" já não as conta)
+        if (!folha && lista.length) {
+          const { data: ab, error: e2 } = await supabase.rpc('fn_contas_em_aberto', { p_tenants: [tenantId] });
+          if (!e2) {
+            const ok = new Set(((ab ?? []) as Array<{ id: string; ja_paga: boolean }>).filter((c) => !c.ja_paga).map((c) => c.id));
+            lista = lista.filter((c) => ok.has(c.id));
+          }
+        }
         if (folha && lista.length) {
           const refs = lista.map((c) => c.reference_id).filter((x): x is string => !!x);
           const { data: fs } = await supabase.from('hr_payroll').select('id, hr_employees(pix_favorecido_id)').eq('tenant_id', tenantId).in('id', refs);

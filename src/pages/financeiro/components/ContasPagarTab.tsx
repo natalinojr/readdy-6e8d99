@@ -17,6 +17,8 @@ import { useFocoTela } from '@/lib/assistenteFoco';
 import { KpiCard, MonthNav, Segmented } from './dreUi';
 import { rotuloMes } from '@/lib/competenciaConta';
 import AvisoAntesDePagar, { avisosDaMensagem, PRECISA_CONFIRMAR, type AvisoPagar } from '@/components/feature/pagamentos/AvisoAntesDePagar';
+import { useContasEmAberto } from '@/hooks/useContasEmAberto';
+import { aPagar, resumoContas } from '@/lib/contasAbertas';
 
 interface Props {
   onNavigateToCompras?: (purchaseId?: string) => void;
@@ -168,18 +170,18 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
     return v === 'vencidas' || v === 'semana' || v === 'depois' ? v : null;
   });
   useEffect(() => { if (agingBucket) setEmAberto(null); }, [agingBucket]);
-  const hojeCP = todayBrasilia();
+  // "Em aberto agora": regra única (fn_contas_em_aberto + src/lib/contasAbertas.ts, 2026-10-07) — os mesmos
+  // números do Painel, da Hoje e da aba Pagamentos. Recarrega quando a lista de contas muda (baixa, nova conta).
+  const [versaoAbertas, setVersaoAbertas] = useState(0);
+  useEffect(() => { setVersaoAbertas((v) => v + 1); }, [bills]);
+  const { contas: abertasCP, hoje: hojeCP } = useContasEmAberto(user?.tenantId, versaoAbertas);
   const em7CP = somarDias(hojeCP, 7);
   const resumoAberto = useMemo(() => {
-    const r = { vencidas: { n: 0, v: 0 }, semana: { n: 0, v: 0 }, depois: { n: 0, v: 0 } };
-    for (const b of bills) {
-      if (!['pending', 'overdue', 'partial'].includes(b.status) || !b.due_date) continue;
-      const f = b.due_date < hojeCP ? 'vencidas' : b.due_date <= em7CP ? 'semana' : 'depois';
-      r[f].n += 1;
-      r[f].v += Math.max(0, Number(b.amount) - Number(b.paid_amount ?? 0));
-    }
-    return r;
-  }, [bills, hojeCP, em7CP]);
+    const r = resumoContas(abertasCP ?? [], hojeCP);
+    return { vencidas: r.vencidas, semana: { n: r.hoje.n + r.semana.n, v: Math.round((r.hoje.v + r.semana.v) * 100) / 100 }, depois: r.depois };
+  }, [abertasCP, hojeCP]);
+  // Só o que é a pagar de verdade (sem saldo zerado nem compra já paga na entrega) entra nos filtros "em aberto"
+  const idsAbertos = useMemo(() => new Set(aPagar(abertasCP ?? []).map((c) => c.id)), [abertasCP]);
   const [showDREModal, setShowDREModal] = useState(false);
   const [showCaixaBoletos, setShowCaixaBoletos] = useState(false);
 
@@ -303,7 +305,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
     // tipo) entrava aqui e derrubava a tela no STATUS_LABEL (2026-09-30).
     let result = (agingBucket || emAberto) ? [...bills.filter(b => ['pending', 'overdue', 'partial'].includes(b.status))] : [...billsDoMes];
     if (emAberto) {
-      result = result.filter((b) => !!b.due_date && (
+      result = result.filter((b) => idsAbertos.has(b.id) && !!b.due_date && (
         emAberto === 'vencidas' ? b.due_date < hojeCP
           : emAberto === 'semana' ? b.due_date >= hojeCP && b.due_date <= em7CP
             : b.due_date > em7CP));
@@ -357,7 +359,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
       return 0;
     });
     return result;
-  }, [billsDoMes, bills, agingBucket, emAberto, hojeCP, em7CP, search, filterStatus, filterCategory, filterDateFrom, filterDateTo, filterRecurring, sortField, sortDir]);
+  }, [billsDoMes, bills, agingBucket, emAberto, hojeCP, em7CP, idsAbertos, search, filterStatus, filterCategory, filterDateFrom, filterDateTo, filterRecurring, sortField, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -373,8 +375,12 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   };
 
   // KPIs do mês selecionado
-  const totalPendente = billsDoMes.filter(b => b.status !== 'paid').reduce((s, b) => s + saldoRestante(b), 0);
-  const totalVencido = billsDoMes.filter(b => b.status === 'overdue').reduce((s, b) => s + saldoRestante(b), 0);
+  // Mesma régua de "em aberto" e "vencida" de todas as telas (2026-10-07): sem cancelada; vencida = vencimento
+  // antes de hoje (Brasília) com saldo — antes só contava status 'overdue' e deixava de fora a paga em parte.
+  const emAbertoMes = billsDoMes.filter(b => ['pending', 'overdue', 'partial'].includes(b.status) && saldoRestante(b) > 0.005);
+  const vencidasMes = emAbertoMes.filter(b => !!b.due_date && b.due_date < hojeCP);
+  const totalPendente = emAbertoMes.reduce((s, b) => s + saldoRestante(b), 0);
+  const totalVencido = vencidasMes.reduce((s, b) => s + saldoRestante(b), 0);
   const totalPago = billsDoMes.reduce((s, b) => s + Number(b.paid_amount ?? 0), 0);
   const totalRecorrentes = billsDoMes.filter(b => b.is_recurring).length;
 
@@ -466,10 +472,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
 
   const today = todayBrasilia(); // dia de Brasília (UTC virava amanhã às 21h)
   const in7Days = somarDias(today, 7);
-  const vencendoEmBreve = billsDoMes.filter(b =>
-    b.status !== 'paid' && b.due_date >= today && b.due_date <= in7Days
-  );
-  const vencendoHoje = billsDoMes.filter(b => b.status !== 'paid' && b.due_date === today);
+  const vencendoEmBreve = emAbertoMes.filter(b => b.due_date >= today && b.due_date <= in7Days);
+  const vencendoHoje = emAbertoMes.filter(b => b.due_date === today);
   const [showAlertBanner, setShowAlertBanner] = useState(true);
   const [showProvAlertBanner, setShowProvAlertBanner] = useState(true);
 
@@ -548,7 +552,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
           <div className="flex-1 min-w-0">
             <p className={`text-sm font-bold ${totalVencido > 0 ? 'text-red-800' : 'text-amber-800'}`}>
               {totalVencido > 0
-                ? `${billsDoMes.filter(b => b.status === 'overdue').length} conta${billsDoMes.filter(b => b.status === 'overdue').length > 1 ? 's' : ''} vencida${billsDoMes.filter(b => b.status === 'overdue').length > 1 ? 's' : ''} — ${formatCurrency(totalVencido)} em aberto`
+                ? `${vencidasMes.length} conta${vencidasMes.length > 1 ? 's' : ''} vencida${vencidasMes.length > 1 ? 's' : ''} — ${formatCurrency(totalVencido)} em aberto`
                 : `${vencendoEmBreve.length} conta${vencendoEmBreve.length > 1 ? 's' : ''} vencendo nos próximos 7 dias`}
             </p>
             <div className="flex flex-wrap gap-2 mt-1.5">
