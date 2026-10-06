@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { PagamentoPedido, PedidoRecente } from '@/types/pdv';
-import type { FiscalDocumentRow } from '@/lib/fiscal';
+import { textoErroNota, type FiscalDocumentRow } from '@/lib/fiscal';
 import type { useFiscalDocs } from '@/hooks/useFiscalDocs';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -446,7 +446,7 @@ export function NotaDoc({ doc, fiscal, onToast, extra }: {
     return (
       <div className="text-[13px] py-1">
         <b className="text-red-600">Nota não autorizada</b>
-        <p className="text-[12px] text-red-600/90 break-words mt-0.5">{doc.sefaz_message || doc.error_message || 'A SEFAZ não aceitou a nota.'}</p>
+        <p className="text-[12px] text-red-600/90 break-words mt-0.5">{doc.sefaz_message || textoErroNota(doc.error_message) || 'A SEFAZ não aceitou a nota.'}</p>
       </div>
     );
   }
@@ -607,7 +607,7 @@ export default function PagosJuntos(props: PropsDetalhe) {
                     {recusada ? 'Nota não autorizada' : semNota.length === subs.length ? 'Sem nota fiscal' : `${semNota.length} de ${subs.length} pedidos sem nota`}
                   </b>
                   {recusada && (
-                    <p className="text-[12px] text-red-600/90 break-words mt-0.5">{recusada.sefaz_message || recusada.error_message || 'A SEFAZ não aceitou a nota.'}</p>
+                    <p className="text-[12px] text-red-600/90 break-words mt-0.5">{recusada.sefaz_message || textoErroNota(recusada.error_message) || 'A SEFAZ não aceitou a nota.'}</p>
                   )}
                 </div>
                 <button type="button" onClick={() => setModalNf(true)} disabled={emitirOcupado} className={`${btn('p', 'sm')} flex-shrink-0`}>

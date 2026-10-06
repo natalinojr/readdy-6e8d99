@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
-import { formatChave, formatCpfCnpj, cancelMinutesLeft, CANCEL_WINDOW_MIN, type FiscalDocumentRow, type FiscalDocStatus } from '@/lib/fiscal';
+import { formatChave, formatCpfCnpj, cancelMinutesLeft, CANCEL_WINDOW_MIN, textoErroNota, type FiscalDocumentRow, type FiscalDocStatus } from '@/lib/fiscal';
 import { buildZip, downloadBlob } from '@/lib/zipStore';
 import { MonthNav } from '@/pages/financeiro/components/dreUi';
 import {
@@ -54,7 +54,7 @@ const SELO: Record<FiscalDocStatus, { texto: string; cor: string }> = {
 /** Parada em emissão: na fila/emitindo há mais de 2 min (o provedor costuma responder em segundos). */
 const parada = (d: FiscalDocumentRow, agora: number) =>
   (d.status === 'pending' || d.status === 'processing') && agora - new Date(d.updated_at ?? d.created_at).getTime() > 2 * 60_000;
-const motivo = (d: FiscalDocumentRow) => d.error_message || (d.sefaz_message ? `${d.sefaz_status_code ?? ''} ${d.sefaz_message}`.trim() : '');
+const motivo = (d: FiscalDocumentRow) => textoErroNota(d.error_message) || (d.sefaz_message ? `${d.sefaz_status_code ?? ''} ${d.sefaz_message}`.trim() : '');
 
 function Selo({ d }: { d: FiscalDocumentRow }) {
   const s = SELO[d.status];

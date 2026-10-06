@@ -625,7 +625,11 @@ async function transmit(admin: Admin, settings: FiscalSettings, tenantId: string
 
   if (!authorized) {
     const sefazMsg = ret.DsStatusRespostaSefaz || data.DsStatusRespostaSefaz || '';
-    const errMsg = providerErrorMessage(data) || sefazMsg || (res.raw ? res.raw.slice(0, 300) : `HTTP ${res.status}`);
+    // Brasil NFe fora do ar: o Cloudflare dele devolve página HTML em vez de JSON (pedido #P0510260010, 05/10).
+    const htmlFora = res.data == null && /^\s*</.test(res.raw ?? '');
+    const errMsg = providerErrorMessage(data) || sefazMsg
+      || (htmlFora ? `O provedor da nota (Brasil NFe) estava fora do ar e não respondeu (HTTP ${res.status}). A nota não saiu: é só tentar de novo.` : '')
+      || (res.raw ? res.raw.slice(0, 300) : `HTTP ${res.status}`);
     const avisos = Array.isArray(data.Avisos) && data.Avisos.length ? ` | ${data.Avisos.map((a: unknown) => String(a)).join('; ')}` : '';
     // Rejeição da SEFAZ (tem código de retorno) vs. erro do provedor/validação/transporte.
     const status = code > 0 && code !== 100 && code !== 150 ? 'rejected' : 'error';

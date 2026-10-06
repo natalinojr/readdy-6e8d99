@@ -1592,6 +1592,7 @@ async function syncMercadoriaChegou(admin: SupabaseClient, t: { id: string; name
         from fiscal_inbound_documents d
        where d.tenant_id = ${t.id} and d.status = 'new' and d.modelo = 55 and d.sefaz_status is distinct from 2
          and public.fn_item_doc_classe(d.id) is distinct from 'despesa'
+         and jsonb_array_length(coalesce(d.parcelas, '[]'::jsonb)) > 0  -- só nota com boleto (a prazo); à vista o comprador já levou
          and d.emitted_at >= now() - interval '20 days' and d.emitted_at < now() - interval '20 hours'`;
     const { data: antes } = await admin.from('pendencias').select('id, ref, status, payload, vista_em')
       .eq('tenant_id', t.id).eq('kind', 'mercadoria_chegou');
