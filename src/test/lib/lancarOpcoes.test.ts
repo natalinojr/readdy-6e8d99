@@ -36,13 +36,20 @@ const destino = (id: string, c: ContextoAcesso) => {
 };
 
 describe('O que aconteceu? — por perfil', () => {
-  it('dono vê as 5 respostas, sempre na mesma ordem', () => {
-    expect(ids(OPCOES, padrao('admin'))).toEqual(['paguei', 'chegou', 'nota', 'pagar', 'bolso']);
+  it('dono vê as 6 respostas, sempre na mesma ordem', () => {
+    expect(ids(OPCOES, padrao('admin'))).toEqual(['paguei', 'chegou', 'nota', 'pagar', 'bolso', 'emprestimo']);
+  });
+
+  it('empréstimo entre lojas: mandar exige movimentar o estoque; receber vale para quem recebe mercadoria', () => {
+    expect(destino('emprestimo-mandar', padrao('admin'))).toBe('/receber/emprestimos?mandar=1');
+    // Só recebe (estoque_receber): vai direto para a conferência
+    expect(destino('emprestimo', padrao('caixa', ['estoque_receber']))).toBe('/receber/emprestimos?receber=1');
+    expect(ids(achar('emprestimo')!.filhos, supervisaoPar)).toEqual(['emprestimo-mandar', 'emprestimo-chegou']);
   });
 
   it('supervisão (fica na loja): recebe, faz sangria e pede; nada do Financeiro', () => {
     const c = supervisaoPar;
-    expect(ids(OPCOES, c)).toEqual(['paguei', 'chegou', 'nota', 'pagar', 'bolso']);
+    expect(ids(OPCOES, c)).toEqual(['paguei', 'chegou', 'nota', 'pagar', 'bolso', 'emprestimo']);
     expect(ids(achar('pagar')!.filhos, c)).toEqual(['pagar-fornecedor', 'pagar-freela']);
     expect(variante(achar('pagar-fornecedor')!, c)?.aprova).toBe(true);
     expect(destino('nota-boleto', c)).toBe('/receber?pedido=fornecedor');
@@ -53,7 +60,7 @@ describe('O que aconteceu? — por perfil', () => {
 
   it('caixa da Paranaguá: sem reembolso, e "tenho que pagar" vai direto ao pedido de fornecedor', () => {
     const c = caixaPar;
-    expect(ids(OPCOES, c)).toEqual(['paguei', 'chegou', 'nota', 'pagar']);
+    expect(ids(OPCOES, c)).toEqual(['paguei', 'chegou', 'nota', 'pagar', 'emprestimo']);
     expect(destino('pagar', c)).toBe('/receber?pedido=fornecedor');
     expect(destino('paguei-despesa', c)).toBe('/pdv/caixa?abrir=sangria&tipo=outro');
   });
