@@ -23,7 +23,7 @@ import ConexaoAba from './components/ConexaoAba';
 
 const ABAS: AbaIfood[] = ['hoje', 'pedidos', 'itens', 'dinheiro', 'resultados', 'loja', 'conexao'];
 /** Período padrão de cada aba (Hoje é sempre hoje; Loja e Conectar não têm período). */
-const PERIODO_PADRAO: Partial<Record<AbaIfood, string>> = { pedidos: 'Hoje', itens: '30 dias', dinheiro: 'Este mês', resultados: '30 dias' };
+const PERIODO_PADRAO: Partial<Record<AbaIfood, string>> = { hoje: 'Hoje', pedidos: 'Hoje', itens: '30 dias', dinheiro: 'Este mês', resultados: '30 dias' };
 
 export default function IfoodPage() {
   const { user } = useAuth();
@@ -61,7 +61,7 @@ export default function IfoodPage() {
       : true;
   const abaEfetiva: AbaIfood = podeAba(aba) ? aba : 'hoje';
 
-  const periodo = abaEfetiva === 'hoje' || !PERIODO_PADRAO[abaEfetiva] ? 'Hoje' : (periodos[abaEfetiva] ?? PERIODO_PADRAO[abaEfetiva]!);
+  const periodo = !PERIODO_PADRAO[abaEfetiva] ? 'Hoje' : (periodos[abaEfetiva] ?? PERIODO_PADRAO[abaEfetiva]!);
   const dados = useIfoodDados(tenantId || undefined, periodo);
 
   // Bolinha da aba "Itens e CMV": itens do iFood vendidos nos últimos 30 dias ainda sem custo de ficha.

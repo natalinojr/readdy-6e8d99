@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { rotuloPeriodo } from './PeriodoFolha';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { fetchAllRows } from '@/lib/fetchAllRows';
@@ -97,7 +98,10 @@ interface RepasseRow {
   detalhe?: { sem_conta?: boolean } | null;
 }
 
-export default function HojeAba({ tenantId, loja, lojas, acesso, dados, irPara, abrirPedido }: AbaProps) {
+export default function HojeAba({ tenantId, loja, lojas, acesso, dados, irPara, abrirPedido, periodo }: AbaProps) {
+  // Abre em Hoje; o botão de período do topo troca (dono, 05/10).
+  const ehHoje = periodo === 'Hoje';
+  const nomePeriodo = ehHoje ? 'hoje' : rotuloPeriodo(periodo).toLowerCase();
   const navigate = useNavigate();
   const telaLarga = useTelaLarga();
   const hoje = todayBrasilia();
@@ -392,8 +396,8 @@ export default function HojeAba({ tenantId, loja, lojas, acesso, dados, irPara, 
 
   // ── Texto do topo ───────────────────────────────────────────────────────────
   const manchete = validos.length === 0 && cancelados.length === 0
-    ? 'Nenhum pedido do iFood hoje ainda'
-    : `Hoje no iFood: ${validos.length} ${plural(validos.length, 'pedido', 'pedidos')}, ${brlInteiro(vendido)}`;
+    ? (ehHoje ? 'Nenhum pedido do iFood hoje ainda' : `Nenhum pedido do iFood em ${nomePeriodo}`)
+    : `${ehHoje ? 'Hoje' : rotuloPeriodo(periodo)} no iFood: ${validos.length} ${plural(validos.length, 'pedido', 'pedidos')}, ${brlInteiro(vendido)}`;
 
   const linhasLojas = lojas.filter((l) => !loja || l.id === loja);
   const loadingTopo = dados.carregando && dados.pedidos.length === 0;
@@ -483,10 +487,10 @@ export default function HojeAba({ tenantId, loja, lojas, acesso, dados, irPara, 
 
       {/* Pedidos de hoje */}
       <div>
-        <SecaoTitulo titulo="Pedidos de hoje"
+        <SecaoTitulo titulo={ehHoje ? 'Pedidos de hoje' : `Pedidos · ${rotuloPeriodo(periodo)}`}
           direita={<button type="button" onClick={() => irPara('pedidos')} className="text-[13px] font-extrabold text-amber-700 hover:text-amber-600 cursor-pointer">ver todos</button>} />
         {pedidos.length === 0 ? (
-          <Vazio icone="ri-e-bike-2-line" titulo="Nenhum pedido do iFood hoje ainda">Quando chegar um pedido, ele aparece aqui na hora.</Vazio>
+          <Vazio icone="ri-e-bike-2-line" titulo={ehHoje ? 'Nenhum pedido do iFood hoje ainda' : 'Nenhum pedido do iFood neste período'}>{ehHoje ? 'Quando chegar um pedido, ele aparece aqui na hora.' : 'Troque o período lá em cima.'}</Vazio>
         ) : telaLarga ? (
           <TabelaHoje pedidos={pedidos} lojas={lojas} mostrarLoja={!loja && lojas.length > 1} dinheiro={acesso.dinheiro} onAbrir={abrirPedido} />
         ) : (

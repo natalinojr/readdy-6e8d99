@@ -42,8 +42,10 @@ export async function custosIfood(tenantId: string, forcar = false) {
 export async function fetchOrders(tenantId: string, fromISO: string, toISO: string): Promise<PedidoOrder[]> {
   const cols = 'id, ifood_order_id, display_id, merchant_id, status, order_type, delivered_by, is_test, ordered_at, created_at, customer_name, customer_orders_count, total, benefits, payments, timeline, cancel_reason, order_id';
   const { data, error } = await supabase.from('ifood_orders').select(cols)
-    .eq('tenant_id', tenantId).gte('created_at', fromISO).lte('created_at', toISO)
-    .order('created_at', { ascending: false }).limit(3000);
+    // Pela hora do PEDIDO (ordered_at), não pela hora em que entrou no ERPOS: pedidos antigos relidos do iFood
+    // entram com created_at de hoje (05/10 a tela mostrou 117 "hoje" com 8 de verdade).
+    .eq('tenant_id', tenantId).not('ordered_at', 'is', null).gte('ordered_at', fromISO).lte('ordered_at', toISO)
+    .order('ordered_at', { ascending: false }).limit(3000);
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as unknown as OrderRow[];
   const itens: ItemRow[] = [];
