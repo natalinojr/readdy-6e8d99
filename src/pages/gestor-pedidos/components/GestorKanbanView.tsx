@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase';
 import { useImpressoras, PRINTER_KEY_GESTOR_PEDIDOS } from '@/contexts/ImpressorasContext';
 import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { useMotoboyStatus } from '@/hooks/useMotoboyStatus';
+import { lerNotasIfood } from '@/lib/ifoodNotas';
 
 const MOTOBOY_SINAL_LABEL: Record<string, string> = {
   a_caminho_loja: 'Motoboy a caminho da loja',
@@ -135,7 +136,8 @@ function urgencyBorder(criadoEm: number, status: string): string {
 // como "Nome - Endereço" (ou "Nome - Retirada"); como o endereço já aparece em
 // bloco próprio no card, removemos o sufixo para não duplicar a informação.
 function nomeClienteDelivery(p: KDSPedido): string {
-  const nome = (p.nomeCliente ?? '').trim();
+  // Pedido do iFood chega como "iFood #3948 Nome - endereço": o número já aparece no cartão.
+  const nome = (p.nomeCliente ?? '').trim().replace(/^iFood\s*#\S+\s+/, '');
   if (!nome) return 'Delivery';
   const addr = (p.deliveryAddress ?? '').trim();
   if (addr && nome.endsWith(addr)) {
@@ -279,9 +281,15 @@ function GestorCard({
   const origemBase = ORIGEM_LABELS[pedido.origem] ?? { label: pedido.origem, cor: 'bg-zinc-100 text-zinc-700 border border-zinc-200' };
   const origemMobile = autoatendimentoBadge(pedido);
   const origemInfo = origemMobile ? { ...origemBase, label: origemMobile.label } : origemBase;
-  const platformInfo = pedido.deliveryPlatform
+  // Pedido do iFood: número do iFood em destaque, selo iFood e observação filtrada por tela (ver lerNotasIfood).
+  const ifood = lerNotasIfood(pedido.notes);
+  const platformInfo = ifood
+    ? { ...PLATFORM_LABELS.ifood, label: ifood.entregaPelaLoja ? 'iFood · entrega da loja' : 'iFood' }
+    : pedido.deliveryPlatform
     ? (PLATFORM_LABELS[pedido.deliveryPlatform] ?? { label: pedido.deliveryPlatform, cor: 'bg-zinc-100 text-zinc-700 border border-zinc-200' })
     : null;
+  // Cozinha vê só o que o cliente escreveu (e se é agendado); o resto do funil é do caixa/motoboy.
+  const notasCartao = ifood ? [ifood.agendado, ...ifood.doCliente].filter(Boolean).join(' · ') : (pedido.notes ?? '');
   const temObs = pedido.itens.some((i) => i.observacoes && i.observacoes.length > 0);
   const isCancelled = pedido.isCancelled;
   const isPaid = pedido.isPaid ?? false;
@@ -336,17 +344,20 @@ function GestorCard({
   const enviarMotoboy = (estimateMin: number | null, win: Window | null) => {
     const address = pedido.deliveryAddress ?? '';
     const name = nomeClienteDelivery(pedido);
-    const notes = pedido.notes ? `\nObs: ${pedido.notes}` : '';
+    // iFood: só o que é da entrega (obs. da entrega + o que o cliente escreveu); o resto do funil não vai ao motoboy.
+    const obsMotoboy = ifood ? [ifood.obsEntrega, ...ifood.doCliente].filter(Boolean).join(' · ') : (pedido.notes ?? '');
+    const notes = obsMotoboy ? `\n📝 Obs: ${obsMotoboy}` : '';
     const fmtBRL = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v);
     const fee = pedido.deliveryFee ?? 0;
     const total = pedido.totalAmount ?? 0;
-    const taxaLinha = fee > 0 ? `\n🛵 Taxa de entrega: ${fmtBRL(fee)}` : '';
+    // Deixa claro que a taxa não é um valor a mais para cobrar.
+    const taxaLinha = fee > 0 ? `\n🛵 Taxa de entrega: ${fmtBRL(fee)} (${isPaid ? 'já paga' : 'já inclusa no total'})` : '';
     // Pedido já pago (Pix/cartão pelo app confirmado ou baixa no caixa): o motoboy NÃO cobra
     // na entrega — mesma regra do portal /motoboy e do Gestor de Entregas.
-    const pixOnline = /pelo app/i.test(pedido.notes ?? '');
+    const pixOnline = !ifood && /pelo app/i.test(pedido.notes ?? '');
     const valoresLinha = isPaid
       ? `\n✅ *JÁ PAGO${pixOnline ? ' (pago pelo app)' : ''} — NÃO COBRAR NA ENTREGA*\n🧾 Valor do pedido (conferência): ${fmtBRL(total)}${taxaLinha}`
-      : `\n💰 Cobrar do cliente: *${fmtBRL(total)}*${taxaLinha}`;
+      : `\n💰 Cobrar do cliente: *${fmtBRL(total)}*${ifood?.cobrar ? ` (${ifood.cobrar})` : ''}${taxaLinha}`;
     // Alerta configurável (Config. do Delivery → "Avisar o motoboy").
     const bebidaLinha = alertasMotoboy.length > 0
       ? `\n⚠️ *ATENÇÃO: este pedido tem ${alertasMotoboy.join(', ')} — não esquecer!*`
@@ -357,9 +368,28 @@ function GestorCard({
       : '';
     // Link do portal do motoboy (sinalizar a caminho / coletei / entreguei / problema).
     const portalUrl = `${window.location.origin}/motoboy/${pedido.id}`;
-    resolverMapsUrl().then((mapsUrl) => {
-      const msg = `🚀 *Entrega para ${name}*${prontoLinha}\n📍 ${address}${valoresLinha}${bebidaLinha}${notes}\n🗺️ Rota: ${mapsUrl}\n📲 Atualizar status: ${portalUrl}`;
-      const wa = `https://wa.me/?text=${encodeURIComponent(msg)}`;
+    // iFood: telefone do iFood + localizador (o cliente atende por eles) e complemento em destaque.
+    const dadosIfood = async (): Promise<{ contato: string; complemento: string; endereco: string }> => {
+      if (!ifood) return { contato: '', complemento: '', endereco: address };
+      try {
+        const { data } = await supabase.from('ifood_orders')
+          .select('phone:raw->customer->phone, compl:raw->delivery->deliveryAddress->>complement, ref:raw->delivery->deliveryAddress->>reference')
+          .eq('order_id', pedido.id).maybeSingle();
+        const ph = (data as { phone?: { number?: string; localizer?: string } } | null)?.phone;
+        const contato = ph?.number ? `\n📞 ${ph.number}${ph.localizer ? ` · localizador ${ph.localizer}` : ''}` : '';
+        const d = data as { compl?: string | null; ref?: string | null } | null;
+        const extra = [d?.compl?.trim(), d?.ref?.trim() ? `Ref.: ${d.ref.trim()}` : ''].filter(Boolean).join(' · ');
+        // O funil já juntou complemento e referência no endereço: tira dali para não repetir.
+        let endereco = address;
+        for (const s of [d?.compl?.trim(), d?.ref?.trim() ? `Ref.: ${d.ref.trim()}` : '']) if (s) endereco = endereco.replace(` - ${s}`, '');
+        return { contato, complemento: extra ? `\n🏠 *${extra}*` : '', endereco };
+      } catch (_e) { return { contato: '', complemento: '', endereco: address }; }
+    };
+    Promise.all([resolverMapsUrl(), dadosIfood()]).then(([mapsUrl, extra]) => {
+      const titulo = ifood?.displayId ? `iFood #${ifood.displayId} — ${name}` : `Entrega para ${name}`;
+      const msg = `🛵 *${titulo}*${valoresLinha}${prontoLinha}\n📍 ${extra.endereco}${extra.complemento}${extra.contato}${bebidaLinha}${notes}\n📲 Atualizar status: ${portalUrl}\n🗺️ Rota: ${mapsUrl}`;
+      // api.whatsapp.com direto: o redirecionamento do wa.me estraga os emojis no WhatsApp Web/Desktop.
+      const wa = `https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`;
       if (win) win.location.href = wa;
       else window.open(wa, '_blank', 'noopener');
     });
@@ -589,8 +619,13 @@ function GestorCard({
               title="Ver detalhes completos"
             >
               <span className="text-sm font-black text-zinc-900 whitespace-nowrap tracking-tight hover:underline">
-                #{String(pedido.numero).padStart(4, '0')}
+                #{ifood?.displayId ?? String(pedido.numero).padStart(4, '0')}
               </span>
+              {ifood?.displayId && (
+                <span className="text-[10px] font-semibold text-zinc-400 whitespace-nowrap" title="Número no ERPOS">
+                  {String(pedido.numero).padStart(4, '0')}
+                </span>
+              )}
               {isDelivery ? (
                 <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0 bg-orange-100 text-orange-700 border border-orange-200">
                   <i className="ri-motorbike-line text-[8px] mr-0.5" />Delivery
@@ -698,10 +733,10 @@ function GestorCard({
                   )}
                 </div>
               </div>
-              {pedido.notes && (
+              {notasCartao && (
                 <div className="flex items-start gap-1.5 mt-1.5 bg-amber-100 border border-amber-300 rounded-lg px-2 py-1.5">
                   <i className="ri-sticky-note-fill text-amber-600 text-sm flex-shrink-0" />
-                  <p className="text-xs font-semibold text-amber-900 leading-snug">{pedido.notes}</p>
+                  <p className="text-xs font-semibold text-amber-900 leading-snug">{notasCartao}</p>
                 </div>
               )}
               {/* SLA por distância: horário limite de preparo e de entrega */}
