@@ -213,9 +213,9 @@ export default function PagamentosTab() {
           mes={mes} mesAtual={mesAtual} onMes={setMes} dono={dono} financeiro={financeiro} onMudou={recarregar} />
       )}
       {ver === 'mercadoria' && dados && (
-        <MercadoriaView compras={dados.mercadoria} notas={dados.notas} avisos={avisos} mostrarLoja={todas} dono={dono} financeiro={financeiro} onMudou={recarregar} irPara={irPara} />
+        <MercadoriaView compras={dados.mercadoria} notas={dados.notas} avisos={avisos} mostrarLoja={todas} dono={dono} financeiro={financeiro} onMudou={recarregar} irPara={irPara} tenantAtual={user?.tenantId ?? null} />
       )}
-      {ver === 'vista' && dados && <VistaView compras={dados.vista} mostrarLoja={todas} irPara={irPara} />}
+      {ver === 'vista' && dados && <VistaView compras={dados.vista} mostrarLoja={todas} irPara={irPara} tenantAtual={user?.tenantId ?? null} onMudou={recarregar} />}
       {ver === 'pessoas' && dados && <PessoasView pessoas={dados.pessoas} mostrarLoja={todas} dono={dono} financeiro={financeiro} onMudou={recarregar} irPara={irPara} />}
       {ver === 'avulsos' && dados && <AvulsosView avulsos={dados.avulsos} online={dados.online} mostrarLoja={todas} irPara={irPara} />}
       {ver === 'pacote' && dados && (

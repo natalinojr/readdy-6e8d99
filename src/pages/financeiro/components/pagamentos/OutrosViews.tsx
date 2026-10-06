@@ -1,12 +1,16 @@
 // Compra à vista, Pessoas, Avulsos e o "Caminho de cada tipo" (2026-10-06).
 import { PEDIDO_NOME, type Avulso, type CompraOnline, type Pessoa } from '@/lib/pagamentos';
+import { useState } from 'react';
 import type { CompraVista } from './api';
+import LigarItensCompra from './LigarItensCompra';
 import { AcoesPagar, brl, Cartao, ddmm, diaBR, Pilula, PRINCIPAL, SECUNDARIO, Secao, Vazio } from './comum';
 
 type IrPara = (tenantId: string, rota: string) => void;
 
 // ── Compra à vista (notinha) ──────────────────────────────────────────────────────────────────
-export function VistaView({ compras, mostrarLoja, irPara }: { compras: CompraVista[]; mostrarLoja: boolean; irPara: IrPara }) {
+export function VistaView({ compras, mostrarLoja, irPara, tenantAtual, onMudou }: { compras: CompraVista[]; mostrarLoja: boolean; irPara: IrPara; tenantAtual: string | null; onMudou: () => void }) {
+  // Ligar os itens aqui mesmo (2026-10-06): abre embaixo do cartão, sem sair da tela.
+  const [aberta, setAberta] = useState<string | null>(null);
   const faltam = compras.filter((c) => c.itens_ligados < c.itens);
   const ok = compras.filter((c) => c.itens_ligados >= c.itens);
   return (
@@ -26,8 +30,11 @@ export function VistaView({ compras, mostrarLoja, irPara }: { compras: CompraVis
                   <b className="text-sm">{c.fornecedor} · {brl(c.valor)}</b>
                   <p className="text-xs text-zinc-500">{mostrarLoja ? `${c.loja} · ` : ''}{c.forma ?? 'à vista'} · {ddmm(c.data)} · {c.itens_ligados} de {c.itens} itens ligados</p>
                 </div>
-                <button onClick={() => irPara(c.tenant_id, '/financeiro?tab=itens')} className={PRINCIPAL}><i className="ri-price-tag-3-line" /> Ligar itens</button>
+                <button onClick={() => setAberta((a) => (a === c.id ? null : c.id))} className={aberta === c.id ? SECUNDARIO : PRINCIPAL}>
+                  <i className={aberta === c.id ? 'ri-arrow-up-s-line' : 'ri-price-tag-3-line'} /> {aberta === c.id ? 'Fechar' : 'Ligar itens'}
+                </button>
               </div>
+              {aberta === c.id && <LigarItensCompra tenantId={c.tenant_id} purchaseId={c.id} podeCriar={c.tenant_id === tenantAtual} onMudou={onMudou} />}
             </Cartao>
           ))}
         </Secao>
