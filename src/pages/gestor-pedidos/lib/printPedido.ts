@@ -1,5 +1,6 @@
 import { supabase } from '@/lib/supabase';
 import type { KDSPedido } from '@/types/kds';
+import { notasComanda } from '@/lib/ifoodNotas';
 import type { Impressora, MapaEstacoes } from '@/contexts/ImpressorasContext';
 import { sendToPrinter, type TicketPayload, type TicketItem, type PrintResult } from '@/lib/printUtils';
 import { queueOrderForPrint, type OrderItemForPrint, type OrderPrintDestino } from '@/lib/printOrderQueue';
@@ -260,7 +261,8 @@ export function buildGestorTicketPayload(pedido: KDSPedido, impressora?: Impress
   const obsLines: string[] = [];
   if (pedido.deliveryAddress) obsLines.push(`Endereço: ${pedido.deliveryAddress}`);
   if (pedido.paymentMethodName && !pedido.isPaid) obsLines.push(`Pagar na entrega: ${pedido.paymentMethodName}`);
-  if (pedido.notes?.trim()) obsLines.push(pedido.notes.trim());
+  const notas = notasComanda(pedido.notes);
+  if (notas) obsLines.push(notas);
 
   const senha = pedido.participantToken ?? pedido.senha;
 
@@ -296,7 +298,8 @@ export function buildGestorFallbackHTML(pedido: KDSPedido): string {
   const paymentLine = pedido.paymentMethodName && !pedido.isPaid
     ? `<p style="font-weight:bold;border:1px solid #000;padding:4px;margin:4px 0;">&#128179; Pagar na entrega: ${pedido.paymentMethodName}</p>`
     : '';
-  const notesLine = pedido.notes?.trim() ? `<p><strong>OBS:</strong> ${pedido.notes.trim()}</p>` : '';
+  const notas = notasComanda(pedido.notes);
+  const notesLine = notas ? `<p><strong>OBS:</strong> ${notas.replace(/\n/g, '<br>')}</p>` : '';
   const totalLine = pedido.totalAmount > 0
     ? `<p style="text-align:right;font-size:14px;font-weight:bold;">TOTAL: ${pedido.totalAmount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</p>`
     : '';
