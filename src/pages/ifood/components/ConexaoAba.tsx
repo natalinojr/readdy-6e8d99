@@ -11,6 +11,7 @@ import { brl } from '@/components/kit';
 import IfoodConfigModal from '@/pages/financeiro/components/conciliacao/IfoodConfigModal';
 import IfoodEntregaConfigModal from '@/pages/gestor-entregas/components/IfoodEntregaConfigModal';
 import { nomeLoja, type AbaProps } from '../lib/tipos';
+import { trazerPedidosAntigos, textoAntigos } from '../lib/trazerAntigos';
 
 // Conectar e ligar (protótipo docs/prototipos/ifood-proposta.html › Conectar e ligar). Junta numa tela o que hoje
 // está em duas janelas: Conciliação › iFood (dinheiro, edge ifood-financial) e Gestor de Entregas › iFood Entrega
@@ -232,7 +233,10 @@ export default function ConexaoAba({ tenantId, lojas, dados }: AbaProps) {
       const ids = [...new Set([...(nova?.order_merchant_ids ?? []), achou.id])];
       const s = await ifoodShipping<{ aviso?: string | null }>('set_options', tenantId, { order_enabled: true, order_merchant_ids: ids });
       await lerCfg(); setFolhaBusy('');
-      if (s.success && !s.aviso) depoisDaEtapa('pedidos', alvo.nome, restantes);
+      if (s.success && !s.aviso) {
+        depoisDaEtapa('pedidos', alvo.nome, restantes);
+        void trazerPedidosAntigos(tenantId).then((a) => { setMsg({ ok: !a.erro, t: textoAntigos(a) }); dados.recarregar(); });
+      }
       else setFolhaMsg({ tom: 'aviso', t: s.aviso || s.error || 'Autorizou, mas não deu para ligar os pedidos. Tente de novo.' });
       return;
     }
@@ -256,7 +260,14 @@ export default function ConexaoAba({ tenantId, lojas, dados }: AbaProps) {
 
   const ligarPedidos = async (id: string, nome: string) => {
     const ids = [...new Set([...(cfg?.order_merchant_ids ?? []), id])];
-    await run('ligar' + id, 'set_options', { order_enabled: true, order_merchant_ids: ids }, `Pedidos de ${curto(nome)} ligados.`);
+    const r = await run('ligar' + id, 'set_options', { order_enabled: true, order_merchant_ids: ids }, `Pedidos de ${curto(nome)} ligados.`);
+    if (!r) return;
+    setBusy('ligar' + id);
+    setMsg({ ok: true, t: `Pedidos de ${curto(nome)} ligados. Trazendo os pedidos dos últimos 15 dias…` });
+    const a = await trazerPedidosAntigos(tenantId);
+    setBusy('');
+    setMsg({ ok: !a.erro, t: `Pedidos de ${curto(nome)} ligados. ${textoAntigos(a)}` });
+    dados.recarregar();
   };
 
   // Pedido vindo da Hoje (?autorizar=<loja>): faz o que falta daquela loja e limpa o parâmetro.

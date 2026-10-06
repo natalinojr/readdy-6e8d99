@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { rotuloPeriodo } from './PeriodoFolha';
+import { trazerPedidosAntigos, textoAntigos } from '../lib/trazerAntigos';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { fetchAllRows } from '@/lib/fetchAllRows';
@@ -151,9 +152,16 @@ export default function HojeAba({ tenantId, loja, lojas, acesso, dados, dados30,
     setLigando(id);
     const ids = [...new Set([...(config.order_merchant_ids ?? []), id])];
     const r = await ifoodShipping('set_options', tenantId, { order_enabled: true, order_merchant_ids: ids });
-    if (r.success) setConfig({ ...config, order_enabled: true, order_merchant_ids: ids });
+    if (r.success) {
+      setConfig({ ...config, order_enabled: true, order_merchant_ids: ids });
+      // Já traz os pedidos dos últimos 15 dias da loja recém-ligada.
+      const a = await trazerPedidosAntigos(tenantId);
+      setAvisoLigar(textoAntigos(a));
+      dados.recarregar(); dados30.recarregar();
+    } else setAvisoLigar(r.error || 'Não deu para ligar agora.');
     setLigando(null);
   };
+  const [avisoLigar, setAvisoLigar] = useState<string | null>(null);
   // Autorizada no Portal (código já colado), mas "receber os pedidos" desligado para ela.
   const soFaltaLigar = (id: string) => !!config && (config.merchants ?? []).some((m) => m.id === id && !m.outra_loja);
   useEffect(() => {
@@ -447,6 +455,8 @@ export default function HojeAba({ tenantId, loja, lojas, acesso, dados, dados30,
 
       {/* Situação das lojas */}
       {config && linhasLojas.length > 0 && (
+        <>
+        {avisoLigar && <p className="text-[12.5px] font-semibold rounded-xl border px-3 py-2 text-emerald-700 bg-emerald-50 border-emerald-100 mb-2">{avisoLigar}</p>}
         <div className="grid gap-2 md:grid-cols-2">
           {linhasLojas.map((l) => {
             if (!autorizada(l.id)) {
@@ -459,7 +469,7 @@ export default function HojeAba({ tenantId, loja, lojas, acesso, dados, dados30,
                   direita={acesso.configurar ? (
                     <button type="button" className={btn('p', 'sm')} disabled={ligando === l.id}
                       onClick={() => (soFaltaLigar(l.id) ? ligarAqui(l.id) : irPara('conexao', { autorizar: l.id }))}>
-                      {ligando === l.id ? 'Ligando…' : soFaltaLigar(l.id) ? 'Receber os pedidos' : 'Autorizar'}
+                      {ligando === l.id ? 'Ligando e trazendo 15 dias…' : soFaltaLigar(l.id) ? 'Receber os pedidos' : 'Autorizar'}
                     </button>
                   ) : undefined} />
               );
@@ -474,6 +484,7 @@ export default function HojeAba({ tenantId, loja, lojas, acesso, dados, dados30,
             );
           })}
         </div>
+        </>
       )}
 
       {/* Precisa de você */}
