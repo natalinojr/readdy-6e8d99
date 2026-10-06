@@ -110,7 +110,10 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
   const pedeTroco = formaSel?.tipo === 'dinheiro' || formaSel?.exigeTroco === true;
 
   // ── Cadastro (cliente novo ou endereço novo) ──
-  const [modo, setModo] = useState<'lista' | 'novo_cliente' | 'novo_endereco'>('lista');
+  const [modo, setModo] = useState<'lista' | 'novo_cliente' | 'novo_endereco' | 'editar_endereco'>('lista');
+  // Endereco cadastrado sendo editado (modo 'editar_endereco'): o save regrava este
+  // mesmo registro pelo id em vez de criar um novo.
+  const [editandoEndereco, setEditandoEndereco] = useState<Endereco | null>(null);
   const [fNome, setFNome] = useState('');
   const [fTelefone, setFTelefone] = useState('');
   const [fRua, setFRua] = useState('');
@@ -225,9 +228,25 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
     setFRotulo('Casa');
   };
 
+  const abrirEditarEndereco = (a: Endereco) => {
+    setErro('');
+    setModo('editar_endereco');
+    setEditandoEndereco(a);
+    setFRua(a.street ?? ''); setFNumero(a.number ?? '');
+    setFBairroId(a.neighborhood_id ?? ''); setFBairroTexto(a.bairro ?? '');
+    setFComplemento(a.complement ?? ''); setFReferencia(a.reference_point ?? '');
+    const temPin = a.lat != null && a.lng != null;
+    setFLat(temPin ? a.lat : null); setFLng(temPin ? a.lng : null); setPinConfirmado(temPin);
+    setFRotulo(a.label || 'Casa');
+  };
+
   const salvarCadastro = async () => {
     setErro('');
-    const bairroNome = fBairroId ? (bairros.find((b) => b.id === fBairroId)?.name ?? '') : fBairroTexto.trim();
+    // Quando o form mostra o bairro como texto (modo distância), vale o que está
+    // escrito — na edição o neighborhood_id antigo não pode apagar o texto digitado.
+    const bairroNome = fBairroId && bairros.length > 0 && !distanceMode
+      ? (bairros.find((x) => x.id === fBairroId)?.name ?? '')
+      : (fBairroTexto.trim() || (fBairroId ? (bairros.find((x) => x.id === fBairroId)?.name ?? '') : ''));
 
     if (modo === 'novo_cliente') {
       const tel = fTelefone.replace(/\D/g, '');
@@ -273,18 +292,21 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
       return;
     }
 
-    // novo endereço para um cliente já selecionado
+    // novo endereço (ou edição de um cadastrado) para um cliente já selecionado
     if (!cliente) return;
+    const editando = modo === 'editar_endereco' ? editandoEndereco : null;
     if (!fRua.trim() && !fBairroId && !pinConfirmado) { setErro('Informe ao menos a rua ou o bairro.'); return; }
     setSalvando(true);
     const { data, error } = await invokeWithAuth<{ addresses?: Endereco[]; saved_address_id?: string | null }>('delivery-write', {
       body: {
         action: 'save_customer_address', tenant_id: tenantId, customer_id: cliente.id,
+        // Endereço legado (sem id) não tem registro pra regravar: vira um endereço novo.
+        address_id: editando?.id ?? null,
         label: fRotulo, neighborhood_id: fBairroId || null,
         street: fRua.trim() || null, number: fNumero.trim() || null,
         complement: fComplemento.trim() || null, reference_point: fReferencia.trim() || null,
         bairro: bairroNome || null,
-            address_lat: pinConfirmado ? fLat : null, address_lng: pinConfirmado ? fLng : null,
+        address_lat: pinConfirmado ? fLat : null, address_lng: pinConfirmado ? fLng : null,
       },
     });
     setSalvando(false);
@@ -298,6 +320,7 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
     setCliente(atualizado);
     setClientes((prev) => prev.map((c) => (c.id === atualizado.id ? atualizado : c)));
     setModo('lista');
+    setEditandoEndereco(null);
     // Seleciona pelo id que o backend acabou de gravar — procurar por rua+número
     // escolhia o endereço errado quando o cliente tem dois parecidos (mesma rua,
     // complementos diferentes).
@@ -341,7 +364,7 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
       <div>
         <label className="block text-xs font-bold text-zinc-600 mb-1.5">Este endereço é</label>
         <div className="flex flex-wrap gap-2">
-          {ROTULOS_ENDERECO.map((r) => (
+          {(ROTULOS_ENDERECO.includes(fRotulo) ? ROTULOS_ENDERECO : [...ROTULOS_ENDERECO, fRotulo]).map((r) => (
             <button
               key={r}
               type="button"
@@ -445,6 +468,7 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
             <p className="text-xs text-zinc-400">
               {modo === 'novo_cliente' ? 'Cadastrar cliente novo'
                 : modo === 'novo_endereco' ? 'Novo endereço do cliente'
+                : modo === 'editar_endereco' ? 'Editar endereço do cliente'
                 : 'Selecione o cliente que vai receber'}
             </p>
           </div>
@@ -497,16 +521,27 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
                     {cliente.addresses.map((a, idx) => {
                       const ativo = chaveEndereco(endereco) === chaveEndereco(a);
                       return (
-                        <button
+                        <div
                           key={chaveEndereco(a) || `addr-${idx}`}
-                          onClick={() => selecionarEndereco(a)}
-                          className={`w-full text-left px-3 py-2 rounded-lg border text-xs cursor-pointer transition-colors ${
+                          className={`flex items-stretch rounded-lg border text-xs transition-colors ${
                             ativo ? 'border-amber-500 bg-white' : 'border-zinc-200 bg-white/60 hover:border-zinc-300'
                           }`}
                         >
-                          <span className="font-semibold text-zinc-700">{a.label || 'Endereço'}</span>
-                          <span className="block text-zinc-500 truncate">{enderecoEmUmaLinha(a) || 'Sem endereço'}</span>
-                        </button>
+                          <button
+                            onClick={() => selecionarEndereco(a)}
+                            className="flex-1 min-w-0 text-left px-3 py-2 cursor-pointer"
+                          >
+                            <span className="font-semibold text-zinc-700">{a.label || 'Endereço'}</span>
+                            <span className="block text-zinc-500 truncate">{enderecoEmUmaLinha(a) || 'Sem endereço'}</span>
+                          </button>
+                          <button
+                            onClick={() => abrirEditarEndereco(a)}
+                            title="Editar endereço"
+                            className="shrink-0 px-3 flex items-center gap-1 text-amber-700 font-semibold hover:bg-amber-50 rounded-r-lg cursor-pointer"
+                          >
+                            <i className="ri-pencil-line" /> Editar
+                          </button>
+                        </div>
                       );
                     })}
                     <button onClick={abrirNovoEndereco} className="text-xs font-semibold text-amber-700 hover:underline cursor-pointer">
@@ -678,7 +713,7 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
             </div>
           )}
 
-          {modo === 'novo_endereco' && formEndereco}
+          {(modo === 'novo_endereco' || modo === 'editar_endereco') && formEndereco}
         </div>
 
         {/* Footer */}
@@ -704,7 +739,7 @@ export default function DeliveryClienteCaixaModal({ tenantId, current, onConfirm
                 </p>
               )}
               <div className="flex items-center gap-2">
-                <button onClick={() => { setModo('lista'); setErro(''); setFaltando({}); }} className="flex-1 py-2.5 rounded-xl border border-zinc-300 text-sm font-semibold text-zinc-600 hover:bg-white cursor-pointer">
+                <button onClick={() => { setModo('lista'); setEditandoEndereco(null); setErro(''); setFaltando({}); }} className="flex-1 py-2.5 rounded-xl border border-zinc-300 text-sm font-semibold text-zinc-600 hover:bg-white cursor-pointer">
                   Voltar
                 </button>
                 <button
