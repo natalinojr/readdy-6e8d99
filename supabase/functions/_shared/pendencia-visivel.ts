@@ -10,6 +10,9 @@ const KINDS_OPERACIONAIS = new Set(['estoque_critico', 'recebimento_sem_nota', '
 export const PERFIS_GESTAO = ['admin', 'gerente'];
 // fique_de_olho (2026-10-05): o que a equipe fez de alto valor (cancelamento, desconto, sangria) — Administrador e Supervisor.
 const KINDS_GESTAO = new Set(['vendas_abaixo_ritmo', 'fique_de_olho']);
+// "Chegou a mercadoria da X?" (2026-10-06): pergunta para quem fica na loja e recebe (Líder/Supervisor),
+// além do financeiro — quem confirma a entrega é a loja.
+const KINDS_LOJA = new Set(['mercadoria_chegou']);
 // "N tarefas vencidas" (2026-09-29, caso Thatiele): o cron conta as tarefas DO DONO na loja
 // (criadas por ele ou dele), então a linha é só dele.
 export const DONO_EMAIL = 'natalinojr.engel@gmail.com';
@@ -25,5 +28,6 @@ export function pendenciaVisivelPara(kind: string, perfil: string | undefined, e
   if (kind === 'aprovacao') return PERFIS_APROVAM.includes(perfil);
   if (KINDS_OPERACIONAIS.has(kind)) return true;
   if (KINDS_GESTAO.has(kind)) return PERFIS_GESTAO.includes(perfil);
+  if (KINDS_LOJA.has(kind)) return PERFIS_APROVAM.includes(perfil) || perfil === 'financeiro';
   return PERFIS_FINANCEIRO.includes(perfil);
 }

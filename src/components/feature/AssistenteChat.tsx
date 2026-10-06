@@ -28,6 +28,7 @@ import { maisUsadas, PADRAO_DONO, registrarUsoAcao } from '@/components/feature/
 import { AvatarPessoa } from '@/components/feature/equipe/ConversaEquipe';
 import { horaCurta } from '@/components/feature/equipe/api';
 import { alturaBarraCasca } from '@/lib/cascaBarra';
+import AvisoAntesDePagar, { avisosDaMensagem, type AvisoPagar } from '@/components/feature/pagamentos/AvisoAntesDePagar';
 
 export const ASSISTENTE_OWNER_EMAIL = 'natalinojr.engel@gmail.com';
 
@@ -82,6 +83,10 @@ interface Payment {
   recebido?: boolean | null; recebido_em?: string | null;
   /** Boleto: valor do código. Diferente de amount = juros/desconto (vencido: multa + juros). */
   face_value?: number | null;
+  /** Aviso antes de pagar (2026-10-06, fn_aviso_pagar): o cartão mostra e pede o motivo antes do PIN. */
+  avisos?: AvisoPagar[];
+  /** Motivo escrito para pagar mesmo com aviso (vai junto no `pay`). */
+  motivo_aviso?: string;
 }
 interface Attach { base64: string; media_type: string; name: string; preview: string | null }
 
@@ -245,6 +250,8 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
   // "Ver status" sem mudança parecia não fazer nada (dono, 2026-09-18): mostra que conferiu e quando.
   const [conferindo, setConferindo] = useState(false);
   const [conferido, setConferido] = useState<string | null>(null);
+  const [motivo, setMotivo] = useState(p.motivo_aviso ?? '');
+  const comAviso = (p.avisos?.length ?? 0) > 0;
   const verStatus = async () => {
     if (conferindo) return;
     setConferindo(true);
@@ -300,6 +307,7 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
             </p>
           )}
           {p.description && <p className="text-xs text-zinc-500 truncate">{p.description}</p>}
+          {comAviso && aberto && <div className="mt-2"><AvisoAntesDePagar avisos={p.avisos!} motivo={motivo} onMotivo={setMotivo} compacto /></div>}
           {p.status === 'pending_approval' ? (
             // Falta o último passo, e é FORA do ERPOS: em destaque para não passar batido.
             <div className="mt-2 rounded-xl bg-amber-100 border border-amber-300 px-3 py-2">
@@ -320,8 +328,10 @@ function PaymentCard({ p, onAction }: { p: Payment; onAction: (p: Payment, op: '
       {(aberto || andamento) && (
         <div className="flex gap-2 mt-2.5">
           {aberto && (
-            <button onClick={() => onAction(p, 'ok')} className="flex-1 h-9 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold cursor-pointer">
-              <i className="ri-check-line" /> Pagar
+            <button onClick={() => onAction(comAviso ? { ...p, motivo_aviso: motivo.trim() } : p, 'ok')}
+              disabled={comAviso && motivo.trim().length < 3}
+              className="flex-1 h-9 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed">
+              <i className="ri-check-line" /> {comAviso ? 'Pagar mesmo assim' : 'Pagar'}
             </button>
           )}
           {andamento && (
@@ -381,7 +391,7 @@ function BarraPagamentos({ lista, onAction, onDispensar }: {
           <i className={`ri-arrow-${aberta ? 'down' : 'up'}-s-line text-lg text-zinc-400 flex-shrink-0`} />
         </button>
         {um && !aberta && ['draft', 'awaiting_pin'].includes(um.status) && (
-          <button onClick={() => onAction(um, 'ok')} className="px-3 h-8 flex-shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold cursor-pointer">Pagar</button>
+          <button onClick={() => ((um.avisos?.length ?? 0) > 0 ? setAberta(true) : onAction(um, 'ok'))} className="px-3 h-8 flex-shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-bold cursor-pointer">{(um.avisos?.length ?? 0) > 0 ? 'Conferir' : 'Pagar'}</button>
         )}
         {concluido && (
           <button onClick={() => onDispensar(um)} className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 cursor-pointer" aria-label="Fechar situação do pagamento">
@@ -976,7 +986,7 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
   const pagarComPin = async (p: Payment, pinValue: string, daDigital: boolean): Promise<boolean> => {
     setPaying(true); setPinErr(null);
     try {
-      const out = await call<{ payment: Payment }>('pay', { id: p.id, op: 'ok', pin: pinValue });
+      const out = await call<{ payment: Payment }>('pay', { id: p.id, op: 'ok', pin: pinValue, ...(p.motivo_aviso ? { motivo_aviso: p.motivo_aviso } : {}) });
       setPays((prev) => (prev.some((x) => x.id === p.id) ? prev.map((x) => (x.id === p.id ? out.payment : x)) : [out.payment, ...prev]));
       setPagFixo(out.payment.id);
       setPinFor(null); setPin('');
@@ -988,6 +998,13 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      // Aviso antes de pagar (2026-10-06) que o cartão ainda não mostrava: volta ao cartão, que pede o motivo.
+      if (/^Antes de pagar:/i.test(msg)) {
+        const comAvisos = { ...p, avisos: avisosDaMensagem(msg), motivo_aviso: undefined } as Payment;
+        setPays((prev) => (prev.some((x) => x.id === p.id) ? prev.map((x) => (x.id === p.id ? comAvisos : x)) : [comAvisos, ...prev]));
+        setPagFixo(p.id); setPinFor(null); setPin('');
+        return true;
+      }
       // PIN guardado não confere mais (trocado em outro aparelho): esquece e pede digitado.
       if (daDigital && /PIN errado/i.test(msg)) await bio()?.deleteCredentials({ server: BIO_SERVER }).catch(() => {});
       // Erro que não é de PIN (Inter recusou, limite, saldo…): digitar de novo não resolve — fecha o PIN
@@ -1047,6 +1064,12 @@ export default function AssistenteChat({ variant }: { variant: 'floating' | 'emb
       return;
     }
     if (op === 'ok') {
+      // Com aviso antes de pagar e sem o motivo: não abre o PIN — mostra o cartão, que pede o motivo.
+      if ((p.avisos?.length ?? 0) > 0 && (p.motivo_aviso ?? '').trim().length < 3) {
+        setPays((prev) => (prev.some((x) => x.id === p.id) ? prev : [p, ...prev]));
+        setPagFixo(p.id);
+        return;
+      }
       setPin(''); setPinErr(null);
       // Digital primeiro; o modal do PIN só abre se não houver digital, se ela for cancelada ou se falhar.
       const b = bio();

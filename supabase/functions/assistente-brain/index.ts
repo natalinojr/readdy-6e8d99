@@ -2793,7 +2793,7 @@ Deno.serve(async (req) => {
           // que a baixa é deste Pix (e o sync do extrato reserva o débito dela para a linha deste E2E).
           await marcar({ baixa_antecipada_at: agora });
           const pg = await callEdge(ctx, 'financial-write', 'pay_bill', {
-            id: bill.id, paid_date: diaSP(String(p.paid_at)), paid_amount: restante, payment_method: 'Pix', bank_account_id: cfg?.bank_account_id ?? null,
+            id: bill.id, paid_date: diaSP(String(p.paid_at)), paid_amount: restante, payment_method: 'Pix', bank_account_id: cfg?.bank_account_id ?? null, registro: true,
           }, p.tenant_id).catch((e) => ({ status: 0, body: { error: errMsg(e) }, ms: 0 }));
           const { data: depois } = await admin.from('fin_accounts_payable').select('status').eq('id', bill.id).maybeSingle();
           if (depois?.status === 'paid') {

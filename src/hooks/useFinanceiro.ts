@@ -199,7 +199,7 @@ async function invokeFinancial(action: string, tenantId: string, payload: Record
     if (!isBusinessError) {
       console.error('[invokeFinancial] Erro:', error.message);
     }
-    return { error: error.message };
+    return { error: error.message, code: (error as { code?: string }).code };
   }
   // A edge function retorna { data: ... } ou { error: ... } no body
   const body = data as Record<string, unknown> | null;
@@ -331,11 +331,14 @@ export function useBillsPayable() {
     id: string, paid_date: string, paid_amount: number, payment_method: string,
     dre?: { dre_category_id?: string; dre_group?: string; dre_category_name?: string },
     bank_account_id?: string | null,
+    motivo_aviso?: string,
   ) => {
     // bank_account_id: de qual conta o dinheiro saiu (sem ele o pay_bill usa o da conta a pagar)
-    const result = await invokeFinancial('pay_bill', user!.tenantId, { id, paid_date, paid_amount, payment_method, ...(dre ?? {}), ...(bank_account_id ? { bank_account_id } : {}) });
+    // motivo_aviso: o porquê de pagar mesmo com aviso (mercadoria não chegou etc., 2026-10-06). Sem ele,
+    // o pay_bill recusa com code 'precisa_confirmar' e o erro lançado leva o code para a tela pedir.
+    const result = await invokeFinancial('pay_bill', user!.tenantId, { id, paid_date, paid_amount, payment_method, ...(dre ?? {}), ...(bank_account_id ? { bank_account_id } : {}), ...(motivo_aviso ? { motivo_aviso } : {}) });
     await fetchBills();
-    if (result?.error) throw new Error(String(result.error));
+    if (result?.error) throw Object.assign(new Error(String(result.error)), { code: (result as { code?: string }).code });
     return result;
   };
 

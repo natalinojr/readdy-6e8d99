@@ -16,6 +16,7 @@ import PerguntarAoAssistente from '@/components/feature/PerguntarAoAssistente';
 import { useFocoTela } from '@/lib/assistenteFoco';
 import { KpiCard, MonthNav, Segmented } from './dreUi';
 import { rotuloMes } from '@/lib/competenciaConta';
+import AvisoAntesDePagar, { avisosDaMensagem, PRECISA_CONFIRMAR, type AvisoPagar } from '@/components/feature/pagamentos/AvisoAntesDePagar';
 
 interface Props {
   onNavigateToCompras?: (purchaseId?: string) => void;
@@ -193,6 +194,10 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
     setParamsUrl((p) => { p.delete('abrir'); return p; }, { replace: true });
   }, [paramsUrl, setParamsUrl]);
   const [payModal, setPayModal] = useState<BillPayable | null>(null);
+  const [payAvisos, setPayAvisos] = useState<AvisoPagar[]>([]);
+  const [payMotivo, setPayMotivo] = useState('');
+  // Outra conta no modal: começa sem aviso (o servidor diz de novo, se houver).
+  useEffect(() => { setPayAvisos([]); setPayMotivo(''); }, [payModal?.id]);
   const [payDre, setPayDre] = useState('');
   const { toPayload: dreToPayload } = useDreEscolha();
   useEffect(() => { setPayDre(''); }, [payModal?.id]);
@@ -418,12 +423,16 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
     setPayError(null);
     setPaying(true);
     try {
+      if (payAvisos.length && payMotivo.trim().length < 3) { setPayError('Escreva o motivo para pagar mesmo assim.'); return; }
       await pay(payModal.id, payForm.paid_date, Number(payForm.paid_amount), payForm.payment_method,
-        precisaClassificarDRE(payModal) ? dreToPayload(payDre) : undefined, payForm.bank_account_id || null);
+        precisaClassificarDRE(payModal) ? dreToPayload(payDre) : undefined, payForm.bank_account_id || null,
+        payAvisos.length ? payMotivo.trim() : undefined);
       setPayModal(null);
     } catch (err) {
       // `pay` agora lança: recusa do backend (valor acima do saldo, conta já
       // quitada) precisa aparecer, não fechar o modal fingindo sucesso.
+      // Aviso antes de pagar (2026-10-06): mostra o porquê e pede o motivo, sem fechar o modal.
+      if ((err as { code?: string }).code === PRECISA_CONFIRMAR) { setPayAvisos(avisosDaMensagem((err as Error).message)); return; }
       setPayError(err instanceof Error ? err.message : 'Erro ao registrar o pagamento');
     } finally {
       setPaying(false);
@@ -1408,6 +1417,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
                   </select>
                 </div>
               )}
+              <AvisoAntesDePagar avisos={payAvisos} motivo={payMotivo} onMotivo={setPayMotivo} />
               {payError && (
                 <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
                   <i className="ri-error-warning-line text-red-500 mt-0.5 flex-shrink-0" />

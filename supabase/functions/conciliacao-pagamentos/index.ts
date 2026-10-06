@@ -75,6 +75,8 @@
 //
 // Reaproveita a lógica que já existe chamando as outras edges COM O JWT DO USUÁRIO:
 //   fiscal-inbound (import_purchase / import_bill) e financial-write (pay_bill / upsert_bill).
+//   Toda baixa daqui vai com `registro: true`: o dinheiro já saiu do banco, então o aviso antes de
+//   pagar (financial-write, 2026-10-06) não se aplica.
 // O estorno (undo) é feito aqui, com service role, porque não existe "despagar" no financial-write.
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
@@ -234,7 +236,7 @@ async function confirmOneClaimed(ctx: Ctx, rowId: string, row: Row): Promise<Res
 
   const pay = await callEdge(ctx, 'financial-write', {
     action: 'pay_bill', tenant_id: tenantId,
-    payload: { id: bill.id, paid_date: paidDate, paid_amount: round2(payAmount), payment_method: metodo, bank_account_id: row.bank_account_id },
+    payload: { id: bill.id, paid_date: paidDate, paid_amount: round2(payAmount), payment_method: metodo, bank_account_id: row.bank_account_id, registro: true },
   });
   if (!pay.ok) {
     if (desconto > 0) await admin.from('fin_accounts_payable').update({ amount: bill.amount, notes: bill.notes }).eq('id', bill.id);
@@ -263,7 +265,7 @@ async function confirmOneClaimed(ctx: Ctx, rowId: string, row: Row): Promise<Res
       const pj = await callEdge(ctx, 'financial-write', {
         action: 'pay_bill', tenant_id: tenantId,
         // pay_bill exige classificação DRE: juros/multa vão para "Juros e multas" (despesa)
-        payload: { id: jurosBillId, paid_date: paidDate, paid_amount: juros, payment_method: metodo, bank_account_id: row.bank_account_id, dre_group: 'expense', dre_category_name: 'Juros e multas' },
+        payload: { id: jurosBillId, paid_date: paidDate, paid_amount: juros, payment_method: metodo, bank_account_id: row.bank_account_id, dre_group: 'expense', dre_category_name: 'Juros e multas', registro: true },
       });
       if (!pj.ok) {
         jurosErro = 'baixa dos juros: ' + (pj.error ?? 'falhou');
@@ -701,7 +703,7 @@ async function createOneClaimed(ctx: Ctx, rowId: string, o: CreateOpts, row: Row
 
   const pay = await callEdge(ctx, 'financial-write', {
     action: 'pay_bill', tenant_id: tenantId,
-    payload: { id: billId, paid_date: paidDate, paid_amount: valor, payment_method: metodo, bank_account_id: row.bank_account_id },
+    payload: { id: billId, paid_date: paidDate, paid_amount: valor, payment_method: metodo, bank_account_id: row.bank_account_id, registro: true },
   });
   if (!pay.ok) {
     if (purchaseId) await callEdge(ctx, 'purchase-write', { action: 'delete_purchase', tenant_id: tenantId, payload: { id: purchaseId } });
@@ -968,7 +970,7 @@ async function linkMonthly(ctx: Ctx, doc: Row, ids: string[], body: Row): Promis
     const { data: linha } = await admin.from('fin_bank_statement_imports').select('bank_account_id, match_kind, category').eq('id', r.id).maybeSingle();
     const pay = await callEdge(ctx, 'financial-write', {
       action: 'pay_bill', tenant_id: tenantId,
-      payload: { id: b.id, paid_date: r.data, paid_amount: valor, payment_method: r.tipo, bank_account_id: linha?.bank_account_id ?? null },
+      payload: { id: b.id, paid_date: r.data, paid_amount: valor, payment_method: r.tipo, bank_account_id: linha?.bank_account_id ?? null, registro: true },
     });
     if (!pay.ok) { erro = 'baixa de ' + br(r.data) + ': ' + (pay.error ?? 'falhou'); break; }
     feitos.push({ row: r, billId: b.id, valor });

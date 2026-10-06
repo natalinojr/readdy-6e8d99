@@ -452,6 +452,23 @@ Deno.serve(async (req) => {
           return new Response(JSON.stringify({ error: 'Conta já está quitada' }), { status: 409, headers: corsHeaders });
         }
 
+        // Aviso antes de pagar (dono, 2026-10-06): mercadoria que não chegou, chegou diferente, valor
+        // fora do normal, parece já paga. Não bloqueia — pede o motivo, e quem decide é a pessoa.
+        // `registro: true` = só registrando um pagamento que já saiu do banco (conciliação, baixa
+        // automática do Inter): aí avisar não muda nada e travaria a automação.
+        let avisosBaixa: Array<{ tipo: string; texto: string }> = [];
+        const motivoAviso = String(payload.motivo_aviso ?? '').trim();
+        if (payload.registro !== true) {
+          const { data: av } = await supabase.rpc('fn_aviso_pagar', { p_bill_ids: [id] });
+          avisosBaixa = ((av ?? {}) as Record<string, Array<{ tipo: string; texto: string }>>)[String(id)] ?? [];
+          if (avisosBaixa.length && motivoAviso.length < 3) {
+            return new Response(JSON.stringify({
+              error: `Antes de dar baixa: ${avisosBaixa.map((a) => a.texto).join(' · ')}`,
+              code: 'precisa_confirmar', avisos: avisosBaixa,
+            }), { status: 409, headers: corsHeaders });
+          }
+        }
+
         // Sem classificação DRE não há baixa (decisão do dono, 2026-09-12): a despesa
         // cairia em "sem categoria" na DRE. Compra fica de fora (entra no CMV pelos
         // itens) e folha também (a DRE lê hr_payroll). A própria baixa pode trazer a
@@ -545,6 +562,13 @@ Deno.serve(async (req) => {
           }), { status: 409, headers: corsHeaders });
         }
         result = { data: payRes.data[0], error: null };
+
+        if (avisosBaixa.length) {
+          await supabase.from('fin_pagamento_avisos').insert({
+            tenant_id, bill_id: id, avisos: avisosBaixa, motivo: motivoAviso.slice(0, 500), canal: 'baixa', user_id: user.id,
+            purchase_id: billRec.reference_type === 'purchase' ? billRec.reference_id : null,
+          });
+        }
 
         // P3: origin='auto_bill_payment' (não 'manual'). Com 'manual', a conta paga era
         // contada 2x em Despesas (fin_accounts_payable pago + fin_cash_flow manual).

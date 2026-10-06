@@ -25,6 +25,7 @@ import { LigarSangria, ProcurarNota, ResumoCompra } from '@/components/feature/a
 import BoletoEmailDecisao from '@/pages/financeiro/components/BoletoEmailDecisao';
 import DreClassificacaoSelect, { precisaClassificarDRE, useDreEscolha } from '@/pages/financeiro/components/DreClassificacaoSelect';
 import { lerValorBR } from '@/lib/formatters';
+import AvisoAntesDePagar, { avisosDaMensagem, PRECISA_CONFIRMAR, type AvisoPagar } from '@/components/feature/pagamentos/AvisoAntesDePagar';
 
 type Call = <T>(action: string, extra?: Record<string, unknown>) => Promise<T>;
 
@@ -1053,6 +1054,9 @@ function BaixaConta({ conta, tenantId, saldo, hoje, onCancelar, onFeito }: {
   const [dre, setDre] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // Aviso antes de pagar (2026-10-06): o servidor devolve os avisos e pede o motivo.
+  const [avisos, setAvisos] = useState<AvisoPagar[]>([]);
+  const [motivo, setMotivo] = useState('');
   const { toPayload } = useDreEscolha();
   const precisaDre = precisaClassificarDRE(conta);
   const salvar = async (e: React.FormEvent) => {
@@ -1060,12 +1064,14 @@ function BaixaConta({ conta, tenantId, saldo, hoje, onCancelar, onFeito }: {
     const v = Number(valor.replace(',', '.'));
     if (!(v > 0)) { setErro('Informe o valor pago.'); return; }
     if (precisaDre && !dre) { setErro('Escolha a classificação DRE.'); return; }
+    if (avisos.length && motivo.trim().length < 3) { setErro('Escreva o motivo para dar baixa mesmo assim.'); return; }
     setSalvando(true); setErro(null);
     const { data: r, error } = await invokeWithAuth<{ error?: string }>('financial-write', {
-      body: { action: 'pay_bill', tenant_id: tenantId, payload: { id: conta.id, paid_date: dia, paid_amount: v, payment_method: forma, ...(precisaDre ? toPayload(dre) ?? {} : {}) } },
+      body: { action: 'pay_bill', tenant_id: tenantId, payload: { id: conta.id, paid_date: dia, paid_amount: v, payment_method: forma, ...(precisaDre ? toPayload(dre) ?? {} : {}), ...(avisos.length ? { motivo_aviso: motivo.trim() } : {}) } },
     });
-    const falha = error?.message ?? r?.error ?? null;
     setSalvando(false);
+    if ((error as { code?: string } | null)?.code === PRECISA_CONFIRMAR) { setAvisos(avisosDaMensagem(error!.message)); return; }
+    const falha = error?.message ?? r?.error ?? null;
     if (falha) setErro(String(falha)); else onFeito();
   };
   const campo = 'h-8 px-2 rounded-lg border border-zinc-200 bg-white text-xs focus:outline-none focus:border-violet-400';
@@ -1085,9 +1091,10 @@ function BaixaConta({ conta, tenantId, saldo, hoje, onCancelar, onFeito }: {
         </label>
       </div>
       {precisaDre && <DreClassificacaoSelect value={dre} onChange={setDre} categorias={[]} />}
+      <AvisoAntesDePagar avisos={avisos} motivo={motivo} onMotivo={setMotivo} compacto />
       {erro && <p className="text-[11px] text-red-600">{erro}</p>}
       <div className="flex gap-1.5">
-        <button type="submit" disabled={salvando} className={PRINCIPAL}>{salvando ? 'Salvando…' : <><i className="ri-check-line" /> Confirmar baixa</>}</button>
+        <button type="submit" disabled={salvando} className={PRINCIPAL}>{salvando ? 'Salvando…' : <><i className="ri-check-line" /> {avisos.length ? 'Dar baixa mesmo assim' : 'Confirmar baixa'}</>}</button>
         <button type="button" onClick={onCancelar} disabled={salvando} className={NEUTRO}>Cancelar</button>
       </div>
     </form>

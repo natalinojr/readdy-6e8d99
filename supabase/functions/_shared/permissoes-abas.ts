@@ -8,6 +8,8 @@
 export const FIN_ABAS = [
   { aba: 'visao', key: 'fin_visao', label: 'Visão Geral' },
   { aba: 'trilha', key: 'fin_trilha', label: 'Trilha das despesas' },
+  // Pagamentos — em que pé está (2026-10-06): por tipo (fixas, mercadoria, à vista, pessoas, avulsos).
+  { aba: 'pagamentos', key: 'fin_pagamentos', label: 'Pagamentos — em que pé está' },
   { aba: 'receitas', key: 'fin_receitas', label: 'Receitas' },
   { aba: 'ifood', key: 'fin_ifood', label: 'iFood' },
   { aba: 'despesas', key: 'fin_despesas', label: 'Despesas' },
@@ -87,7 +89,7 @@ export const REL_KEYS: RelPermissaoKey[] = REL_ABAS.map((a) => a.key);
  *  DAS/INSS/FGTS). O dono tira ou põe aba em Configurações › Permissões. */
 export const FIN_KEYS_CONTABILIDADE: FinPermissaoKey[] = [
   'fin_guias', 'fin_rh', 'fin_dre', 'fin_receitas', 'fin_despesas', 'fin_trilha',
-  'fin_pagar', 'fin_contas_vencidas', 'fin_notas_entrada',
+  'fin_pagar', 'fin_contas_vencidas', 'fin_notas_entrada', 'fin_pagamentos',
 ];
 
 const CFG_POR_ABA: Record<string, CfgPermissaoKey> = Object.fromEntries(CFG_ABAS.map((a) => [a.aba, a.key]));

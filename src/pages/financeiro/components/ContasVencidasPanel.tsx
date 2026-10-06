@@ -7,6 +7,7 @@ import { formatCurrency } from '@/lib/formatters';
 import DreClassificacaoSelect, { precisaClassificarDRE, useDreEscolha } from '@/pages/financeiro/components/DreClassificacaoSelect';
 import { rotuloImpactoMargem } from '@/lib/impactoMargem';
 import { KpiCard, Segmented } from './dreUi';
+import AvisoAntesDePagar, { avisosDaMensagem, PRECISA_CONFIRMAR, type AvisoPagar } from '@/components/feature/pagamentos/AvisoAntesDePagar';
 
 interface ContaVencida {
   id: string;
@@ -83,6 +84,10 @@ export default function ContasVencidasPanel() {
   const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [payingId, setPayingId] = useState<string | null>(null);
   const [payModal, setPayModal] = useState<ContaVencida | null>(null);
+  const [payAvisos, setPayAvisos] = useState<AvisoPagar[]>([]);
+  const [payMotivo, setPayMotivo] = useState('');
+  // Outra conta no modal: começa sem aviso (o servidor diz de novo, se houver).
+  useEffect(() => { setPayAvisos([]); setPayMotivo(''); }, [payModal?.id]);
   const [payForm, setPayForm] = useState({ paid_date: today, paid_amount: '', payment_method: 'Dinheiro' });
   const [payDre, setPayDre] = useState('');
   const { toPayload: dreToPayload } = useDreEscolha();
@@ -245,8 +250,10 @@ export default function ContasVencidasPanel() {
     setPayingId(payModal.id);
     setPayError(null);
     try {
+      if (payAvisos.length && payMotivo.trim().length < 3) { setPayError('Escreva o motivo para pagar mesmo assim.'); return; }
       await pay(payModal.id, payForm.paid_date, valor, payForm.payment_method,
-        precisaClassificarDRE(payModal) ? dreToPayload(payDre) : undefined);
+        precisaClassificarDRE(payModal) ? dreToPayload(payDre) : undefined, null,
+        payAvisos.length ? payMotivo.trim() : undefined);
       const restante = Math.max(0, Number(payModal.amount ?? 0) - Number(payModal.paid_amount ?? 0) - valor);
       // Pagamento parcial mantém a conta na lista (ainda vencida e em aberto)
       if (restante < 0.005) {
@@ -258,6 +265,8 @@ export default function ContasVencidasPanel() {
       }
       setPayModal(null);
     } catch (err) {
+      // Aviso antes de pagar (2026-10-06): mostra o porquê e pede o motivo, sem fechar o modal.
+      if ((err as { code?: string }).code === PRECISA_CONFIRMAR) { setPayAvisos(avisosDaMensagem((err as Error).message)); return; }
       setPayError(err instanceof Error ? err.message : 'Erro ao registrar o pagamento');
     } finally {
       setPayingId(null);
@@ -652,6 +661,7 @@ export default function ContasVencidasPanel() {
                   ))}
                 </select>
               </div>
+              <AvisoAntesDePagar avisos={payAvisos} motivo={payMotivo} onMotivo={setPayMotivo} />
               {payError && (
                 <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-start gap-2">
                   <i className="ri-error-warning-line text-red-500 mt-0.5 flex-shrink-0" />

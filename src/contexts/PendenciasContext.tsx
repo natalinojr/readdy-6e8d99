@@ -74,6 +74,11 @@ export const KIND_CONFIG: Record<string, { label: string; icone: string; corBg: 
   // Cancelamento/desconto/sangria altos (2026-10-05): um cartão por loja e dia, gerado pelo audit-write.
   fique_de_olho: { label: 'Fique de olho', icone: 'ri-eye-line', corBg: 'bg-amber-100', corTexto: 'text-amber-800' },
   insumo_antes_do_pico: { label: 'Vai acabar hoje', icone: 'ri-timer-flash-line', corBg: 'bg-orange-100', corTexto: 'text-orange-700' },
+  // Financeiro › Pagamentos (2026-10-06): contas fixas e a pergunta "chegou a mercadoria?" à loja.
+  fixa_nao_chegou: { label: 'Conta fixa não chegou', icone: 'ri-repeat-line', corBg: 'bg-amber-100', corTexto: 'text-amber-800' },
+  fixa_chegou: { label: 'Conta fixa', icone: 'ri-repeat-line', corBg: 'bg-sky-100', corTexto: 'text-sky-700' },
+  mercadoria_chegou: { label: 'Chegou a mercadoria?', icone: 'ri-truck-line', corBg: 'bg-orange-100', corTexto: 'text-orange-700' },
+  pacote_semana: { label: 'Pacote da semana', icone: 'ri-stack-line', corBg: 'bg-emerald-100', corTexto: 'text-emerald-700' },
 };
 // Quem vê o quê: a regra mora em supabase/functions/_shared/pendencia-visivel.ts (a tela Hoje e o
 // servidor usam a mesma).

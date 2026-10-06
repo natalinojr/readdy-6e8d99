@@ -9,6 +9,7 @@ import {
 } from './api';
 import { fmtBRL, type AcoesTrilha } from './comum';
 import { supabase } from '@/lib/supabase';
+import AvisoAntesDePagar, { type AvisoPagar } from '@/components/feature/pagamentos/AvisoAntesDePagar';
 
 const msgErro = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const BTN = 'text-xs px-3 py-1.5 rounded-lg font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed';
@@ -64,6 +65,9 @@ export function PagarConta({ conta, boleto, fornecedor, acoes, onFechar }: { con
   const [pay, setPay] = useState<PagamentoInter | null>(null);
   const [pin, setPin] = useState('');
   const [erro, setErro] = useState<string | null>(null);
+  // Aviso antes de pagar (2026-10-06): vem no cartão do pagamento preparado; pede o motivo antes do PIN.
+  const [motivo, setMotivo] = useState('');
+  const avisos = (pay as { avisos?: AvisoPagar[] } | null)?.avisos ?? [];
   const saldo = Number(conta.amount || 0) - Number(conta.paid_amount || 0);
   const dias = diasAtraso(String(conta.due_date ?? ''), acoes.hoje);
 
@@ -79,9 +83,10 @@ export function PagarConta({ conta, boleto, fornecedor, acoes, onFechar }: { con
   const pagar = async () => {
     if (!pay) return;
     if (!/^\d{4,8}$/.test(pin)) { setErro('O PIN tem de 4 a 8 números.'); return; }
+    if (avisos.length && motivo.trim().length < 3) { setErro('Escreva o motivo para pagar mesmo assim.'); return; }
     setErro(null); setFase('enviando');
     try {
-      const out = await assistente<{ payment: PagamentoInter }>('pay', { id: pay.id, op: 'ok', pin });
+      const out = await assistente<{ payment: PagamentoInter }>('pay', { id: pay.id, op: 'ok', pin, ...(avisos.length ? { motivo_aviso: motivo.trim() } : {}) });
       setPay(out.payment);
       setFase(['rejected', 'failed', 'expired'].includes(out.payment.status) ? 'falhou' : 'feito');
       if (!['rejected', 'failed', 'expired'].includes(out.payment.status)) await acoes.concluir(`Pagou ${conta.supplier ?? conta.description ?? 'a conta'} pelo Inter`);
@@ -122,6 +127,7 @@ export function PagarConta({ conta, boleto, fornecedor, acoes, onFechar }: { con
             {pay.face_value != null && Math.abs(Number(pay.face_value) - Number(pay.amount)) > 0.009 && <span className="text-[11px] font-normal text-zinc-500"> (o boleto diz {fmtBRL(Number(pay.face_value))}; a diferença é {Number(pay.amount) < Number(pay.face_value) ? 'desconto por pagar em dia' : 'multa e juros'})</span>}
           </p>
           {pay.beneficiary_name && <p className="text-[11px] text-zinc-500">Para: {pay.beneficiary_name}</p>}
+          <AvisoAntesDePagar avisos={avisos} motivo={motivo} onMotivo={setMotivo} compacto />
           <label className="block text-[11px] font-semibold text-zinc-600">Confirme com o seu PIN</label>
           <input type="password" inputMode="numeric" autoComplete="one-time-code" autoFocus maxLength={8} value={pin} disabled={fase === 'enviando'}
             onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setErro(null); }}

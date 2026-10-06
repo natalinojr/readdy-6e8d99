@@ -25,6 +25,8 @@ interface DRECat {
   created_at: string;
   /** Categoria do sistema (impostos, pessoal, taxas): renomeia e muda de grupo, não exclui. */
   system_key?: string | null;
+  /** Conta fixa (2026-10-06): tudo classificado aqui acontece todo mês — Financeiro › Pagamentos espera. */
+  todo_mes?: boolean;
   children?: DRECat[];
 }
 
@@ -225,7 +227,7 @@ function papelDoGrupo(key: string) {
   return { label: 'Subtrai do resultado', cls: 'bg-rose-50 text-rose-600', title: 'Contas a pagar e itens de compra classificados aqui entram como despesa na DRE.' };
 }
 
-const emptyForm = { name: '', group_type: 'expense', parent_id: '' };
+const emptyForm = { name: '', group_type: 'expense', parent_id: '', todo_mes: false };
 const emptyGroupForm = { key: '', label: '', icon: 'ri-folder-line' };
 
 export default function CategoriasDRETab() {
@@ -308,6 +310,7 @@ export default function CategoriasDRETab() {
       name: '',
       group_type: parent?.group_type ?? 'expense',
       parent_id: parent?.id ?? '',
+      todo_mes: false,
     });
     setShowModal(true);
   };
@@ -315,7 +318,7 @@ export default function CategoriasDRETab() {
   const openEdit = (cat: DRECat) => {
     setEditing(cat);
     setSaveError(null);
-    setForm({ name: cat.name, group_type: cat.group_type, parent_id: cat.parent_id ?? '' });
+    setForm({ name: cat.name, group_type: cat.group_type, parent_id: cat.parent_id ?? '', todo_mes: !!cat.todo_mes });
     setShowModal(true);
   };
 
@@ -393,6 +396,7 @@ export default function CategoriasDRETab() {
       name: form.name,
       group_type: form.group_type,
       parent_id: form.parent_id || null,
+      todo_mes: form.todo_mes,
       sort_order: editing
         ? editing.sort_order
         : cats.filter(c => c.group_type === form.group_type).length,
@@ -573,7 +577,7 @@ export default function CategoriasDRETab() {
   const novaNoGrupo = (g: string) => {
     setEditing(null);
     setSaveError(null);
-    setForm({ name: '', group_type: g, parent_id: '' });
+    setForm({ name: '', group_type: g, parent_id: '', todo_mes: false });
     setShowModal(true);
   };
 
@@ -948,6 +952,16 @@ export default function CategoriasDRETab() {
                     Esta será uma subcategoria de: <strong>{cats.find(c => c.id === form.parent_id)?.name}</strong>
                   </p>
                 </div>
+              )}
+
+              {form.group_type !== 'revenue' && (
+                <label className="flex items-start gap-2 rounded-lg border border-zinc-200 p-3 cursor-pointer">
+                  <input type="checkbox" checked={form.todo_mes} onChange={e => setForm(f => ({ ...f, todo_mes: e.target.checked }))} className="mt-0.5" />
+                  <span className="text-sm text-zinc-700">
+                    <b>Acontece todo mês</b> (conta fixa)
+                    <span className="block text-xs text-zinc-400">O sistema passa a esperar todo mês as contas classificadas aqui (e nas subcategorias) e avisa quando não chegam. Veja em Financeiro › Pagamentos.</span>
+                  </span>
+                </label>
               )}
 
               {saveError && (

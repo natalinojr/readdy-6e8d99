@@ -28,6 +28,7 @@ import {
   previsaoPico, acabamAntesDoPico, textoPico, diaOperacao, horaOperacao, somarDias, CAIXA_DIAS, type TextoAviso, type PicoCelula,
 } from '../_shared/previsao.ts';
 import { PAPEL_DO_BANCO, DONO_EMAIL } from '../_shared/pendencia-visivel.ts';
+import { pacoteDaSemana, type CaixaLoja, type AvisoPagar } from '../_shared/pacote-semana.ts';
 import { situacaoPlano, descreverFrequencia, type PlanoContagem } from '../_shared/estoque-planos.ts';
 import { decidirAvisoEstoque, resumoEstoque, painelEstoque, ROTA_COMPRAR, type InsumoCritico } from '../_shared/estoque-aviso.ts';
 import { contagemDaLoja, insumosDaSituacao, papeisDaPessoa, precisaSituacao, rotinaDeHoje, type DadosRotina, type EstadoItem } from '../_shared/rotina.ts';
@@ -1493,7 +1494,204 @@ async function pilotoEPorcoes(admin: SupabaseClient, tenants: Array<{ id: string
 // propósito: um alerta recorrente silenciado para sempre por um toque é o mesmo buraco de
 // antes com outro nome. Elas fecham sozinhas quando a condição passa, e quem quiser calar
 // de vez usa "Não vou fazer", que grava o motivo.
+// ── Contas fixas (2026-10-06, Financeiro › Pagamentos) ────────────────────────────────────────────
+// Mesma regra da aba (fn_contas_fixas): conta fixa = categoria do DRE marcada "todo mês".
+//   fixa_nao_chegou  passou do dia em que costuma chegar e a conta não veio (uma por conta fixa e mês)
+//   fixa_chegou      chegou e ainda vence (dono: "avisar desde que chega"); no dia de vencer quem
+//                    assume é "Vence hoje"/"Conta atrasada", e conta sem o código do boleto fica com
+//                    "Falta o boleto" — sem dois cartões da mesma conta.
+// Antes, a conta fixa "sem documento" (Pix fixo, sem boleto) é criada sozinha (fn_contas_fixas_gerar).
+const ddmmDe = (ymd: string) => `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}`;
+// deno-lint-ignore no-explicit-any
+async function syncContasFixas(admin: SupabaseClient, t: { id: string; name: string }) {
+  try {
+    await db()`select public.fn_contas_fixas_gerar(${t.id}::uuid)`;
+    const [{ j }] = await db()<Array<{ j: any[] }>>`select public.fn_contas_fixas(array[${t.id}::uuid], null) j`;
+    const hoje = localDate();
+    const { data: semBoleto } = await admin.from('pendencias').select('ref')
+      .eq('tenant_id', t.id).eq('kind', 'boleto_faltando').in('status', ['aberta', 'vista']);
+    const temPendBoleto = new Set((semBoleto ?? []).map((r) => String(r.ref)));
+    const vivasNao = new Set<string>();
+    const vivasChegou = new Set<string>();
+    for (const f of (j ?? [])) {
+      if (f.confirmar) continue;
+      const nome = `${f.categoria} — ${f.nome}`;
+      if (f.estado === 'atrasada_chegar') {
+        const ref = `${f.categoria_id}:${f.chave}:${String(f.mes).slice(0, 7)}`;
+        vivasNao.add(ref);
+        const dia = Math.min(Number(f.dia_vence ?? 28), 28);
+        const vence = `${hoje.slice(0, 8)}${String(dia).padStart(2, '0')}`;
+        await admin.rpc('fn_pendencia_upsert', {
+          p_tenant: t.id, p_kind: 'fixa_nao_chegou', p_ref: ref,
+          p_titulo: `Ainda não chegou: ${nome}`.slice(0, 200),
+          p_detalhe: f.so_extrato
+            ? `Conta fixa que costuma ser paga por volta do dia ${f.dia_vence}, sem conta lançada antes. Se é sempre assim, marque "sem documento" em Financeiro › Pagamentos e o sistema lança sozinho.`
+            : `Conta fixa que costuma chegar até o dia ${f.dia_chega} e vencer dia ${f.dia_vence}. Peça a conta ou marque "não vem este mês".`,
+          p_payload: { valor: f.media, vencimento: ddmmDe(vence), vencida: vence < hoje, categoria_id: f.categoria_id, chave: f.chave, nome: f.nome, mes: f.mes },
+          p_rota: '/financeiro?tab=pagamentos&ver=fixas', p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'cron', p_reabrir: false,
+        });
+      }
+      if (f.estado === 'a_pagar') {
+        for (const c of (f.contas ?? [])) {
+          if (c.status === 'paid' || !c.vence || c.vence <= hoje || temPendBoleto.has(String(c.id))) continue;
+          vivasChegou.add(String(c.id));
+          const saldo = Number(c.valor) - Number(c.pago ?? 0);
+          const fora = f.fora_pct != null ? ` · ${Math.abs(f.fora_pct)}% ${f.fora_pct > 0 ? 'acima' : 'abaixo'} da média` : '';
+          await admin.rpc('fn_pendencia_upsert', {
+            p_tenant: t.id, p_kind: 'fixa_chegou', p_ref: String(c.id),
+            p_titulo: `Chegou: ${nome} — ${brl(saldo)}${fora}`.slice(0, 200),
+            p_detalhe: f.fora_pct != null
+              ? `Conta fixa. Veio ${Math.abs(f.fora_pct)}% ${f.fora_pct > 0 ? 'acima' : 'abaixo'} da média dos últimos meses (${brl(f.media)}). Confira antes de pagar.`
+              : `Conta fixa. Vence ${ddmmDe(String(c.vence))}.`,
+            p_payload: { valor: saldo, vencimento: ddmmDe(String(c.vence)), vencida: false, bill_id: c.id, fora_pct: f.fora_pct, media: f.media },
+            p_rota: '/financeiro?tab=pagamentos&ver=fixas', p_urgencia: f.fora_pct != null ? 'alta' : 'normal',
+            p_acao_requerida: true, p_origem: 'cron', p_reabrir: false,
+          });
+        }
+      }
+    }
+    for (const [kind, vivas, motivo] of [['fixa_nao_chegou', vivasNao, 'a conta chegou (ou não vem)'], ['fixa_chegou', vivasChegou, 'paga, vencendo ou sem boleto']] as const) {
+      const { data: abertas } = await admin.from('pendencias').select('ref').eq('tenant_id', t.id).eq('kind', kind).in('status', ['aberta', 'vista']);
+      for (const r of abertas ?? []) {
+        if (vivas.has(String(r.ref))) continue;
+        await admin.rpc('fn_pendencia_resolver_ref', { p_tenant: t.id, p_kind: kind, p_ref: r.ref, p_motivo: motivo });
+      }
+    }
+  } catch (e) {
+    log('WARN', 'contas fixas', { loja: t.name, error: errMsg(e) });
+  }
+}
+
+// ── "Chegou a mercadoria?" (2026-10-06) ───────────────────────────────────────────────────────────
+// Nota de mercadoria emitida há 20h+ e ninguém confirmou a entrega no Receber mercadoria: pergunta à
+// loja (Líder/Supervisor na Hoje + celular, uma vez por nota). Pagar antes de chegar é o risco que o dono
+// quer evitar; quem confirma é quem recebe. Fecha sozinha quando a entrega é confirmada.
+// deno-lint-ignore no-explicit-any
+async function syncMercadoriaChegou(admin: SupabaseClient, t: { id: string; name: string }, ownerId: string) {
+  try {
+    const itens = await db()<Array<{ tipo: string; id: string; forn: string; num: string | null; data: string; valor: number }>>`
+      select 'compra' tipo, p.id::text, coalesce(p.supplier, 'Fornecedor') forn, p.invoice_number num, p.purchase_date::text data, p.total_amount::float valor
+        from fin_purchases p
+       where p.tenant_id = ${t.id} and p.delivery_confirmed_at is null and not coalesce(p.is_bonus, false)
+         and p.invoice_number is not null
+         and p.purchase_date >= (now() at time zone 'America/Sao_Paulo')::date - 20
+         and p.created_at < now() - interval '20 hours'
+      union all
+      select 'nota', d.id::text, coalesce(d.emitente_nome, 'Fornecedor'), d.numero::text, (d.emitted_at at time zone 'America/Sao_Paulo')::date::text, d.valor_total::float
+        from fiscal_inbound_documents d
+       where d.tenant_id = ${t.id} and d.status = 'new' and d.modelo = 55 and d.sefaz_status is distinct from 2
+         and d.emitted_at >= now() - interval '20 days' and d.emitted_at < now() - interval '20 hours'`;
+    const { data: antes } = await admin.from('pendencias').select('ref, status, payload')
+      .eq('tenant_id', t.id).eq('kind', 'mercadoria_chegou');
+    const antigo = new Map((antes ?? []).map((r) => [String(r.ref), r]));
+    // A nota lançada vira compra (ref muda de nota:… para compra:…): não avisa a loja duas vezes.
+    const jaAvisadas = new Set((antes ?? []).filter((r) => r.payload?.avisado === true && r.payload?.numero)
+      .map((r) => String(r.payload.numero)));
+    const vivas = new Set<string>();
+    for (const m of itens) {
+      const ref = `${m.tipo}:${m.id}`;
+      vivas.add(ref);
+      const ja = antigo.get(ref);
+      if (ja && ['resolvida', 'descartada'].includes(String(ja.status))) continue;
+      const avisado = ja?.payload?.avisado === true || (!!m.num && jaAvisadas.has(String(m.num)));
+      const titulo = `Chegou a mercadoria da ${m.forn}?`.slice(0, 200);
+      const corpo = `NF ${m.num ?? '?'} de ${ddmmDe(m.data)} (${brl(m.valor)}). Ninguém confirmou a entrega no Receber mercadoria.`;
+      let push = avisado;
+      if (!avisado) {
+        const r = await avisarNoCelular(t.id, 'mercadoria_chegou', titulo, corpo, {} as PrevCfg,
+          { ownerId, dono: false, papeis: ['supervisao', 'gerente'], enviar: true });
+        push = r.enviado;
+      }
+      await admin.rpc('fn_pendencia_upsert', {
+        p_tenant: t.id, p_kind: 'mercadoria_chegou', p_ref: ref, p_titulo: titulo,
+        p_detalhe: `${corpo} Se chegou, confira pelo Receber; se não chegou, não pague ainda.`,
+        p_payload: { valor: m.valor, tipo: m.tipo, id: m.id, numero: m.num, emitida: m.data, avisado: push },
+        p_rota: `/receber?abrir=${ref}`, p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'cron', p_reabrir: false,
+      });
+    }
+    for (const r of antes ?? []) {
+      if (vivas.has(String(r.ref)) || !['aberta', 'vista'].includes(String(r.status))) continue;
+      await admin.rpc('fn_pendencia_resolver_ref', { p_tenant: t.id, p_kind: 'mercadoria_chegou', p_ref: r.ref, p_motivo: 'entrega confirmada' });
+    }
+  } catch (e) {
+    log('WARN', 'mercadoria chegou?', { loja: t.name, error: errMsg(e) });
+  }
+}
+
+// ── Pacote da semana (2026-10-06) ────────────────────────────────────────────────────────────────
+// No dia de pagar (asst_settings.pagamentos.dia_de_pagar, escolhido em Financeiro › Pagamentos), um cartão
+// por loja com o que dá para pagar de uma vez (boleto/Pix guardado, sem aviso). Mesma regra da tela
+// (_shared/pacote-semana.ts). Fecha quando acaba o que pagar ou o dia passa.
+// deno-lint-ignore no-explicit-any
+async function syncPacoteSemana(admin: SupabaseClient, t: { id: string; name: string }, diaDePagar: number | null) {
+  try {
+    const hoje = localDate();
+    const ehDia = diaDePagar != null && new Date(`${hoje}T12:00:00Z`).getUTCDay() === diaDePagar;
+    let prontas = 0;
+    if (ehDia) {
+      const [{ j }] = await db()<Array<{ j: any }>>`select public.fn_pagamentos(array[${t.id}::uuid]) j`;
+      const p = pacoteDaSemana((j?.caixa ?? []) as CaixaLoja[], (j?.avisos ?? {}) as Record<string, AvisoPagar[]>, hoje, diaDePagar as number);
+      prontas = p.prontas.length;
+      if (prontas > 0) {
+        const extra = [p.comAviso.length ? `${p.comAviso.length} com aviso para olhar uma por uma` : null,
+          p.semJeito.length ? `${p.semJeito.length} sem boleto ainda` : null].filter(Boolean).join('; ');
+        await admin.rpc('fn_pendencia_upsert', {
+          p_tenant: t.id, p_kind: 'pacote_semana', p_ref: hoje,
+          p_titulo: `Pacote da semana: ${prontas} ${prontas === 1 ? 'conta' : 'contas'} — ${brl(p.total)}`,
+          p_detalhe: `Dia de pagar: tudo que vence até ${ddmmDe(p.ate)} e tem boleto guardado, sem aviso. Um PIN paga todas.${extra ? ` Fora do pacote: ${extra}.` : ''}`,
+          p_payload: { valor: p.total, total: prontas, vencimento: ddmmDe(hoje), vencida: false },
+          p_rota: '/financeiro?tab=pagamentos&ver=pacote', p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'cron', p_reabrir: false,
+        });
+      }
+    }
+    const { data: abertas } = await admin.from('pendencias').select('ref').eq('tenant_id', t.id).eq('kind', 'pacote_semana').in('status', ['aberta', 'vista']);
+    for (const r of abertas ?? []) {
+      if (ehDia && r.ref === hoje && prontas > 0) continue;
+      await admin.rpc('fn_pendencia_resolver_ref', { p_tenant: t.id, p_kind: 'pacote_semana', p_ref: r.ref, p_motivo: r.ref === hoje ? 'pacote pago' : 'passou o dia de pagar' });
+    }
+  } catch (e) {
+    log('WARN', 'pacote da semana', { loja: t.name, error: errMsg(e) });
+  }
+}
+
+// ── Resumo da semana: o que foi pago mesmo com aviso (2026-10-06) ───────────────────────────────────
+// Segunda de manhã, ao dono: cada pagamento feito com aviso (mercadoria não chegou etc.), o motivo dado e
+// o que aconteceu depois (a mercadoria chegou?). Se é sempre o mesmo fornecedor/loja, o problema é processo.
+// deno-lint-ignore no-explicit-any
+async function resumoAvisosSemana(admin: SupabaseClient, cfg: Record<string, any>, ownerChat: string | null): Promise<unknown> {
+  if (!ownerChat) return null;
+  const hoje = localDate();
+  if (new Date(`${hoje}T12:00:00Z`).getUTCDay() !== 1) return null;
+  if (!inWindow('08:00', localHHMM(), 3)) return null;
+  if (cfg.last_resumo_avisos === hoje) return null;
+  await admin.from('asst_settings').upsert({ key: 'last_resumo_avisos', value: hoje, updated_at: new Date().toISOString() });
+  const linhas = await db()<Array<{ loja: string; nome: string; valor: number; motivo: string; tipos: string; quando: string; chegou: string | null }>>`
+    select t.name loja, coalesce(nullif(a.supplier, ''), a.description, 'Conta') nome, a.amount::float valor, v.motivo,
+           (select string_agg(distinct x->>'tipo', ',') from jsonb_array_elements(v.avisos) x) tipos,
+           to_char(v.created_at at time zone 'America/Sao_Paulo', 'DD/MM') quando,
+           to_char(p.delivery_confirmed_at at time zone 'America/Sao_Paulo', 'DD/MM') chegou
+      from fin_pagamento_avisos v
+      join tenants t on t.id = v.tenant_id
+      left join fin_accounts_payable a on a.id = v.bill_id
+      left join fin_purchases p on p.id = coalesce(v.purchase_id, case when a.reference_type = 'purchase' then a.reference_id end)
+     where v.created_at >= now() - interval '7 days'
+     order by v.created_at`;
+  if (!linhas.length) return { enviado: false, motivo: 'nenhum pagamento com aviso' };
+  const TIPO: Record<string, string> = { nao_chegou: 'não tinha chegado', chegou_diferente: 'chegou diferente', valor_maior: 'cobrava mais do que chegou', valor_fora: 'valor fora do normal', pago_antes: 'parecia já paga', no_inter: 'já tinha Pix no Inter' };
+  const itens = linhas.map((l) => {
+    const porque = String(l.tipos ?? '').split(',').map((x) => TIPO[x] ?? x).join(', ');
+    const depois = String(l.tipos ?? '').includes('nao_chegou') ? (l.chegou ? ` → chegou em ${l.chegou}` : ' → *ainda não chegou*') : '';
+    return `• ${l.loja} — ${l.nome} ${brl(l.valor)} (${l.quando}): ${porque}. Motivo: "${l.motivo}"${depois}`;
+  });
+  const texto = `*Pagamentos feitos com aviso na última semana: ${linhas.length}*\n${itens.join('\n')}`;
+  await deliver(ownerChat, texto, '/financeiro?tab=pagamentos');
+  await admin.from('asst_messages').insert({ channel: 'cron', chat_id: ownerChat, role: 'assistant', content: texto, topic: 'avisos' });
+  return { enviado: true, n: linhas.length };
+}
+
 async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id: string; name: string }>, ownerId: string) {
+  const { data: cfgPag } = await admin.from('asst_settings').select('value').eq('key', 'pagamentos').maybeSingle();
+  const diaDePagar = Number.isInteger(cfgPag?.value?.dia_de_pagar) ? Number(cfgPag?.value?.dia_de_pagar) : null;
   for (const t of tenants) {
     try {
       // Regra única do estoque (2026-10-03, insumo_abaixo_minimo): com aviso ligado, mínimo > 0 e
@@ -1675,6 +1873,10 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
           p_tenant: t.id, p_kind: 'nota_nao_lancada', p_ref: 'pendentes', p_motivo: 'notas conferidas',
         });
       }
+
+      await syncContasFixas(admin, t);
+      await syncMercadoriaChegou(admin, t, ownerId);
+      await syncPacoteSemana(admin, t, diaDePagar);
 
       if (ownerId) {
         const [tar] = await db()<Array<{ n: number }>>`
@@ -2629,6 +2831,7 @@ Deno.serve(async (req) => {
   try { result.brief_sent = await morningBrief(admin, cfg, ownerChat); } catch (e) { result.brief_error = errMsg(e); log('ERROR', 'brief', { error: errMsg(e) }); }
   try { const rg = await resumoGrupos(admin, cfg, ownerChat); if (rg) { result.resumo_grupos = rg; log('INFO', 'resumo dos grupos', { grupos: rg }); } } catch (e) { result.resumo_grupos_error = errMsg(e); log('ERROR', 'resumo dos grupos', { error: errMsg(e) }); }
   try { const bd = await bomDiaEquipe(admin, cfg); if (bd) { result.bom_dia_equipe = bd; log('INFO', 'bom dia equipe', { bd }); } } catch (e) { result.bom_dia_equipe_error = errMsg(e); log('ERROR', 'bom_dia_equipe', { error: errMsg(e) }); }
+  try { const ra = await resumoAvisosSemana(admin, cfg, ownerChat); if (ra) { result.resumo_avisos = ra; log('INFO', 'resumo dos pagamentos com aviso', { ra }); } } catch (e) { log('ERROR', 'resumo avisos', { error: errMsg(e) }); }
   try { result.warmed = await keepWarm(admin, cfg); } catch (e) { result.warm_error = errMsg(e); log('ERROR', 'warm', { error: errMsg(e) }); }
   if (aCada5) try { const pr = await proactive(admin, cfg, ownerChat); if (Object.keys(pr).length) result.proactive = pr; } catch (e) { result.proactive_error = errMsg(e); log('ERROR', 'proactive', { error: errMsg(e) }); }
   try { const pw = await payWatch(admin); if (pw) result.pay_watch = pw; } catch (e) { result.pay_watch_error = errMsg(e); log('ERROR', 'pay_watch', { error: errMsg(e) }); }

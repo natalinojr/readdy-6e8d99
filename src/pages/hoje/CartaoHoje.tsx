@@ -33,7 +33,9 @@ const semPrefixo = (t: string) => t.replace(/^Falta o boleto:\s*/, '');
 const SEM_DESCARTE = new Set(['folha_a_pagar', 'boleto_faltando', 'aprovacao', 'pedido_pagamento', 'pedido_pagamento_pagar', 'pagamento_grupo', 'pagamento_pendente',
   'compra_pelo_celular', 'sangria_sem_cupom', 'sangria_nao_saiu', 'sangria_valor_diferente', 'recebimento_sem_nota', 'boleto_email',
   // Avisos antes de virar problema (2026-10-03): saem por "Ciente"/"Já comprei" ou fecham sozinhos.
-  'vendas_abaixo_ritmo', 'caixa_nao_cobre', 'insumo_antes_do_pico']);
+  'vendas_abaixo_ritmo', 'caixa_nao_cobre', 'insumo_antes_do_pico',
+  // Financeiro › Pagamentos (2026-10-06): saem por pagar/dar baixa, "não vem este mês" ou "ainda não chegou".
+  'fixa_chegou', 'fixa_nao_chegou', 'mercadoria_chegou', 'pacote_semana']);
 
 /** Contas (em aberto, sem boleto) que as pendências "Falta o boleto" cobrem: para a foto do boleto. */
 const contasDe = (ps: PendHoje[]) => ps.map((x) => x.payload?.bill_id).filter((b): b is string => typeof b === 'string');
@@ -167,6 +169,35 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
     // Fecha sozinho quando o saldo volta a cobrir; "Ciente" tira daqui até amanhã (se ainda não cobrir).
     add('ver', <button onClick={() => abrir(t, '/financeiro?tab=painel')} className={PRINCIPAL}><i className="ri-calendar-check-line" /> Ver o que vence</button>);
     add('ok', <button disabled={ocupado} onClick={() => rodar(() => marcar(p.id, 'resolvida', 'ciente pela tela Hoje'))} className={LINK}>Ciente — me lembre amanhã</button>);
+  } else if (p.kind === 'fixa_chegou' && bill) {
+    // Conta fixa que chegou (2026-10-06): o dono paga com PIN pelo chat (o cartão do pagamento mostra os
+    // avisos e pede o motivo); o financeiro dá baixa se já pagou por fora.
+    if (dono) add('pagar', <button onClick={() => pedirAoChat({ tipo: 'pagar_conta', billId: bill })} className={PRINCIPAL}><i className="ri-lock-2-line" /> Pagar</button>);
+    if (financeiro) add('baixa', <button onClick={() => alternar('baixa')} className={dono ? SECUNDARIO : PRINCIPAL}>
+      <i className="ri-check-double-line" /> {aberto === 'baixa' ? 'Fechar' : 'Já paguei — dar baixa'}
+    </button>);
+    add('ver', <button onClick={() => abrir(t, '/financeiro?tab=pagamentos&ver=fixas')} className={LINK}>Ver contas fixas</button>);
+  } else if (p.kind === 'fixa_nao_chegou') {
+    const cat = typeof p.payload?.categoria_id === 'string' ? p.payload.categoria_id : null;
+    const chave = typeof p.payload?.chave === 'string' ? p.payload.chave : null;
+    add('ver', <button onClick={() => abrir(t, '/financeiro?tab=pagamentos&ver=fixas')} className={PRINCIPAL}><i className="ri-repeat-line" /> Ver a conta fixa</button>);
+    if (financeiro && cat && chave) add('naovem', <button disabled={ocupado} className={SECUNDARIO} onClick={() => rodar(async () => {
+      const { error } = await supabase.rpc('fn_conta_fixa_marcar', {
+        p_tenant: t, p_categoria: cat, p_chave: chave, p_nome: String(p.payload?.nome ?? chave), p_acao: 'nao_vem_mes',
+        p_dados: { mes: p.payload?.mes ?? null, motivo: 'pela tela Hoje' },
+      });
+      if (error) throw new Error(error.message);
+      await marcar(p.id, 'resolvida', 'não vem este mês');
+    })}><i className="ri-calendar-close-line" /> Não vem este mês</button>);
+  } else if (p.kind === 'pacote_semana') {
+    // Dia de pagar (2026-10-06): o pacote abre em Financeiro › Pagamentos, onde um PIN paga todas.
+    add('ver', <button onClick={() => abrir(t, '/financeiro?tab=pagamentos&ver=pacote')} className={PRINCIPAL}><i className="ri-stack-line" /> Ver o pacote</button>);
+  } else if (p.kind === 'mercadoria_chegou') {
+    // Pergunta à loja (2026-10-06): quem recebe confere pelo Receber mercadoria; "ainda não" cala até amanhã.
+    add('sim', <button onClick={() => abrir(t, p.rota ?? '/receber')} className={PRINCIPAL}><i className="ri-truck-line" /> Chegou — conferir</button>);
+    add('nao', <button disabled={ocupado} onClick={() => rodar(() => marcar(p.id, 'vista', 'ainda não chegou (tela Hoje)'))} className={SECUNDARIO}>
+      <i className="ri-time-line" /> Ainda não chegou
+    </button>);
   } else if (p.kind === 'insumo_antes_do_pico') {
     // Fecha sozinho quando a entrada é registrada (o estoque passa a chegar ao pico) ou o pico passa.
     add('ver', <button onClick={() => abrir(t, '/estoque')} className={PRINCIPAL}><i className="ri-shopping-cart-2-line" /> Ver o que comprar</button>);

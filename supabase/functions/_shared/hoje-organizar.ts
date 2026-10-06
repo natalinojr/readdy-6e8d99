@@ -156,6 +156,14 @@ function blocoDe(p: PendHoje, hoje: string): { bloco: Bloco; pedidoHaDias?: numb
     if (prazo && diasEntre(hoje, prazo) <= DIAS_ANTES) return { bloco: 'agora' };
     return { bloco: 'espera' };
   }
+  // "Chegou a mercadoria?" respondido "ainda não": sai do "agora" e fica em "pode esperar" até chegar.
+  if (p.kind === 'mercadoria_chegou' && p.status === 'vista') return { bloco: 'espera' };
+  // Conta fixa que chegou (2026-10-06): avisa desde que chega, mas só vira "agora" perto de vencer.
+  if (p.kind === 'fixa_chegou') {
+    const prazo = prazoDe(p, hoje);
+    if (p.urgencia === 'alta' || (prazo && diasEntre(hoje, prazo) <= DIAS_ANTES)) return { bloco: 'agora' };
+    return { bloco: 'espera' };
+  }
   if (ACUMULADO.has(p.kind)) return { bloco: 'em_dia' };
   if (AVISO.has(p.kind) || !p.acaoRequerida) return { bloco: 'espera' };
   return { bloco: 'agora' };

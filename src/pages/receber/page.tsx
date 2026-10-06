@@ -149,6 +149,16 @@ export default function ReceberPage() {
     setTela('conferir');
   };
 
+  // Link "Chegou a mercadoria da X?" (pendência da Hoje / aviso no celular, 2026-10-06): ?abrir=nota:<id> ou
+  // ?abrir=compra:<id> abre direto a conferência daquela nota/compra.
+  useEffect(() => {
+    const m = /^(nota|compra):([0-9a-f-]{36})$/i.exec(params.get('abrir') ?? '');
+    if (!m || !tenantId || !podeReceber) return;
+    setParams({}, { replace: true });
+    void abrir(m[1].toLowerCase() as 'nota' | 'compra', m[2]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params, tenantId, podeReceber]);
+
   // ── Código de barras da DANFE / QR do cupom ────────────────────────────────
   const buscarCodigo = async (codigo: string) => {
     carregando('Procurando a nota…');

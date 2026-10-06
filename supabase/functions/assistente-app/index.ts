@@ -193,7 +193,17 @@ function payCard(p: any) {
     status, status_label: PAY_STATUS[status] ?? status, error: p.error ?? null,
     created_at: p.created_at, paid_at: p.paid_at ?? null, has_bill: !!p.bill_id,
     recebido: null as boolean | null, recebido_em: null as string | null,
+    // Aviso antes de pagar (2026-10-06, fn_aviso_pagar): o cartão mostra e pede o motivo antes do PIN.
+    avisos: [] as Array<{ tipo: string; texto: string }>,
   };
+}
+
+/** Avisos antes de pagar das contas (fn_aviso_pagar) — mesma regra da baixa no financial-write. */
+async function avisosDasContas(admin: SupabaseClient, billIds: string[]): Promise<Record<string, Array<{ tipo: string; texto: string }>>> {
+  if (!billIds.length) return {};
+  const { data, error } = await admin.rpc('fn_aviso_pagar', { p_bill_ids: billIds });
+  if (error) { log('WARN', 'avisos antes de pagar', { error: error.message }); return {}; }
+  return (data ?? {}) as Record<string, Array<{ tipo: string; texto: string }>>;
 }
 
 // Mercadoria já chegou? (dono, 2026-09-18: "informar se o produto já foi recebido"). Pagamento →
@@ -201,8 +211,11 @@ function payCard(p: any) {
 // (Pix avulso, serviço) fica null e o cartão não diz nada.
 // deno-lint-ignore no-explicit-any
 async function payCards(admin: SupabaseClient, rows: any[]) {
-  const cards = rows.map(payCard);
   const billIds = [...new Set(rows.map((r) => r.bill_id).filter(Boolean).map(String))];
+  // Avisos só para o que ainda vai ser pago (rascunho esperando o PIN).
+  const avisos = await avisosDasContas(admin, [...new Set(rows.filter((r) => r.bill_id && ['draft', 'awaiting_pin'].includes(String(r.status)))
+    .map((r) => String(r.bill_id)))]);
+  const cards = rows.map((r) => ({ ...payCard(r), avisos: r.bill_id ? (avisos[String(r.bill_id)] ?? []) : [] }));
   if (!billIds.length) return cards;
   const { data: bills } = await admin.from('fin_accounts_payable').select('id, reference_type, reference_id').in('id', billIds);
   const compraDaConta = new Map((bills ?? []).filter((b) => b.reference_type === 'purchase' && b.reference_id).map((b) => [String(b.id), String(b.reference_id)]));
@@ -480,6 +493,21 @@ Deno.serve(async (req) => {
     }
 
     // PIN de pagamento: criar/trocar aqui (o /pin do Telegram saiu em 2026-09-26). Troca exige o atual.
+    // Financeiro › Pagamentos (2026-10-06): dia de pagar da semana (0 = domingo … 6 = sábado; null = sem
+    // dia). No dia, a Hoje mostra o "Pacote da semana" (assistente-cron). Sem `dia_de_pagar` no body: só lê.
+    if (action === 'pagamentos_config') {
+      const { data: atual } = await admin.from('asst_settings').select('value').eq('key', 'pagamentos').maybeSingle();
+      const cfgPag = (atual?.value ?? {}) as Record<string, unknown>;
+      if ('dia_de_pagar' in body) {
+        const d = body.dia_de_pagar;
+        if (d !== null && !(Number.isInteger(d) && Number(d) >= 0 && Number(d) <= 6)) return fail('Dia inválido.');
+        const novo = { ...cfgPag, dia_de_pagar: d };
+        await admin.from('asst_settings').upsert({ key: 'pagamentos', value: novo, updated_at: nowIso() });
+        return json({ success: true, data: novo });
+      }
+      return json({ success: true, data: cfgPag });
+    }
+
     if (action === 'pin_status') {
       const { data, error } = await admin.rpc('fn_pay_pin_status');
       if (error) throw new Error(error.message);
@@ -605,6 +633,15 @@ Deno.serve(async (req) => {
       // app reconhece "PIN errado" e pede o PIN digitado).
       const pin = String(body.pin ?? '').trim();
 
+      // Aviso antes de pagar (dono, 2026-10-06): não bloqueia, mas exige o motivo — o cartão mostra os
+      // avisos e só libera o PIN com o motivo escrito. Fica registrado (resumo semanal ao dono).
+      const avisosConta = p.bill_id ? ((await avisosDasContas(admin, [String(p.bill_id)]))[String(p.bill_id)] ?? []) : [];
+      const motivoAviso = String(body.motivo_aviso ?? '').trim();
+      if (avisosConta.length && motivoAviso.length < 3) {
+        return json({ success: false, code: 'precisa_confirmar', avisos: avisosConta,
+          error: `Antes de pagar: ${avisosConta.map((a) => a.texto).join(' · ')} Escreva o motivo para pagar mesmo assim.` }, 409);
+      }
+
       // execute_payment faz o claim atômico (draft/awaiting_pin → sending): dois toques não pagam 2×.
       // deno-lint-ignore no-explicit-any
       let pago: any = p;
@@ -617,6 +654,12 @@ Deno.serve(async (req) => {
         const { data: cur } = await admin.from('fin_inter_payments').select('*').eq('id', p.id).maybeSingle();
         pago = { ...(cur ?? p), error: cur?.error ?? errMsg(e) };
         if (!cur) pago.status = 'failed';
+      }
+      if (avisosConta.length && !['failed', 'draft', 'awaiting_pin'].includes(String(pago.status))) {
+        await admin.from('fin_pagamento_avisos').insert({
+          tenant_id: p.tenant_id, bill_id: p.bill_id, avisos: avisosConta, motivo: motivoAviso.slice(0, 500),
+          canal: body.lote === true ? 'lote' : 'inter', user_id: user.id,
+        });
       }
       // Pago na hora (raro: normalmente fica aguardando a aprovação no app do Inter e o
       // assistente-cron › pay_watch cuida do resto): comprovante no grupo + baixa já agora.

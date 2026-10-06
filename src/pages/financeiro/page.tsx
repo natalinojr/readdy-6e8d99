@@ -26,6 +26,7 @@ import FreelancersTab from './components/FreelancersTab';
 import EntregadoresTab from './components/EntregadoresTab';
 import GuiasTab from './components/GuiasTab';
 import TrilhaTab from './components/TrilhaTab';
+import PagamentosTab from './components/pagamentos/PagamentosTab';
 import PainelFinTab from './components/PainelFinTab';
 import LancarFinanceiroModal from './components/LancarFinanceiroModal';
 import { OQueAconteceu } from '@/components/feature/lancar';
@@ -35,6 +36,7 @@ const TABS = [
   { id: 'painel', label: 'Painel', icon: 'ri-dashboard-3-line' },
   { id: 'visao', label: 'Visão Geral', icon: 'ri-dashboard-line' },
   { id: 'trilha', label: 'Trilha', icon: 'ri-route-line' },
+  { id: 'pagamentos', label: 'Pagamentos', icon: 'ri-wallet-3-line' },
   { id: 'receitas', label: 'Receitas', icon: 'ri-arrow-down-circle-line' },
   { id: 'ifood', label: 'iFood', icon: 'ri-restaurant-2-line' },
   { id: 'despesas', label: 'Despesas', icon: 'ri-pie-chart-2-line' },
@@ -60,7 +62,7 @@ const TABS = [
 // Nenhuma aba sai; ids e links (?tab=) continuam os mesmos.
 const GRUPOS = [
   { id: 'inicio', label: 'Início', icon: 'ri-home-5-line', abas: ['painel', 'visao', 'trilha'] },
-  { id: 'pagar', label: 'Pagar', icon: 'ri-bill-line', abas: ['pagar', 'contas-vencidas', 'guias', 'rh', 'entregadores'] },
+  { id: 'pagar', label: 'Pagar', icon: 'ri-bill-line', abas: ['pagamentos', 'pagar', 'contas-vencidas', 'guias', 'rh', 'entregadores'] },
   { id: 'receber', label: 'Receber', icon: 'ri-arrow-down-circle-line', abas: ['receitas', 'receber', 'ifood'] },
   { id: 'bancos', label: 'Bancos', icon: 'ri-bank-line', abas: ['bancos', 'conciliacao', 'fluxo'] },
   { id: 'compras', label: 'Compras', icon: 'ri-shopping-cart-2-line', abas: ['compras', 'notas-entrada', 'itens', 'orcamentos'] },
@@ -296,6 +298,7 @@ export default function FinanceiroPage() {
         {activeTab === 'painel' && <PainelFinTab onIrAba={setActiveTab} />}
         {activeTab === 'visao' && <VisaoGeralFinTab />}
         {activeTab === 'trilha' && <TrilhaTab />}
+        {activeTab === 'pagamentos' && <PagamentosTab />}
         {activeTab === 'receitas' && <ReceitasTab />}
         {activeTab === 'ifood' && <IfoodTab />}
         {activeTab === 'despesas' && <DespesasTab />}
