@@ -110,8 +110,8 @@ export default function RealizadoProjetadoTab() {
           supabase.from('fin_cash_flow').select('date, amount, type').eq('tenant_id', t).eq('fora_do_caixa', false).gte('date', start).lte('date', end).range(from, to)),
         fetchAllRows<{ transaction_date: string; amount: number; transaction_type: string; status: string; reconciled: boolean; source?: string | null }>((from, to) =>
           supabase.from('fin_bank_statement_imports').select('transaction_date, amount, transaction_type, status, reconciled, source').eq('tenant_id', t).gte('transaction_date', start).lte('transaction_date', end).range(from, to)),
-        fetchAllRows<{ due_date: string; amount: number; paid_amount: number | null; status: string }>((from, to) =>
-          supabase.from('fin_accounts_payable').select('due_date, amount, paid_amount, status').eq('tenant_id', t).gte('due_date', start).lte('due_date', end).range(from, to)),
+        fetchAllRows<{ due_date: string; amount: number; paid_amount: number | null; status: string; reference_type: string | null; reference_id: string | null }>((from, to) =>
+          supabase.from('fin_accounts_payable').select('due_date, amount, paid_amount, status, reference_type, reference_id').eq('tenant_id', t).gte('due_date', start).lte('due_date', end).range(from, to)),
         fetchAllRows<{ due_date: string; amount: number; status: string }>((from, to) =>
           supabase.from('fin_receivable_installments').select('due_date, amount, status').eq('tenant_id', t).gte('due_date', start).lte('due_date', end).range(from, to)),
         supabase.from('hr_payroll').select('net_salary, status, reference_month').eq('tenant_id', t).gte('reference_month', minRef).lte('reference_month', maxRef),
@@ -145,7 +145,8 @@ export default function RealizadoProjetadoTab() {
       (ap.rows ?? []).forEach((r) => {
         const b = at(r.due_date); if (!b) return;
         if (r.status === 'cancelled') return;
-        b.saiPrev += Number(r.amount);
+        // Conta gerada pela folha (2026-10-05): a saída prevista já vem do hr_payroll abaixo.
+        if (!(r.reference_type === 'hr_payroll' && r.reference_id)) b.saiPrev += Number(r.amount);
         const restante = Number(r.amount) - Number(r.paid_amount ?? 0);
         if (r.due_date < today && restante > 0.005 && ['pending', 'partial', 'overdue'].includes(r.status)) { vencidasAbertas += restante; vencidasAbertasCount++; }
       });

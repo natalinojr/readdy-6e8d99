@@ -401,6 +401,8 @@ export default function PrevisaoCaixaTab() {
         // são as mais urgentes. Na base da loja, 100% das contas em aberto
         // estavam em 'overdue' e a projeção mostrava saída ZERO.
         .in('status', ['pending', 'partial', 'overdue'])
+        // Conta gerada pela folha (2026-10-05): a folha pendente já entra abaixo pelo hr_payroll.
+        .or('reference_type.is.null,reference_type.neq.hr_payroll,reference_id.is.null')
         .lte('due_date', endDateStr),
 
       supabase
