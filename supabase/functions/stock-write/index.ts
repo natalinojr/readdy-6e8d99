@@ -370,6 +370,17 @@ Deno.serve({ verify_jwt: false }, async (req) => {
         }
       }
 
+      // Preço automático (2026-10-06): fn_upsert_ingredient grava o preço que a tela mandou, e a tela pode estar com
+      // o preço velho (R$ 0 de antes do vínculo) — editar fornecedor/mínimo apagava o preço vindo das notas
+      // (Chope Pilsen). Insumo que não é "manual" volta ao custo das notas a cada salvamento; sem compra, não mexe.
+      if (val(price_source, 'price_source', 'manual') !== 'manual') {
+        const idSalvo = (rpcData as Record<string, unknown> | null)?.id ?? id;
+        if (idSalvo) {
+          const { error: precoErr } = await admin.rpc('fn_ingredient_apply_purchase_cost', { p_tenant: tenantId, p_ingredient: idSalvo });
+          if (precoErr) console.error('[stock-write] upsert_ingredient preço automático:', extractErrorMessage(precoErr));
+        }
+      }
+
       return new Response(JSON.stringify({ data: rpcData }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
