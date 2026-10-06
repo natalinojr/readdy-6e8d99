@@ -3,18 +3,18 @@
 // valor fora…) fica separado para olhar uma por uma. Regra: _shared/pacote-semana.ts (a mesma do cartão da Hoje).
 import { useMemo, useState } from 'react';
 import { assistente } from '../trilha/api';
-import { caixaDaLoja, DIAS_SEMANA, pacoteDaSemana, type AvisoPagar, type CaixaLoja } from '@/lib/pagamentos';
+import { caixaDaLoja, DIAS_SEMANA, pacoteDaSemana, type AvisoPagar, type CaixaLoja, type EnviadoInter } from '@/lib/pagamentos';
 import { AcoesPagar, brl, Cartao, ddmm, Pilula, PRINCIPAL, Secao, Vazio } from './comum';
 
 interface PagamentoInter { id: string; status: string; status_label?: string; error?: string | null; amount?: number }
 type Resultado = { id: string; nome: string; ok: boolean; texto: string };
 
 interface Props {
-  caixa: CaixaLoja[]; avisos: Record<string, AvisoPagar[]>; hoje: string; mostrarLoja: boolean;
+  caixa: CaixaLoja[]; avisos: Record<string, AvisoPagar[]>; inter: EnviadoInter[]; hoje: string; mostrarLoja: boolean;
   dono: boolean; financeiro: boolean; diaDePagar: number | null; onDia: (d: number | null) => Promise<void>; onMudou: () => void;
 }
 
-export default function PacoteView({ caixa, avisos, hoje, mostrarLoja, dono, financeiro, diaDePagar, onDia, onMudou }: Props) {
+export default function PacoteView({ caixa, avisos, inter, hoje, mostrarLoja, dono, financeiro, diaDePagar, onDia, onMudou }: Props) {
   const dia = diaDePagar ?? new Date(`${hoje}T12:00:00Z`).getUTCDay();
   const p = useMemo(() => pacoteDaSemana(caixa, avisos, hoje, dia), [caixa, avisos, hoje, dia]);
   const [fora, setFora] = useState<Set<string>>(new Set());
@@ -86,6 +86,24 @@ export default function PacoteView({ caixa, avisos, hoje, mostrarLoja, dono, fin
           )}
         </div>
       </Cartao>
+
+      {inter.length > 0 && (
+        <Secao titulo="Enviado ao Inter — falta você aprovar no app" n={inter.length} tom="amber"
+          dica="Abra o app do Inter › Aprovações e libere. Sem isso o pagamento não sai. Não pague de novo: a conta sai da lista quando o banco confirmar.">
+          <Cartao>
+            <div className="divide-y divide-zinc-100">
+              {inter.map((x) => (
+                <div key={x.id} className="py-2 flex items-center gap-3 text-sm">
+                  <Pilula tom="amber">{x.tipo === 'pix' ? 'Pix' : 'Boleto'}</Pilula>
+                  <span className="flex-1 min-w-0 truncate"><b>{x.para ?? 'Pagamento'}</b>{mostrarLoja ? <span className="text-zinc-500"> · {x.loja}</span> : null}
+                    <span className="text-zinc-500"> · enviado {new Date(x.enviado_em).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: 'America/Sao_Paulo' })}</span></span>
+                  <span className="tabular-nums font-semibold">{brl(Number(x.valor))}</span>
+                </div>
+              ))}
+            </div>
+          </Cartao>
+        </Secao>
+      )}
 
       {/* Dinheiro × o que vence (régua do aviso "Caixa da semana") */}
       <div className="grid gap-2 md:grid-cols-2">

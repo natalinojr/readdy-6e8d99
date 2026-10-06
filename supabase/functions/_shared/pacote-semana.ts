@@ -5,7 +5,18 @@ import { caixaDaSemana, type Caixa } from './previsao.ts';
 
 export interface AvisoPagar { tipo: string; texto: string }
 
-export interface ContaAbertaCaixa { id: string; nome: string; descricao: string | null; valor: number; vencimento: string; tem_boleto: boolean; origem: string | null; parcial?: boolean }
+export interface ContaAbertaCaixa {
+  id: string; nome: string; descricao: string | null; valor: number; vencimento: string; tem_boleto: boolean; origem: string | null;
+  parcial?: boolean;
+  /** tipo da aba Pagamentos (fixa, mercadoria, pessoas, outras) */
+  tipo?: string;
+  /** fora do pacote: freela/salário/pedido têm caminho próprio (fn_pagamentos) */
+  fora_pacote?: boolean;
+  /** já tem pagamento enviado ao Inter esperando aprovação */
+  no_inter?: boolean;
+  boleto_pedido_em?: string | null;
+  tenant_id?: string; loja?: string;
+}
 export interface CaixaLoja { tenant_id: string; loja: string; no_banco: number; n_bancos: number; contas: ContaAbertaCaixa[] }
 
 /** Mesma régua do aviso "Caixa da semana" (previsao.ts): vencidas + próximos 7 dias contra o saldo. */
@@ -45,7 +56,10 @@ export function pacoteDaSemana(caixas: CaixaLoja[], avisos: Record<string, Aviso
   for (const c of caixas) {
     for (const x of c.contas) {
       if (x.vencimento > ate || !(Number(x.valor) > 0.005)) continue;
-      if (['freelancer', 'hr_payroll', 'hr_beneficio'].includes(String(x.origem))) continue;
+      // freela, salário e pedido têm caminho próprio; já enviado ao Inter não vai de novo. Sem o campo (dado antigo):
+      // a regra de antes por origem.
+      if (x.fora_pacote ?? ['freelancer', 'hr_payroll', 'hr_beneficio'].includes(String(x.origem))) continue;
+      if (x.no_inter) continue;
       const base = { ...x, valor: Number(x.valor), tenant_id: c.tenant_id, loja: c.loja };
       const av = avisos[x.id] ?? [];
       if (av.length) p.comAviso.push({ ...base, avisos: av });

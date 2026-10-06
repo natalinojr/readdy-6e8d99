@@ -3,13 +3,15 @@
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { chamarAssistente } from '@/lib/assistenteApp';
 import type {
-  AvisoPagar, Avulso, CaixaLoja, CompraOnline, ContaFixa, Mercadoria, NotaSemCompra, Pessoa,
+  AvisoPagar, Avulso, CaixaLoja, CompraOnline, ContaAberta, ContaFixa, EnviadoInter, Mercadoria, NotaSemCompra, Pessoa, Servico,
 } from '@/lib/pagamentos';
 
-export interface CompraVista { id: string; tenant_id: string; loja: string; fornecedor: string; data: string; valor: number; forma: string | null; itens: number; itens_ligados: number }
+export interface CompraVista { id: string; tenant_id: string; loja: string; fornecedor: string; data: string; valor: number; forma: string | null; itens: number; itens_ligados: number; esperando_extrato?: boolean }
 export interface DadosPagamentos {
-  mercadoria: Mercadoria[]; notas: NotaSemCompra[]; vista: CompraVista[]; pessoas: Pessoa[]; avulsos: Avulso[];
-  online: CompraOnline[]; caixa: CaixaLoja[]; avisos: Record<string, AvisoPagar[]>; hoje: string;
+  /** TODA conta a pagar em aberto, cada uma com um tipo — as seções saem daqui */
+  contas: ContaAberta[];
+  mercadoria: Mercadoria[]; notas: NotaSemCompra[]; servicos: Servico[]; vista: CompraVista[]; pessoas: Pessoa[]; avulsos: Avulso[];
+  online: CompraOnline[]; inter: EnviadoInter[]; caixa: CaixaLoja[]; avisos: Record<string, AvisoPagar[]>; hoje: string;
 }
 
 export interface LojaFin { tenantId: string; nome: string }
@@ -35,8 +37,9 @@ export async function carregarPagamentos(tenants: string[]): Promise<DadosPagame
   if (error) throw new Error(error.message);
   const d = (data ?? {}) as Partial<DadosPagamentos>;
   return {
-    mercadoria: d.mercadoria ?? [], notas: d.notas ?? [], vista: d.vista ?? [], pessoas: d.pessoas ?? [],
-    avulsos: d.avulsos ?? [], online: d.online ?? [], caixa: d.caixa ?? [], avisos: d.avisos ?? {}, hoje: d.hoje ?? '',
+    contas: d.contas ?? [], mercadoria: d.mercadoria ?? [], notas: d.notas ?? [], servicos: d.servicos ?? [], vista: d.vista ?? [],
+    pessoas: d.pessoas ?? [], avulsos: d.avulsos ?? [], online: d.online ?? [], inter: d.inter ?? [], caixa: d.caixa ?? [],
+    avisos: d.avisos ?? {}, hoje: d.hoje ?? '',
   };
 }
 

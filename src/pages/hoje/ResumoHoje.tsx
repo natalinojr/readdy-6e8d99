@@ -16,6 +16,8 @@ import { useIfoodDados } from '@/pages/ifood/lib/useIfoodDados';
 import { useBankAccounts } from '@/hooks/useFinanceiro';
 import { todayBrasilia, somarDias } from '@/lib/dateUtils';
 import FaturamentoHero from '@/pages/dashboard/components/FaturamentoHero';
+import { usePermissoes } from '@/hooks/usePermissoes';
+import { caixaDaSemana } from '../../../supabase/functions/_shared/previsao';
 
 const brl = (n: number) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -95,47 +97,57 @@ function IfoodOntemLinha({ tenantId, verDinheiro }: { tenantId: string; verDinhe
   );
 }
 
-/** Quanto tem no banco × quanto vence até a próxima semana (loja ativa). Só quem vê o financeiro. */
+/**
+ * Pagamentos na Hoje (2026-10-06, o dono: "na aba Hoje não deveria ter algo da página Pagamentos?"): quanto tem
+ * no banco × o que já venceu + vence em 7 dias (loja ativa). MESMA régua do "Dinheiro × o que vence" da aba
+ * Pagamentos e do aviso "Caixa da semana" (_shared/previsao.ts › caixaDaSemana) — antes era uma conta à parte e
+ * levava ao Painel. Toque abre Financeiro › Pagamentos. Só quem vê o financeiro.
+ */
 export function DinheiroHoje() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { hasPermissao } = usePermissoes();
   const { accounts, loading, error: erroBanco } = useBankAccounts();
-  const [devo, setDevo] = useState<{ vencidas: number; semana: number } | null>(null);
+  const [contasAbertas, setContasAbertas] = useState<Array<{ nome: string; valor: number; vencimento: string }> | null>(null);
   const [erroDevo, setErroDevo] = useState(false);
+  const hoje = todayBrasilia();
   useEffect(() => {
     if (!user?.tenantId) return;
-    setDevo(null); setErroDevo(false);
-    const hoje = todayBrasilia();
-    const em7 = somarDias(hoje, 7);
-    supabase.from('fin_accounts_payable').select('amount, paid_amount, due_date, status')
-      .eq('tenant_id', user.tenantId).in('status', ['pending', 'overdue', 'partial']).lte('due_date', em7).limit(1000)
+    setContasAbertas(null); setErroDevo(false);
+    supabase.from('fin_accounts_payable').select('supplier, description, amount, paid_amount, due_date')
+      .eq('tenant_id', user.tenantId).in('status', ['pending', 'overdue', 'partial']).lte('due_date', somarDias(todayBrasilia(), 7)).limit(1000)
       .then(({ data, error }) => {
         if (error) { setErroDevo(true); return; }
-        const resta = (b: { amount: number; paid_amount: number | null }) => Math.max(0, Number(b.amount) - Number(b.paid_amount ?? 0));
-        const linhas = (data ?? []) as Array<{ amount: number; paid_amount: number | null; due_date: string }>;
-        setDevo({
-          vencidas: linhas.filter((b) => b.due_date < hoje).reduce((s, b) => s + resta(b), 0),
-          semana: linhas.filter((b) => b.due_date >= hoje).reduce((s, b) => s + resta(b), 0),
-        });
+        setContasAbertas(((data ?? []) as Array<{ supplier: string | null; description: string | null; amount: number; paid_amount: number | null; due_date: string }>)
+          .map((b) => ({ nome: b.supplier || b.description || 'Conta', valor: Math.max(0, Number(b.amount) - Number(b.paid_amount ?? 0)), vencimento: b.due_date })));
       });
   }, [user?.tenantId]);
   const contas = accounts.filter((a) => a.is_active !== false);
   const noBanco = contas.reduce((s, a) => s + Number(a.synced_balance ?? a.current_balance ?? 0), 0);
-  const precisa = devo ? devo.vencidas + devo.semana : 0;
-  const daPara = devo != null && !loading && !erroBanco && noBanco >= precisa;
+  const cx = contasAbertas ? caixaDaSemana(noBanco, contasAbertas, hoje) : null;
+  const nVencidas = (contasAbertas ?? []).filter((c) => c.vencimento < hoje && c.valor > 0.005).length;
+  const destino = hasPermissao('fin_pagamentos') ? '/financeiro?tab=pagamentos' : '/financeiro';
   return (
-    <button onClick={() => navigate('/financeiro')}
-      className="w-full text-left rounded-2xl border border-zinc-200 bg-white p-4 grid grid-cols-2 gap-3 hover:border-zinc-300 cursor-pointer">
-      <div>
-        <p className="text-xs font-semibold text-zinc-500">No banco{user?.loja ? ` · ${user.loja}` : ''}</p>
-        <p className="text-lg font-bold text-zinc-900 tabular-nums mt-0.5">{loading ? '…' : erroBanco ? '—' : brl(noBanco)}</p>
-        <p className="text-[11px] text-zinc-400">{erroBanco ? 'não consegui ler o saldo' : contas.length === 1 ? contas[0].name : `${contas.length} contas`}</p>
-      </div>
-      <div>
-        <p className="text-xs font-semibold text-zinc-500">Vencidas + próximos 7 dias</p>
-        <p className="text-lg font-bold text-zinc-900 tabular-nums mt-0.5">{erroDevo ? '—' : devo ? brl(precisa) : '…'}</p>
-        {devo && devo.vencidas > 0 && <p className="text-[11px] text-red-600 font-semibold">{brl(devo.vencidas)} já venceram</p>}
-        {daPara && precisa > 0 && <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[11px] font-semibold"><i className="ri-check-line" />dá para pagar</span>}
+    <button onClick={() => navigate(destino)}
+      className="w-full text-left rounded-2xl border border-zinc-200 bg-white p-4 hover:border-zinc-300 cursor-pointer">
+      <p className="flex items-center justify-between text-xs font-bold text-zinc-700 mb-2">
+        <span><i className="ri-wallet-3-line text-amber-600" /> Pagamentos{user?.loja ? <span className="font-semibold text-zinc-400"> · {user.loja}</span> : null}</span>
+        <span className="text-[11px] font-semibold text-amber-700">Ver em que pé está <i className="ri-arrow-right-s-line" /></span>
+      </p>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <p className="text-xs font-semibold text-zinc-500">No banco</p>
+          <p className="text-lg font-bold text-zinc-900 tabular-nums mt-0.5">{loading ? '…' : erroBanco ? '—' : brl(noBanco)}</p>
+          <p className="text-[11px] text-zinc-400">{erroBanco ? 'não consegui ler o saldo' : contas.length === 1 ? contas[0].name : `${contas.length} contas`}</p>
+        </div>
+        <div>
+          <p className="text-xs font-semibold text-zinc-500">Vencidas + próximos 7 dias</p>
+          <p className="text-lg font-bold text-zinc-900 tabular-nums mt-0.5">{erroDevo ? '—' : cx ? brl(cx.precisa) : '…'}</p>
+          {cx && cx.vencidas > 0 && <p className="text-[11px] text-red-600 font-semibold">{nVencidas} {nVencidas === 1 ? 'vencida' : 'vencidas'} · {brl(cx.vencidas)}</p>}
+          {cx && !loading && !erroBanco && cx.precisa > 0 && (cx.cobre
+            ? <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[11px] font-semibold"><i className="ri-check-line" />dá para pagar</span>
+            : <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded-md bg-red-50 text-red-700 text-[11px] font-semibold"><i className="ri-error-warning-line" />faltam {brl(cx.falta)}</span>)}
+        </div>
       </div>
     </button>
   );

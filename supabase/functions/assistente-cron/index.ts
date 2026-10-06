@@ -1749,6 +1749,10 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
           from fin_accounts_payable
          where tenant_id = ${t.id} and status not in ('paid', 'cancelled')
            and not (reference_type = 'hr_payroll' and reference_id is not null)  -- folha: cartão "Folha a pagar"
+           -- compra "já paga por Pix/cartão na entrega" (Receber mercadoria): fica pendente só até o extrato — não é
+           -- conta atrasada nem a pagar (mesma regra da aba Pagamentos, tipo ja_paga)
+           and not (reference_type = 'purchase' and exists (select 1 from fin_purchases p
+                      where p.id = fin_accounts_payable.reference_id and p.notes ilike '%já paga %'))
            and due_date < (now() at time zone 'America/Sao_Paulo')::date`;
       if (atr.n > 0) {
         await admin.rpc('fn_pendencia_upsert', {
@@ -1772,6 +1776,10 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
           from fin_accounts_payable
          where tenant_id = ${t.id} and status not in ('paid', 'cancelled')
            and not (reference_type = 'hr_payroll' and reference_id is not null)  -- folha: cartão "Folha a pagar"
+           -- compra "já paga por Pix/cartão na entrega" (Receber mercadoria): fica pendente só até o extrato — não é
+           -- conta atrasada nem a pagar (mesma regra da aba Pagamentos, tipo ja_paga)
+           and not (reference_type = 'purchase' and exists (select 1 from fin_purchases p
+                      where p.id = fin_accounts_payable.reference_id and p.notes ilike '%já paga %'))
            and due_date = (now() at time zone 'America/Sao_Paulo')::date`;
       const refHoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
       if (hj.n > 0) {

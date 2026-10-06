@@ -12,7 +12,7 @@ interface Props {
   mostrarLoja: boolean; dono: boolean; financeiro: boolean; onMudou: () => void; irPara: (tenantId: string, rota: string) => void; tenantAtual: string | null;
 }
 
-const ORDEM: GrupoMerc[] = ['nao_pague', 'sem_boleto', 'pronta', 'paga'];
+const ORDEM: GrupoMerc[] = ['nao_pague', 'enviado', 'sem_boleto', 'pronta', 'cartao', 'paga'];
 
 export default function MercadoriaView({ compras, notas, avisos, mostrarLoja, dono, financeiro, onMudou, irPara, tenantAtual }: Props) {
   const porGrupo = new Map<GrupoMerc, Mercadoria[]>();
@@ -36,7 +36,9 @@ export default function MercadoriaView({ compras, notas, avisos, mostrarLoja, do
       )}
       {ORDEM.slice(1).map((g) => (porGrupo.get(g)?.length ? (
         <Secao key={g} titulo={GRUPO_MERC[g].titulo} n={porGrupo.get(g)!.length} tom={GRUPO_MERC[g].tom}
-          dica={g === 'sem_boleto' ? 'Chegou certo, mas o código do boleto ainda não está no sistema. O prazo muda a cada compra, então aqui é só aviso.' : undefined}>
+          dica={g === 'sem_boleto' ? 'O código do boleto ainda não está no sistema. O prazo muda a cada compra, então aqui é só aviso.'
+            : g === 'enviado' ? 'Já foi para o Inter: falta aprovar no app do Inter. Não pague de novo.'
+            : g === 'cartao' ? 'Comprada no cartão de crédito: sai na fatura do cartão, não precisa pagar à parte.' : undefined}>
           {porGrupo.get(g)!.map((c) => <CartaoCompra key={c.id} c={c} avisos={avisos} mostrarLoja={mostrarLoja} dono={dono} financeiro={financeiro} onMudou={onMudou} irPara={irPara} tenantAtual={tenantAtual} />)}
         </Secao>
       ) : null))}
@@ -74,7 +76,8 @@ function CartaoCompra({ c, avisos, mostrarLoja, dono, financeiro, onMudou, irPar
   const prox = abertas[0];
   const avisosDaCompra = [...new Map(abertas.flatMap((x) => avisos[x.id] ?? []).map((a) => [a.texto, a])).values()];
   const pill = g === 'nao_pague' ? (c.espera_chegar !== false && !c.chegou_em ? <Pilula tom="amber">Esperando chegar</Pilula> : c.diferente ? <Pilula tom="red">Chegou diferente</Pilula> : <Pilula tom="red">Com aviso</Pilula>)
-    : g === 'sem_boleto' ? <Pilula tom="amber">Sem boleto ainda</Pilula> : g === 'pronta' ? <Pilula tom="green">Tudo certo</Pilula> : <Pilula tom="zinc">Paga</Pilula>;
+    : g === 'sem_boleto' ? <Pilula tom="amber">Sem boleto ainda</Pilula> : g === 'pronta' ? <Pilula tom="green">Tudo certo</Pilula>
+    : g === 'enviado' ? <Pilula tom="amber">Enviado ao Inter</Pilula> : g === 'cartao' ? <Pilula tom="zinc">Cartão de crédito</Pilula> : <Pilula tom="zinc">Paga</Pilula>;
   return (
     <Cartao destaque={g === 'nao_pague' ? (c.chegou_em ? 'red' : 'amber') : undefined}>
       <div className="flex flex-wrap items-start gap-2">
@@ -91,7 +94,7 @@ function CartaoCompra({ c, avisos, mostrarLoja, dono, financeiro, onMudou, irPar
       {g !== 'paga' && (
         <div className="grid md:grid-cols-2 gap-2 mt-3">
           <Passos titulo="Mercadoria" quem="loja" nomes={['Nota emitida', 'Chegou', 'Conferida']} passos={t.mercadoria}
-            subs={[ddmm(c.emitida), c.chegou_em ? diaBR(c.chegou_em) : 'ninguém confirmou', c.diferente ? 'veio diferente' : null]} />
+            subs={[ddmm(c.emitida), c.chegou_em ? diaBR(c.chegou_em) : c.espera_chegar === false ? 'sem conferência' : 'ninguém confirmou', c.diferente ? 'veio diferente' : null]} />
           <Passos titulo="Dinheiro" quem="financeiro" nomes={['Virou compra', 'Conta a pagar', 'Pago']} passos={t.dinheiro}
             subs={[null, prox ? `vence ${ddmm(prox.vence)}${prox.boleto && !prox.tem_boleto ? ' · sem boleto' : ''}` : null, null]} />
         </div>
@@ -115,7 +118,7 @@ function CartaoCompra({ c, avisos, mostrarLoja, dono, financeiro, onMudou, irPar
           {!c.chegou_em && c.espera_chegar !== false && !c.bonus && (
             <button onClick={() => irPara(c.tenant_id, `/receber?abrir=compra:${c.id}`)} className={SECUNDARIO}><i className="ri-truck-line" /> Chegou — conferir</button>
           )}
-          {prox && (financeiro || dono) && (
+          {prox && (financeiro || dono) && g !== 'enviado' && g !== 'cartao' && (
             <AcoesPagar tenantId={c.tenant_id} billId={prox.id} dono={dono} financeiro={financeiro} onMudou={onMudou}
               rotuloPagar={g === 'nao_pague' ? 'Pagar mesmo assim…' : 'Pagar'} />
           )}

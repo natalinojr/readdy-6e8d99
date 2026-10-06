@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { DONO_EMAIL } from '../../../../../supabase/functions/_shared/pendencia-visivel';
-import { caixaDaLoja, grupoMercadoria, pacoteDaSemana, resumoFixas, type ContaFixa } from '@/lib/pagamentos';
+import { caixaDaLoja, grupoMercadoria, pacoteDaSemana, precisaAgora, resumoFixas, type ContaFixa, type ItemAgora, type TipoConta } from '@/lib/pagamentos';
 import {
   carregarFixas, carregarPagamentos, lerDiaDePagar, lojasDoFinanceiro, salvarDiaDePagar, type DadosPagamentos, type LojaFin,
 } from './api';
@@ -89,25 +89,41 @@ export default function PagamentosTab() {
   const avisos = dados?.avisos ?? {};
   const fixasMesAtual = mes === mesAtual ? fixas : [];
   const rf = resumoFixas(fixasMesAtual);
+  // Todas as contas em aberto, cada uma com UM tipo (fn_pagamentos.contas) — as seções saem daqui.
+  const contas = dados?.contas ?? [];
+  const aPagar = contas.filter((c) => c.tipo !== 'ja_paga');
+  const doTipo = (t: TipoConta) => aPagar.filter((c) => c.tipo === t);
+  const soma = (l: Array<{ valor: number }>) => l.reduce((x, c) => x + Number(c.valor), 0);
+  const vencidas = aPagar.filter((c) => c.vencimento < hoje);
+  const fixasAtrasadas = doTipo('fixa').filter((c) => c.vencimento < mesAtual);
   const merc = dados?.mercadoria ?? [];
   const gruposMerc = merc.map((m) => grupoMercadoria(m, avisos));
-  const naoPague = gruposMerc.filter((g) => g === 'nao_pague').length;
-  const prontas = gruposMerc.filter((g) => g === 'pronta').length;
-  const semBoleto = gruposMerc.filter((g) => g === 'sem_boleto').length;
-  const emAberto = merc.reduce((s, m) => s + m.contas.filter((c) => c.status !== 'paid').reduce((x, c) => x + Number(c.saldo), 0), 0);
+  const nGrupo = (g: string) => gruposMerc.filter((x) => x === g).length;
   const vista = dados?.vista ?? [];
   const vistaFaltam = vista.filter((c) => c.itens_ligados < c.itens).length;
+  const vistaEsperando = vista.filter((c) => c.esperando_extrato).length;
   const pessoas = dados?.pessoas ?? [];
-  const aPagarPessoas = pessoas.filter((p) => p.tipo === 'freela' || p.tipo === 'pedido_pagar');
+  const contasPessoas = doTipo('pessoas');
   const aprovar = pessoas.filter((p) => p.tipo === 'aprovar').length;
+  const folhaSemConta = pessoas.filter((p) => p.tipo === 'folha').length;
+  const outras = doTipo('outras');
   const avulsos = dados?.avulsos ?? [];
-  const vencidas = (dados?.caixa ?? []).flatMap((c) => c.contas).filter((c) => c.vencimento < hoje && Number(c.valor) > 0.005);
+  const servicos = dados?.servicos ?? [];
+  const inter = dados?.inter ?? [];
   const pacote = dados ? pacoteDaSemana(dados.caixa, avisos, hoje, diaDePagar ?? new Date(`${hoje}T12:00:00Z`).getUTCDay()) : null;
-
+  const agora = dados ? precisaAgora({
+    contas, mercadoria: merc, fixas: fixasMesAtual, avisos, notas: dados.notas, servicos, avulsos, pessoas, inter, hoje, mostrarLoja: todas,
+  }) : [];
+  // Selo de cada aba = o que pede ação nela (as mesmas coisas que vão para "Precisa de você agora")
+  const venceuOuHoje = (t: TipoConta) => doTipo(t).filter((c) => c.vencimento <= hoje && !c.no_inter).length;
   const contagem: Partial<Record<Ver, number>> = {
-    fixas: rf.urgentes + rf.naoChegaram + rf.confirmar,
-    mercadoria: naoPague + (dados?.notas.length ?? 0),
-    vista: vistaFaltam, pessoas: aPagarPessoas.length + aprovar, avulsos: avulsos.length,
+    geral: agora.length,
+    fixas: venceuOuHoje('fixa') + rf.naoChegaram + rf.confirmar,
+    mercadoria: venceuOuHoje('mercadoria') + nGrupo('nao_pague') + (dados?.notas.length ?? 0),
+    vista: vistaFaltam,
+    pessoas: venceuOuHoje('pessoas') + aprovar + folhaSemConta,
+    avulsos: venceuOuHoje('outras') + avulsos.length + servicos.length,
+    pacote: inter.length,
   };
   const ABAS: Array<{ id: Ver; label: string; icone: string }> = [
     { id: 'geral', label: 'Visão geral', icone: 'ri-dashboard-line' },
@@ -115,7 +131,7 @@ export default function PagamentosTab() {
     { id: 'mercadoria', label: 'Mercadoria a prazo', icone: 'ri-truck-line' },
     { id: 'vista', label: 'Compra à vista', icone: 'ri-hand-coin-line' },
     { id: 'pessoas', label: 'Pessoas', icone: 'ri-team-line' },
-    { id: 'avulsos', label: 'Avulsos', icone: 'ri-question-line' },
+    { id: 'avulsos', label: 'Avulsos e outras', icone: 'ri-question-line' },
     { id: 'pacote', label: 'Dia de pagar', icone: 'ri-stack-line' },
     { id: 'caminho', label: 'Caminho de cada tipo', icone: 'ri-route-line' },
   ];
@@ -158,44 +174,54 @@ export default function PagamentosTab() {
 
       {ver === 'geral' && (
         <div className="flex flex-col gap-4">
+          <ListaAgora itens={agora} carregando={carregando && !dados} irVer={(v) => irVer(v as Ver)} />
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <CartaoTipo icone="ri-repeat-line" cor="text-sky-700 bg-sky-50" titulo={`Contas fixas de ${new Date(`${mesAtual}T12:00:00Z`).toLocaleDateString('pt-BR', { month: 'long', timeZone: 'UTC' })}`}
               grande={rf.total ? `${rf.pagas} de ${rf.total} ${rf.pagas === 1 ? 'paga' : 'pagas'}` : 'Nenhuma ainda'} onAbrir={() => irVer('fixas')}
               linhas={[
+                fixasAtrasadas.length ? { tom: 'red', t: `${fixasAtrasadas.length} de mês anterior ainda em aberto — ${brl(soma(fixasAtrasadas))}` } : null,
                 rf.urgentes ? { tom: 'red', t: `${rf.urgentes} vencendo ou vencida${rf.urgentes > 1 ? 's' : ''}` } : null,
                 rf.naoChegaram ? { tom: 'amber', t: `${rf.naoChegaram} atrasada${rf.naoChegaram > 1 ? 's' : ''} para chegar: ${fixasMesAtual.filter((f) => f.estado === 'atrasada_chegar').map((f) => f.categoria.split(' › ').pop()).slice(0, 3).join(', ')}` } : null,
                 rf.aPagar ? { tom: 'zinc', t: `${rf.aPagar} chegaram e vencem mais pra frente` } : null,
                 rf.confirmar ? { tom: 'amber', t: `${rf.confirmar} para confirmar se é fixa` } : null,
-                !rf.total ? { tom: 'zinc', t: 'Marque as categorias que acontecem todo mês' } : null,
+                !rf.total && !fixasAtrasadas.length ? { tom: 'zinc', t: 'Marque as categorias que acontecem todo mês' } : null,
               ]} />
-            <CartaoTipo icone="ri-truck-line" cor="text-amber-700 bg-amber-50" titulo="Mercadoria a prazo" grande={`${brl(emAberto)} em aberto`} onAbrir={() => irVer('mercadoria')}
+            <CartaoTipo icone="ri-truck-line" cor="text-amber-700 bg-amber-50" titulo="Mercadoria a prazo" grande={`${brl(soma(doTipo('mercadoria')))} em aberto`} onAbrir={() => irVer('mercadoria')}
               linhas={[
-                naoPague ? { tom: 'red', t: `${naoPague} com aviso — não pague ainda` } : null,
+                venceuOuHoje('mercadoria') ? { tom: 'red', t: `${venceuOuHoje('mercadoria')} vencida${venceuOuHoje('mercadoria') > 1 ? 's' : ''} ou vencendo hoje` } : null,
+                nGrupo('nao_pague') ? { tom: 'red', t: `${nGrupo('nao_pague')} com aviso — não pague ainda` } : null,
                 dados?.notas.length ? { tom: 'amber', t: `${dados.notas.length} ${dados.notas.length > 1 ? 'notas ainda não viraram' : 'nota ainda não virou'} compra` } : null,
-                semBoleto ? { tom: 'amber', t: `${semBoleto} sem boleto ainda` } : null,
-                prontas ? { tom: 'green', t: `${prontas} chegaram certo — prontas para pagar` } : null,
+                nGrupo('enviado') ? { tom: 'amber', t: `${nGrupo('enviado')} enviada${nGrupo('enviado') > 1 ? 's' : ''} ao Inter, falta aprovar` } : null,
+                nGrupo('sem_boleto') ? { tom: 'amber', t: `${nGrupo('sem_boleto')} sem boleto ainda` } : null,
+                nGrupo('pronta') ? { tom: 'green', t: `${nGrupo('pronta')} prontas para pagar` } : null,
+                nGrupo('cartao') ? { tom: 'zinc', t: `${nGrupo('cartao')} no cartão de crédito (paga na fatura)` } : null,
               ]} />
-            <CartaoTipo icone="ri-hand-coin-line" cor="text-emerald-700 bg-emerald-50" titulo="Compra à vista (notinha)" grande={`${vista.length} em 30 dias, todas pagas`} onAbrir={() => irVer('vista')}
+            <CartaoTipo icone="ri-hand-coin-line" cor="text-emerald-700 bg-emerald-50" titulo="Compra à vista (notinha)" grande={`${vista.length} em 30 dias`} onAbrir={() => irVer('vista')}
               linhas={[
+                vistaEsperando ? { tom: 'zinc', t: `${vistaEsperando} paga${vistaEsperando > 1 ? 's' : ''} na entrega, esperando o extrato` } : null,
                 vistaFaltam ? { tom: 'amber', t: `${vistaFaltam} com item novo para ligar` } : { tom: 'green', t: 'Itens ligados' },
                 { tom: 'zinc', t: 'Não trava nada — só fica de lição' },
               ]} />
-            <CartaoTipo icone="ri-team-line" cor="text-violet-700 bg-violet-50" titulo="Pessoas" grande={`${brl(aPagarPessoas.reduce((s, p) => s + Number(p.valor), 0))} a pagar`} onAbrir={() => irVer('pessoas')}
+            <CartaoTipo icone="ri-team-line" cor="text-violet-700 bg-violet-50" titulo="Pessoas" grande={`${brl(soma(contasPessoas))} a pagar`} onAbrir={() => irVer('pessoas')}
               linhas={[
-                aPagarPessoas.filter((p) => p.tipo === 'freela').length ? { tom: 'red', t: `Diárias de ${aPagarPessoas.filter((p) => p.tipo === 'freela').length} freela${aPagarPessoas.filter((p) => p.tipo === 'freela').length > 1 ? 's' : ''} sem pagar` } : null,
+                venceuOuHoje('pessoas') ? { tom: 'red', t: `${venceuOuHoje('pessoas')} vencida${venceuOuHoje('pessoas') > 1 ? 's' : ''} ou vencendo hoje` } : null,
                 aprovar ? { tom: 'amber', t: `${aprovar} pedido${aprovar > 1 ? 's' : ''} esperando você aprovar` } : null,
-                pessoas.filter((p) => p.tipo === 'folha').length ? { tom: 'zinc', t: `${pessoas.filter((p) => p.tipo === 'folha').length} na folha pendente` } : null,
+                folhaSemConta ? { tom: 'amber', t: `${folhaSemConta} ${folhaSemConta > 1 ? 'salários pendentes' : 'salário pendente'} na folha` } : null,
+                contasPessoas.length ? { tom: 'zinc', t: `${contasPessoas.length} ${contasPessoas.length > 1 ? 'contas' : 'conta'}: freela, salário, benefício, reembolso, entregador` } : null,
               ]} />
-            <CartaoTipo icone="ri-question-line" cor="text-zinc-700 bg-zinc-100" titulo="Avulsos" grande={avulsos.length ? `${avulsos.length} sem explicação` : 'Tudo explicado'} onAbrir={() => irVer('avulsos')}
+            <CartaoTipo icone="ri-question-line" cor="text-zinc-700 bg-zinc-100" titulo="Avulsos e outras contas" grande={`${avulsos.length + servicos.length + outras.length} ${avulsos.length + servicos.length + outras.length === 1 ? 'item' : 'itens'}`} onAbrir={() => irVer('avulsos')}
               linhas={[
-                avulsos.length ? { tom: 'red', t: `${avulsos.length} saída${avulsos.length > 1 ? 's' : ''} do banco sem dizer o que foi — ${brl(avulsos.reduce((s, a) => s + Number(a.valor), 0))}` } : null,
+                avulsos.length ? { tom: 'red', t: `${avulsos.length} saída${avulsos.length > 1 ? 's' : ''} do banco sem dizer o que foi — ${brl(soma(avulsos))}` } : null,
+                servicos.length ? { tom: 'amber', t: `${servicos.length} nota${servicos.length > 1 ? 's' : ''} de serviço sem lançar — ${brl(soma(servicos))}` } : null,
+                outras.length ? { tom: venceuOuHoje('outras') ? 'red' : 'zinc', t: `${outras.length} outra${outras.length > 1 ? 's contas' : ' conta'} em aberto (lançada à mão, nota de despesa…) — ${brl(soma(outras))}` } : null,
                 dados?.online.length ? { tom: 'amber', t: `${dados.online.length} compra online esperando a nota` } : null,
               ]} />
             {pacote && (
               <CartaoTipo icone="ri-stack-line" cor="text-emerald-700 bg-emerald-50" titulo={diaDePagar != null ? 'Pacote do dia de pagar' : 'Próximos 7 dias'}
                 grande={`${pacote.prontas.length} prontas · ${brl(pacote.total)}`} onAbrir={() => irVer('pacote')}
                 linhas={[
-                  vencidas.length ? { tom: 'red', t: `${vencidas.length} ${vencidas.length === 1 ? 'conta vencida' : 'contas vencidas'} — ${brl(vencidas.reduce((x, c) => x + Number(c.valor), 0))}` } : null,
+                  vencidas.length ? { tom: 'red', t: `${vencidas.length} ${vencidas.length === 1 ? 'conta vencida' : 'contas vencidas'} no total — ${brl(soma(vencidas))}` } : null,
+                  inter.length ? { tom: 'amber', t: `${inter.length} enviado${inter.length > 1 ? 's' : ''} ao Inter, falta aprovar no app` } : null,
                   pacote.comAviso.length ? { tom: 'red', t: `${pacote.comAviso.length} com aviso, fora do pacote` } : null,
                   pacote.semJeito.length ? { tom: 'amber', t: `${pacote.semJeito.length} sem boleto nem Pix guardado` } : null,
                   ...(dados?.caixa ?? []).map((c) => {
@@ -205,23 +231,21 @@ export default function PagamentosTab() {
                 ]} />
             )}
           </div>
-
-          <ListaAgora fixas={fixasMesAtual} dados={dados} avisos={avisos} hoje={hoje} mostrarLoja={todas} irVer={irVer} />
         </div>
       )}
 
       {ver === 'fixas' && (
         <FixasView itens={fixas} carregando={carregando} tenantUnico={todas ? null : user?.tenantId ?? null} mostrarLoja={todas}
-          mes={mes} mesAtual={mesAtual} onMes={setMes} dono={dono} financeiro={financeiro} onMudou={recarregar} />
+          mes={mes} mesAtual={mesAtual} onMes={setMes} dono={dono} financeiro={financeiro} onMudou={recarregar} atrasadas={fixasAtrasadas} />
       )}
       {ver === 'mercadoria' && dados && (
         <MercadoriaView compras={dados.mercadoria} notas={dados.notas} avisos={avisos} mostrarLoja={todas} dono={dono} financeiro={financeiro} onMudou={recarregar} irPara={irPara} tenantAtual={user?.tenantId ?? null} />
       )}
       {ver === 'vista' && dados && <VistaView compras={dados.vista} mostrarLoja={todas} irPara={irPara} tenantAtual={user?.tenantId ?? null} onMudou={recarregar} />}
-      {ver === 'pessoas' && dados && <PessoasView pessoas={dados.pessoas} mostrarLoja={todas} dono={dono} financeiro={financeiro} onMudou={recarregar} irPara={irPara} />}
-      {ver === 'avulsos' && dados && <AvulsosView avulsos={dados.avulsos} online={dados.online} mostrarLoja={todas} irPara={irPara} />}
+      {ver === 'pessoas' && dados && <PessoasView pessoas={dados.pessoas} contas={contasPessoas} hoje={hoje} mostrarLoja={todas} dono={dono} financeiro={financeiro} onMudou={recarregar} irPara={irPara} />}
+      {ver === 'avulsos' && dados && <AvulsosView avulsos={dados.avulsos} online={dados.online} servicos={servicos} outras={outras} avisos={avisos} hoje={hoje} mostrarLoja={todas} dono={dono} financeiro={financeiro} onMudou={recarregar} irPara={irPara} />}
       {ver === 'pacote' && dados && (
-        <PacoteView caixa={dados.caixa} avisos={avisos} hoje={hoje} mostrarLoja={todas} dono={dono} financeiro={financeiro}
+        <PacoteView caixa={dados.caixa} avisos={avisos} inter={inter} hoje={hoje} mostrarLoja={todas} dono={dono} financeiro={financeiro}
           diaDePagar={diaDePagar} onDia={async (d) => { await salvarDiaDePagar(d); setDiaDePagar(d); }} onMudou={recarregar} />
       )}
       {ver === 'caminho' && <CaminhoView />}
@@ -245,54 +269,9 @@ function CartaoTipo({ icone, cor, titulo, grande, linhas, onAbrir }: { icone: st
   );
 }
 
-/** "Precisa de você agora": o mais urgente de cada tipo, numa lista só. */
-function ListaAgora({ fixas, dados, avisos, hoje, mostrarLoja, irVer }: {
-  fixas: ContaFixa[]; dados: DadosPagamentos | null; avisos: DadosPagamentos['avisos']; hoje: string; mostrarLoja: boolean; irVer: (v: Ver) => void;
-}) {
-  type Item = { chave: string; pill: string; tom: 'red' | 'amber'; titulo: string; detalhe: string; ver: Ver; ordem: string };
-  const itens: Item[] = [];
-  const loja = (l: string) => (mostrarLoja ? ` · ${l}` : '');
-  for (const f of fixas) {
-    if (f.confirmar) continue;
-    if (f.estado === 'vencida' || f.estado === 'vence_hoje') itens.push({ chave: `f${f.categoria_id}${f.chave}`, pill: f.estado === 'vencida' ? 'Vencida' : 'Vence hoje', tom: 'red', titulo: `${f.nome} · ${brl(f.saldo)}`, detalhe: `Conta fixa (${f.categoria})${loja(f.loja)}.`, ver: 'fixas', ordem: f.vence_em ?? hoje });
-    else if (f.estado === 'atrasada_chegar') itens.push({ chave: `f${f.categoria_id}${f.chave}`, pill: 'Não chegou', tom: 'amber', titulo: `${f.categoria} — ${f.nome}`, detalhe: `Conta fixa${loja(f.loja)}. ${f.so_extrato ? `Costuma ser paga por volta do dia ${f.dia_vence}.` : `Costuma chegar até o dia ${f.dia_chega}.`}`, ver: 'fixas', ordem: hoje });
-    else if (f.fora_pct != null && f.estado === 'a_pagar') itens.push({ chave: `f${f.categoria_id}${f.chave}`, pill: 'Valor fora', tom: 'amber', titulo: `${f.nome} · ${brl(f.saldo)}`, detalhe: `Veio ${Math.abs(f.fora_pct)}% ${f.fora_pct > 0 ? 'acima' : 'abaixo'} da média (${brl(f.media)})${loja(f.loja)}.`, ver: 'fixas', ordem: f.vence_em ?? hoje });
-  }
-  for (const m of dados?.mercadoria ?? []) {
-    const g = grupoMercadoria(m, avisos);
-    const prox = m.contas.find((c) => c.status !== 'paid');
-    if (g === 'nao_pague' && prox) {
-      const naoChegou = m.espera_chegar !== false && !m.chegou_em;
-      itens.push({ chave: `m${m.id}`, pill: naoChegou ? 'Não chegou' : m.diferente ? 'Chegou diferente' : 'Com aviso', tom: naoChegou ? 'amber' : 'red',
-        titulo: `${m.fornecedor}${m.numero ? ` NF ${m.numero}` : ''} · ${brl(prox.saldo)} · ${prox.vence < hoje ? 'venceu' : 'vence'} ${ddmm(prox.vence)}`,
-        detalhe: `${naoChegou ? `Nota de ${ddmm(m.emitida)}; ninguém confirmou a entrega.` : (avisos[prox.id]?.[0]?.texto ?? 'Chegou diferente na conferência.')}${loja(m.loja)}`, ver: 'mercadoria', ordem: prox.vence });
-    }
-  }
-  for (const n of dados?.notas ?? []) {
-    const v = (n.parcelas ?? []).map((p) => p.vencimento).filter(Boolean).sort()[0];
-    if (v && v <= hoje.slice(0, 8) + '31') itens.push({ chave: `n${n.id}`, pill: 'Falta lançar', tom: 'amber', titulo: `${n.fornecedor}${n.numero ? ` NF ${n.numero}` : ''} · ${brl(n.valor)}`, detalhe: `A nota não virou compra — sem isso não nasce a conta a pagar${loja(n.loja)}.`, ver: 'mercadoria', ordem: v });
-  }
-  // Qualquer conta vencida ou que vence hoje (2026-10-06, o dono: "estou com um pagamento vencido, não
-  // tinha que estar aí?") — a que já não entrou acima como conta fixa ou mercadoria.
-  const jaNaLista = new Set<string>([
-    ...fixas.flatMap((f) => f.contas.map((c) => c.id)),
-    ...(dados?.mercadoria ?? []).filter((m) => grupoMercadoria(m, avisos) === 'nao_pague').flatMap((m) => m.contas.map((c) => c.id)),
-  ]);
-  for (const cx of dados?.caixa ?? []) {
-    for (const c of cx.contas) {
-      if (c.vencimento > hoje || jaNaLista.has(c.id) || !(Number(c.valor) > 0.005)) continue;
-      const dias = Math.round((Date.parse(`${hoje}T12:00:00Z`) - Date.parse(`${c.vencimento}T12:00:00Z`)) / 86400000);
-      const av = avisos[c.id]?.[0]?.texto;
-      itens.push({ chave: `c${c.id}`, pill: dias > 0 ? 'Vencida' : 'Vence hoje', tom: 'red',
-        titulo: `${c.nome} · ${brl(c.valor)}`,
-        detalhe: `${dias > 0 ? `Venceu ${ddmm(c.vencimento)} (${dias} ${dias === 1 ? 'dia' : 'dias'})` : 'Vence hoje'}${c.tem_boleto ? '' : ' · sem boleto nem Pix guardado'}${av ? ` · ${av}` : ''}${loja(cx.loja)}.`,
-        ver: 'pacote', ordem: c.vencimento });
-    }
-  }
-  for (const a of (dados?.avulsos ?? []).slice(0, 5)) {
-    itens.push({ chave: `a${a.id}`, pill: 'Sem explicação', tom: 'red', titulo: `${brl(a.valor)} → ${a.para}`, detalhe: `Saiu do banco em ${ddmm(a.data)} e ninguém disse o que foi${loja(a.loja)}.`, ver: 'avulsos', ordem: a.data });
-  }
-  itens.sort((a, b) => a.ordem.localeCompare(b.ordem));
+/** "Precisa de você agora" — regra em src/lib/pagamentos.ts › precisaAgora (com teste). */
+function ListaAgora({ itens, carregando, irVer }: { itens: ItemAgora[]; carregando: boolean; irVer: (v: string) => void }) {
+  if (carregando) return <p className="text-sm text-zinc-400">Carregando…</p>;
   if (!itens.length) return (
     <Cartao><p className="text-sm text-emerald-700 font-semibold"><i className="ri-checkbox-circle-line" /> Nada pedindo você agora nos pagamentos.</p></Cartao>
   );

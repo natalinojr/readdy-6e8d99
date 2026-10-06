@@ -167,7 +167,7 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
     add('ok', <button disabled={ocupado} onClick={() => rodar(() => marcar(p.id, 'resolvida', 'ciente pela tela Hoje'))} className={LINK}>Ciente</button>);
   } else if (p.kind === 'caixa_nao_cobre') {
     // Fecha sozinho quando o saldo volta a cobrir; "Ciente" tira daqui até amanhã (se ainda não cobrir).
-    add('ver', <button onClick={() => abrir(t, '/financeiro?tab=painel')} className={PRINCIPAL}><i className="ri-calendar-check-line" /> Ver o que vence</button>);
+    add('ver', <button onClick={() => abrir(t, '/financeiro?tab=pagamentos&ver=pacote')} className={PRINCIPAL}><i className="ri-calendar-check-line" /> Ver o que vence</button>);
     add('ok', <button disabled={ocupado} onClick={() => rodar(() => marcar(p.id, 'resolvida', 'ciente pela tela Hoje'))} className={LINK}>Ciente — me lembre amanhã</button>);
   } else if (p.kind === 'fixa_chegou' && bill) {
     // Conta fixa que chegou (2026-10-06): o dono paga com PIN pelo chat (o cartão do pagamento mostra os

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  resumoFixas, grupoMercadoria, trilhos, pacoteDaSemana, proximoDiaDePagar, caixaDaLoja, textoEsperando,
-  type ContaFixa, type Mercadoria, type CaixaLoja,
+  resumoFixas, grupoMercadoria, trilhos, pacoteDaSemana, proximoDiaDePagar, caixaDaLoja, textoEsperando, precisaAgora,
+  type ContaFixa, type Mercadoria, type CaixaLoja, type ContaAberta,
 } from '@/lib/pagamentos';
 
 const fixa = (o: Partial<ContaFixa>): ContaFixa => ({
@@ -99,5 +99,44 @@ describe('pacote da semana', () => {
     expect(c.precisa).toBeCloseTo(596 + 5553 + 258 + 100);
     expect(c.cobre).toBe(false);
     expect(caixaDaLoja({ ...caixa, n_bancos: 0 }, '2026-10-06')).toBeNull();
+  });
+});
+
+describe('precisa de você agora (revisão de completude, 2026-10-06)', () => {
+  const conta = (o: Partial<ContaAberta>): ContaAberta => ({
+    id: 'x', tenant_id: 't', loja: 'L', nome: 'Celina', descricao: null, valor: 700, total: 700, vencimento: '2026-09-30',
+    status: 'pending', origem: 'nfe_entrada', tipo: 'outras', purchase_id: null, forma: null, tem_boleto: false, parcial: false,
+    fora_pacote: false, cartao: false, boleto_pedido_em: null, no_inter: false, ...o,
+  });
+  const base = { mercadoria: [], fixas: [], avisos: {}, notas: [], servicos: [], avulsos: [], pessoas: [], inter: [], hoje: '2026-10-06', mostrarLoja: false };
+  it('qualquer conta vencida entra, de qualquer tipo, e leva para a seção do tipo', () => {
+    const l = precisaAgora({ ...base, contas: [conta({}), conta({ id: 'p', tipo: 'pessoas', origem: 'hr_beneficio' }), conta({ id: 'f', tipo: 'fixa', vencimento: '2026-10-06' })] });
+    expect(l.map((i) => [i.pill, i.ver])).toEqual([['Vencida', 'avulsos'], ['Vencida', 'pessoas'], ['Vence hoje', 'fixas']]);
+    expect(l[0].detalhe).toContain('sem boleto nem Pix guardado');
+  });
+  it('compra paga na entrega e conta já enviada ao Inter não aparecem como vencida', () => {
+    const l = precisaAgora({ ...base, contas: [conta({ tipo: 'ja_paga' }), conta({ id: 'i', no_inter: true })],
+      inter: [{ id: 'ip', tenant_id: 't', loja: 'L', valor: 50, para: 'X', tipo: 'pix', status: 'pending_approval', bill_id: 'i', enviado_em: '2026-10-06' }] });
+    expect(l.map((i) => i.chave)).toEqual(['inter']);
+  });
+  it('boleto pedido aparece no texto', () => {
+    const l = precisaAgora({ ...base, contas: [conta({ boleto_pedido_em: '2026-10-02T10:00:00Z' })] });
+    expect(l[0].detalhe).toContain('boleto pedido em 02/10');
+  });
+  it('notas e serviços sem lançar viram uma linha cada, não uma por nota', () => {
+    const nota = { tipo: 'nota' as const, id: 'n', tenant_id: 't', loja: 'L', fornecedor: 'F', numero: '1', emitida: '2026-08-01', valor: 10, parcelas: [{ vencimento: '2026-08-20' }] };
+    const l = precisaAgora({ ...base, contas: [], notas: [nota, { ...nota, id: 'n2', parcelas: [] }],
+      servicos: [{ id: 's', tenant_id: 't', loja: 'L', fornecedor: 'Celina', numero: '9', emitida: '2026-09-30', valor: 435 }] });
+    expect(l.map((i) => i.chave)).toEqual(['notas', 'servicos']);
+    expect(l[0].titulo).toContain('2 notas de mercadoria');
+    expect(l[0].tom).toBe('red');
+  });
+  it('mercadoria vencida não aparece duas vezes', () => {
+    const m = { tipo: 'compra' as const, id: 'pc', tenant_id: 't', loja: 'L', fornecedor: 'OESA', numero: '1', emitida: '2026-09-01', valor: 100,
+      bonus: false, chegou_em: null, espera_chegar: true, diferente: false, itens: 1, itens_ligados: 1,
+      contas: [{ id: 'b', valor: 100, saldo: 100, vence: '2026-09-30', status: 'pending', pago_em: null, tem_boleto: true, boleto: true }] };
+    const l = precisaAgora({ ...base, mercadoria: [m], contas: [conta({ id: 'b', tipo: 'mercadoria', origem: 'purchase', tem_boleto: true })] });
+    expect(l).toHaveLength(1);
+    expect(l[0].pill).toBe('Vencida');
   });
 });

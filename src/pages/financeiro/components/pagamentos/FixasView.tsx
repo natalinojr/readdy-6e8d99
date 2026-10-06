@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { pedirAoChat } from '@/lib/assistenteFoco';
 import { lerValorBR } from '@/lib/formatters';
 import {
-  ESTADO_FIXA, grupoDaCategoria, ordemFixa, resumoFixas, textoEsperando, type ContaFixa,
+  ESTADO_FIXA, grupoDaCategoria, ordemFixa, resumoFixas, textoEsperando, type ContaAberta, type ContaFixa,
 } from '@/lib/pagamentos';
 import { categoriasDaLoja, marcarFixa, marcarTodoMes, type AcaoFixa, type CategoriaDre } from './api';
 import { AcoesPagar, brl, Cartao, ddmm, LINK, Pilula, PRINCIPAL, SECUNDARIO, Secao, Vazio } from './comum';
@@ -20,9 +20,11 @@ const somarMes = (mes: string, n: number) => {
 interface Props {
   itens: ContaFixa[]; carregando: boolean; tenantUnico: string | null; mostrarLoja: boolean;
   mes: string; mesAtual: string; onMes: (m: string) => void; dono: boolean; financeiro: boolean; onMudou: () => void;
+  /** contas de categoria fixa de MESES ANTERIORES ainda em aberto (a lista do mês só vê o mês escolhido) */
+  atrasadas: ContaAberta[];
 }
 
-export default function FixasView({ itens, carregando, tenantUnico, mostrarLoja, mes, mesAtual, onMes, dono, financeiro, onMudou }: Props) {
+export default function FixasView({ itens, carregando, tenantUnico, mostrarLoja, mes, mesAtual, onMes, dono, financeiro, onMudou, atrasadas }: Props) {
   const r = resumoFixas(itens);
   const aConfirmar = itens.filter((f) => f.confirmar);
   const lista = itens.filter((f) => !f.confirmar);
@@ -65,8 +67,25 @@ export default function FixasView({ itens, carregando, tenantUnico, mostrarLoja,
         </div>
       </Cartao>
 
+      {atrasadas.length > 0 && (
+        <Secao titulo="De mês anterior, ainda em aberto" n={atrasadas.length} tom="red" dica="Conta fixa que venceu num mês que já passou e não foi paga (ou falta dar a baixa).">
+          {atrasadas.map((c) => (
+            <Cartao key={c.id} destaque="red">
+              <div className="flex flex-wrap items-center gap-3">
+                <Pilula tom="red">venceu {ddmm(c.vencimento)}</Pilula>
+                <div className="flex-1 min-w-[200px]">
+                  <b className="text-sm">{c.nome} · {brl(c.valor)}</b>
+                  <p className="text-xs text-zinc-500">{mostrarLoja ? `${c.loja} · ` : ''}{c.descricao ?? ''}{c.tem_boleto ? '' : c.boleto_pedido_em ? ` · boleto pedido em ${ddmm(c.boleto_pedido_em.slice(0, 10))}` : ' · sem boleto nem Pix guardado'}</p>
+                </div>
+              </div>
+              <div className="mt-2"><AcoesPagar tenantId={c.tenant_id} billId={c.id} dono={dono} financeiro={financeiro} onMudou={onMudou} /></div>
+            </Cartao>
+          ))}
+        </Secao>
+      )}
+
       {carregando && !itens.length ? <Vazio texto="Carregando…" /> : null}
-      {!carregando && !itens.length && (
+      {!carregando && !itens.length && !atrasadas.length && (
         <Vazio texto="Nenhuma conta fixa ainda. Marque acima as categorias que acontecem todo mês (aluguel, luz, internet…)." />
       )}
 
