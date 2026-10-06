@@ -139,8 +139,12 @@ export function useConciliacao(bankAccountId?: string, period?: { from?: string;
   // Fetch imports via Edge Function (bypasses RLS)
   // silent: relê por trás, sem trocar a tabela por "Carregando..." (depois da busca nos bancos).
   // Compara com === true porque refresh também é passado direto como onClick (recebe o evento).
+  // Só a resposta do pedido mais recente vale. Trocar Inter → Mercado Pago: a lista do Inter (mais
+  // pesada) chegava depois da do MP e a tela mostrava o MP no seletor com as linhas do Inter (05/10).
+  const pedidoAtual = useRef(0);
   const fetchImports = useCallback(async (silent?: boolean) => {
-    if (!user?.tenantId || !bankAccountId) return;
+    const meu = ++pedidoAtual.current;
+    if (!user?.tenantId || !bankAccountId) { setImports([]); return; }
     const quieto = silent === true;
     if (!quieto) setLoading(true);
     try {
@@ -151,12 +155,15 @@ export function useConciliacao(bankAccountId?: string, period?: { from?: string;
           payload: { bank_account_id: bankAccountId, date_from: periodFrom, date_to: periodTo },
         },
       });
+      if (meu !== pedidoAtual.current) return;
       if (error) console.error('[useConciliacao] Erro:', error.message);
       setImports(data?.data ?? []);
     } catch (err) {
+      if (meu !== pedidoAtual.current) return;
       console.error('[useConciliacao] Erro fetchImports:', err);
     }
-    if (!quieto) setLoading(false);
+    // o mais recente sempre desliga o "Carregando" (um silencioso pode ter passado na frente)
+    setLoading(false);
   }, [user?.tenantId, bankAccountId, periodFrom, periodTo]);
 
   // Fetch rules via Edge Function (bypasses RLS permission issue)
