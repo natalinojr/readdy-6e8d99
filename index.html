@@ -15,6 +15,16 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="ERPOS" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <script>
+      // Páginas do motoboy instalam o app "ERPOS Entregas" (abre em /app-entregas), não o ERPOS geral.
+      (function () {
+        var p = location.pathname;
+        if (!/^\/(motoboy\/|entregas\/|app-entregas)/.test(p)) return;
+        document.querySelector('link[rel="manifest"]').setAttribute('href', '/manifest-entregas.webmanifest');
+        document.querySelector('meta[name="theme-color"]').setAttribute('content', '#18181b');
+        document.querySelector('meta[name="apple-mobile-web-app-title"]').setAttribute('content', 'Entregas');
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />

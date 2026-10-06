@@ -1,11 +1,23 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { confirmar } from '@/components/base/Dialogos';
-import { entrarNaLoja, guardarLoja, lerLojas, lerPerfil, removerLoja, salvarPerfil, type LojaMotoboy } from '@/lib/motoboyApp';
+import { entrarNaLoja, guardarLoja, lerLojas, lerPerfil, lerSessaoLoja, removerLoja, salvarPerfil, type LojaMotoboy } from '@/lib/motoboyApp';
 
 function edgeUrl(): string {
   const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
   return base + '/functions/v1/motoboy-signal';
+}
+
+/**
+ * Motoboy que entrou pelo link da loja (/entregas/<slug>) e instalou o app pelo navegador:
+ * a loja em que ele já está logado vira a primeira de "Minhas lojas" (sem pedir código).
+ */
+function lojasIniciais(): LojaMotoboy[] {
+  const lojas = lerLojas();
+  if (lojas.length > 0) return lojas;
+  const s = lerSessaoLoja();
+  if (!s?.tenant_id || !s.driver_id || !s.store_slug) return lojas;
+  return guardarLoja({ tenant_id: s.tenant_id, driver_id: s.driver_id, name: s.name, store_name: s.store_name || '', store_slug: s.store_slug });
 }
 
 const ERROS: Record<string, string> = {
@@ -21,8 +33,8 @@ const ERROS: Record<string, string> = {
 export default function AppEntregasPage() {
   const navigate = useNavigate();
   const [perfil, setPerfil] = useState(lerPerfil);
-  const [lojas, setLojas] = useState<LojaMotoboy[]>(lerLojas);
-  const [nome, setNome] = useState(perfil?.nome ?? '');
+  const [lojas, setLojas] = useState<LojaMotoboy[]>(lojasIniciais);
+  const [nome, setNome] = useState(perfil?.nome ?? lerSessaoLoja()?.name ?? '');
   const [celular, setCelular] = useState(perfil?.celular ?? '');
   const [codigo, setCodigo] = useState('');
   const [adicionando, setAdicionando] = useState(lojas.length === 0);
@@ -66,11 +78,11 @@ export default function AppEntregasPage() {
       <div className="w-full max-w-md px-4 py-6 space-y-4">
         <div className="bg-gradient-to-br from-zinc-800 to-zinc-900 rounded-2xl p-4 text-white">
           <p className="text-xs font-semibold opacity-70 flex items-center gap-1"><i className="ri-e-bike-2-line" /> ERPOS Entregas</p>
-          <h1 className="text-xl font-black">{perfil ? `Olá, ${perfil.nome.split(' ')[0]}` : 'Bem-vindo'}</h1>
-          <p className="text-[11px] opacity-70 mt-0.5">{perfil ? 'Escolha a loja para ver as entregas.' : 'Primeiro, seus dados — só uma vez neste celular.'}</p>
+          <h1 className="text-xl font-black">{(perfil?.nome || lojas[0]?.name) ? `Olá, ${(perfil?.nome || lojas[0].name).split(' ')[0]}` : 'Bem-vindo'}</h1>
+          <p className="text-[11px] opacity-70 mt-0.5">{perfil || lojas.length > 0 ? 'Escolha a loja para ver as entregas.' : 'Primeiro, seus dados — só uma vez neste celular.'}</p>
         </div>
 
-        {!perfil ? (
+        {!perfil && (lojas.length === 0 || adicionando) ? (
           <form onSubmit={salvarDados} className="bg-white rounded-2xl border border-zinc-100 p-4 space-y-3">
             <label className="block">
               <span className="text-[11px] font-bold text-zinc-500 uppercase">Seu nome</span>
@@ -83,7 +95,13 @@ export default function AppEntregasPage() {
                 className="mt-1 w-full px-3 py-2.5 rounded-xl border border-zinc-200 outline-none focus:border-amber-400 text-sm" />
             </label>
             {erro ? <p className="text-xs text-red-600">{erro}</p> : null}
-            <button type="submit" className="w-full py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm">Continuar</button>
+            <div className="flex gap-2">
+              {lojas.length > 0 && (
+                <button type="button" onClick={() => { setAdicionando(false); setErro(''); }}
+                  className="flex-1 py-3 rounded-2xl bg-zinc-100 text-zinc-600 font-semibold text-sm">Cancelar</button>
+              )}
+              <button type="submit" className="flex-1 py-3 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-sm">Continuar</button>
+            </div>
           </form>
         ) : (
           <>
@@ -136,10 +154,12 @@ export default function AppEntregasPage() {
               </button>
             )}
 
-            <p className="text-center text-[11px] text-zinc-400">
-              {perfil.nome} · {perfil.celular}{' '}
-              <button type="button" className="underline" onClick={() => { setPerfil(null); setErro(''); }}>alterar</button>
-            </p>
+            {perfil && (
+              <p className="text-center text-[11px] text-zinc-400">
+                {perfil.nome} · {perfil.celular}{' '}
+                <button type="button" className="underline" onClick={() => { setPerfil(null); setErro(''); }}>alterar</button>
+              </p>
+            )}
           </>
         )}
       </div>

@@ -33,6 +33,9 @@ export function removerLoja(tenantId: string): LojaMotoboy[] {
   return lista;
 }
 
+/** Sessão da loja em que o motoboy está logado agora (a do portal /entregas/<slug>). */
+export const lerSessaoLoja = () => ler<MotoboySession | null>(MOTOBOY_SESSION_KEY, null);
+
 /** Grava a sessão da loja escolhida (a mesma que o portal /entregas/<slug> já usa). */
 export function entrarNaLoja(l: LojaMotoboy) {
   const sess: MotoboySession = { tenant_id: l.tenant_id, driver_id: l.driver_id, name: l.name, store_slug: l.store_slug, store_name: l.store_name };
