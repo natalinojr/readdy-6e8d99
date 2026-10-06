@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import InicioTab from './components/inicio/InicioTab';
 import InsumosTab from './components/InsumosTab';
 import MovimentacoesTab from './components/MovimentacoesTab';
@@ -27,7 +27,6 @@ import Folha from './components/inicio/Folha';
 import InsumoModal from './components/insumos/InsumoModal';
 import EntradaRapidaModal from './components/insumos/EntradaRapidaModal';
 import RegistrarSaidaModal from './components/RegistrarSaidaModal';
-import TransferirEstoqueModal from './components/TransferirEstoqueModal';
 import FichaInsumoFolha from './components/folhas/FichaInsumoFolha';
 import ArrumarFolha from './components/folhas/ArrumarFolha';
 import RegistrarFolha from './components/folhas/RegistrarFolha';
@@ -130,12 +129,12 @@ export default function EstoquePage() {
   // ── Janelas comuns (abertas por qualquer aba via EstoqueTela) ──
   const [fichaId, setFichaId] = useState<string | null>(null);
   const [registrar, setRegistrar] = useState(false);
+  const navigate = useNavigate();
   const [arrumar, setArrumar] = useState<{ filtro?: FiltroArrumar; insumoId?: string } | null>(null);
   const [perda, setPerda] = useState<{ insumoId?: string } | null>(null);
   const [contagem, setContagem] = useState<{ titulo: string; itens: InsumoSituacao[] } | null>(null);
   const [entradaId, setEntradaId] = useState<string | null>(null);
   const [saida, setSaida] = useState<{ insumoId?: string } | null>(null);
-  const [transferir, setTransferir] = useState(false);
   const [compra, setCompra] = useState<{ insumoId?: string } | null>(null);
   const [insumoModal, setInsumoModal] = useState<'novo' | string | null>(null);
   const [showExportImport, setShowExportImport] = useState(false);
@@ -179,7 +178,8 @@ export default function EstoquePage() {
     abrirEntrada: naoSoContar((id: string) => setEntradaId(id)),
     abrirSaida: naoSoContar((id?: string) => setSaida({ insumoId: id })),
     abrirPerda: naoSoContar((id?: string) => setPerda({ insumoId: id })),
-    abrirTransferir: naoSoContar(() => setTransferir(true)),
+    // Empréstimo entre lojas (antes: modal que só tirava do estoque, com o nome da loja digitado)
+    abrirTransferir: naoSoContar(() => navigate('/receber/emprestimos?mandar=1')),
     abrirProgramar: naoSoContar(() => { if (podeConfigurar && situacao.data) setConfig(true); }),
     abrirCompra: naoSoContar((id?: string) => setCompra({ insumoId: id })),
     abrirNovoInsumo: naoSoContar(() => setInsumoModal('novo')),
@@ -330,7 +330,6 @@ export default function EstoquePage() {
           />
         )}
         {saida && <RegistrarSaidaModal insumoIdInicial={saida.insumoId} onClose={() => { setSaida(null); void situacao.reload(); }} />}
-        {transferir && <TransferirEstoqueModal onClose={() => { setTransferir(false); void situacao.reload(); }} />}
         {compra && (
           <NovaCompraModal
             insumoPreSelecionado={insumoCompra ? { id: insumoCompra.id, nome: insumoCompra.nome, unidade: insumoCompra.unidade } : null}

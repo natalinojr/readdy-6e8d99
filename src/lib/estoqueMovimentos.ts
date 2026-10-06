@@ -2,18 +2,22 @@
 // Uma só regra para o filtro da lista, o texto do motivo e o sinal da quantidade.
 import type { Movimentacao } from '@/types/estoque';
 
-export type TipoLista = 'menos_vendas' | 'entradas' | 'perdas' | 'saidas' | 'producao' | 'contagem' | 'vendas';
+export type TipoLista = 'menos_vendas' | 'entradas' | 'perdas' | 'saidas' | 'producao' | 'contagem' | 'vendas' | 'emprestimos';
 
 /** Tipo da tela → tipos do banco que precisam vir (o filtro fino é refeito na lista por `passaNoTipo`). */
 export const TIPOS_DB: Record<TipoLista, string[]> = {
   menos_vendas: ['in', 'transfer_in', 'manual_out', 'transfer_out', 'loss', 'inventory_adjustment'],
-  entradas: ['in', 'transfer_in'],
+  entradas: ['in'],
   perdas: ['loss', 'manual_out'],
-  saidas: ['manual_out', 'transfer_out'],
+  saidas: ['manual_out'],
   producao: ['in', 'manual_out', 'loss'],
   contagem: ['inventory_adjustment'],
   vendas: ['theoretical_out'],
+  // Empréstimo entre lojas (/receber/emprestimos): o que saiu daqui e o que chegou de outra loja
+  emprestimos: ['transfer_out', 'transfer_in'],
 };
+
+export const ehEmprestimo = (m: Pick<Movimentacao, 'tipo'>) => m.tipo === 'emprestimo_saida' || m.tipo === 'emprestimo_entrada';
 
 /** Estorno (produção excluída, pedido cancelado) devolve insumo: não é entrada nem saída de verdade. */
 export const ehEstorno = (m: Pick<Movimentacao, 'motivo'>) => /^estorno/i.test(m.motivo ?? '');
@@ -29,6 +33,7 @@ export function passaNoTipo(m: Movimentacao, t: TipoLista): boolean {
     case 'saidas': return m.tipo === 'saida_manual' && !ehEstorno(m);
     case 'perdas': return ehPerdaReal(m);
     case 'contagem': return m.tipo === 'ajuste_inventario';
+    case 'emprestimos': return ehEmprestimo(m);
     case 'producao':
       return m.tipo === 'entrada_producao' || m.tipo === 'saida_producao'
         || (m.tipo === 'perda' && m.sinal === 0)
@@ -41,7 +46,7 @@ export function passaNoTipo(m: Movimentacao, t: TipoLista): boolean {
 export function sinalDaQuantidade(m: Pick<Movimentacao, 'tipo' | 'sinal'>): '+' | '−' | '' | '±' {
   if (m.sinal !== undefined && m.sinal !== null) return m.sinal > 0 ? '+' : m.sinal < 0 ? '−' : '';
   if (m.tipo === 'ajuste_inventario') return '±';
-  return m.tipo === 'entrada' || m.tipo === 'entrada_producao' ? '+' : '−';
+  return m.tipo === 'entrada' || m.tipo === 'entrada_producao' || m.tipo === 'emprestimo_entrada' ? '+' : '−';
 }
 
 /** Motivo legível: troca os códigos internos (item_sale:uuid, id do item no estorno) por texto de gente. */
@@ -59,6 +64,14 @@ export function getMotivoDisplay(mv: Pick<Movimentacao, 'tipo' | 'motivo' | 'ite
   }
   if (motivo.startsWith('Perda em produção:')) {
     return { label: motivo.replace('Perda em produção:', '').trim(), sub: 'Perda em produção', cls: 'text-red-600 font-semibold' };
+  }
+  // Empréstimo: "Empréstimo para <loja>" / "Empréstimo de <loja>" / "Empréstimo cancelado (voltou)"
+  if (mv.tipo === 'emprestimo_saida' || mv.tipo === 'emprestimo_entrada') {
+    if (/cancelado/i.test(motivo)) return { label: 'Voltou: empréstimo cancelado', sub: 'Empréstimo', cls: 'text-teal-700 font-semibold' };
+    const loja = motivo.replace(/^Empréstimo (para|de)\s*/i, '') || 'outra loja';
+    return mv.tipo === 'emprestimo_saida'
+      ? { label: `Para ${loja}`, sub: 'Empréstimo · saiu daqui', cls: 'text-fuchsia-700 font-semibold' }
+      : { label: `De ${loja}`, sub: 'Empréstimo · chegou', cls: 'text-teal-700 font-semibold' };
   }
   if (/^estorno/i.test(motivo)) {
     // "Estorno pedido #1a2b3c4d:<id do item>" → tira o id interno do fim

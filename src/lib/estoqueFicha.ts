@@ -56,8 +56,9 @@ export function descreverMov(m: Pick<MovFicha, 'tipo' | 'motivo' | 'prato'>): { 
       }
       return { icone: 'ri-add-circle-line', tom: 'green', texto: motivo ? `Entrada · ${motivo}` : 'Entrada' };
     }
-    case 'transfer_in': return { icone: 'ri-store-2-line', tom: 'green', texto: 'Transferência recebida' };
-    case 'transfer_out': return { icone: 'ri-store-2-line', tom: 'zinc', texto: 'Transferência enviada' };
+    // Empréstimo entre lojas: o motivo já diz a loja ("Empréstimo para X" / "Empréstimo de X")
+    case 'transfer_in': return { icone: 'ri-store-2-line', tom: 'green', texto: motivo || 'Empréstimo recebido' };
+    case 'transfer_out': return { icone: 'ri-store-2-line', tom: 'zinc', texto: motivo || 'Empréstimo enviado' };
     case 'loss': return { icone: 'ri-delete-bin-6-line', tom: 'red', texto: motivo ? `Perda · ${motivo}` : 'Perda' };
     case 'manual_out':
       if (ehProducao) return { icone: 'ri-knife-line', tom: 'amber', texto: 'Usado na produção' };

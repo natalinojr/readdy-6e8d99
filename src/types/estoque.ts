@@ -114,7 +114,9 @@ export interface Movimentacao {
   id: string;
   insumoId: string;
   insumoNome: string;
-  tipo: 'entrada' | 'saida_venda' | 'saida_manual' | 'perda' | 'entrada_producao' | 'saida_producao' | 'ajuste_inventario';
+  tipo: 'entrada' | 'saida_venda' | 'saida_manual' | 'perda' | 'entrada_producao' | 'saida_producao' | 'ajuste_inventario'
+    // Empréstimo entre lojas (transfer_out / transfer_in): o motivo diz a loja ("Empréstimo para X" / "Empréstimo de X")
+    | 'emprestimo_saida' | 'emprestimo_entrada';
   quantidade: number;
   unidade: UnidadeEstoque;
   motivo?: string;

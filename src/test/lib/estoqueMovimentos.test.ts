@@ -104,6 +104,26 @@ describe('motivo legível', () => {
   });
 });
 
+describe('empréstimo entre lojas (2026-10-06)', () => {
+  const saiu = mov({ tipo: 'emprestimo_saida', motivo: 'Empréstimo para Vila Leste & El Patron', sinal: -2 });
+  const chegou = mov({ tipo: 'emprestimo_entrada', motivo: 'Empréstimo de El Patron Paranaguá', sinal: 1.5 });
+  it('filtro próprio: não cai em Entradas nem em Saídas', () => {
+    expect(passaNoTipo(saiu, 'emprestimos')).toBe(true);
+    expect(passaNoTipo(chegou, 'emprestimos')).toBe(true);
+    expect(passaNoTipo(chegou, 'entradas')).toBe(false);
+    expect(passaNoTipo(saiu, 'saidas')).toBe(false);
+    expect(passaNoTipo(saiu, 'menos_vendas')).toBe(true);
+    expect(TIPOS_DB.emprestimos).toEqual(['transfer_out', 'transfer_in']);
+  });
+  it('a linha diz para qual loja foi / de qual loja veio, com o sinal certo', () => {
+    expect(getMotivoDisplay(saiu).label).toBe('Para Vila Leste & El Patron');
+    expect(getMotivoDisplay(chegou).label).toBe('De El Patron Paranaguá');
+    expect(getMotivoDisplay(mov({ tipo: 'emprestimo_entrada', motivo: 'Empréstimo cancelado (voltou)' })).label).toMatch(/cancelado/);
+    expect(sinalDaQuantidade(saiu)).toBe('−');
+    expect(sinalDaQuantidade(mov({ tipo: 'emprestimo_entrada' }))).toBe('+');
+  });
+});
+
 describe('datas', () => {
   it('diasEntre conta os dois extremos', () => {
     expect(diasEntre('2026-10-04', '2026-10-04')).toBe(1);

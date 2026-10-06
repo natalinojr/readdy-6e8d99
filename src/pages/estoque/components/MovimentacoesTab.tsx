@@ -50,6 +50,7 @@ const OPCOES_TIPO: OpcaoChip<TipoLista>[] = [
   { id: 'producao', rotulo: 'Produção' },
   { id: 'contagem', rotulo: 'Contagem' },
   { id: 'vendas', rotulo: 'Vendas' },
+  { id: 'emprestimos', rotulo: 'Empréstimos' },
 ];
 
 interface Visual { etiqueta: string; tom: 'red' | 'amber' | 'green' | 'blue' | 'zinc'; icone: string; fundo: string }
@@ -66,6 +67,8 @@ function visualDe(m: Movimentacao): Visual {
     case 'entrada_producao':
     case 'saida_producao': return { etiqueta: 'Produção', tom: 'amber', icone: 'ri-knife-line', fundo: 'bg-amber-50 text-amber-700' };
     case 'ajuste_inventario': return { etiqueta: 'Contagem', tom: 'zinc', icone: 'ri-scales-3-line', fundo: 'bg-zinc-100 text-zinc-600' };
+    case 'emprestimo_saida': return { etiqueta: 'Empréstimo · saiu', tom: 'zinc', icone: 'ri-arrow-right-up-line', fundo: 'bg-fuchsia-50 text-fuchsia-700' };
+    case 'emprestimo_entrada': return { etiqueta: 'Empréstimo · chegou', tom: 'green', icone: 'ri-arrow-left-down-line', fundo: 'bg-teal-50 text-teal-700' };
     default: return { etiqueta: 'Saída', tom: 'zinc', icone: 'ri-arrow-up-line', fundo: 'bg-zinc-100 text-zinc-600' };
   }
 }
@@ -332,7 +335,7 @@ export default function MovimentacoesTab() {
         <span className="text-xs font-semibold text-zinc-400 mr-0.5">Registrar:</span>
         <button type="button" className={btn('out', 'sm')} onClick={() => tela.abrirPerda()}><i className="ri-delete-bin-6-line" />Perda</button>
         <button type="button" className={btn('out', 'sm')} onClick={() => tela.abrirSaida()}><i className="ri-arrow-up-circle-line" />Saída</button>
-        <button type="button" className={btn('out', 'sm')} onClick={() => tela.abrirTransferir()}><i className="ri-truck-line" />Transferir</button>
+        <button type="button" className={btn('out', 'sm')} onClick={() => tela.abrirTransferir()}><i className="ri-arrow-left-right-line" />Emprestar a outra loja</button>
         <button type="button" className={btn('out', 'sm')} onClick={() => tela.abrirCompra()}><i className="ri-shopping-cart-2-line" />Compra</button>
       </div>
 

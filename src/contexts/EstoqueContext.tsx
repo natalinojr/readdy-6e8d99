@@ -150,8 +150,8 @@ const DB_TYPE_TO_FRONT: Record<string, Movimentacao['tipo']> = {
   manual_out: 'saida_manual',
   theoretical_out: 'saida_venda',
   inventory_adjustment: 'ajuste_inventario',
-  transfer_in: 'entrada',
-  transfer_out: 'saida_manual',
+  transfer_in: 'emprestimo_entrada',
+  transfer_out: 'emprestimo_saida',
   loss: 'perda',
   // Fallback para tipos legados já em português
   entrada: 'entrada',

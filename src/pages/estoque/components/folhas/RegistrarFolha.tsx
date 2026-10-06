@@ -32,7 +32,11 @@ export default function RegistrarFolha({ aberta, onFechar }: { aberta: boolean; 
     { icone: 'ri-arrow-up-line', titulo: 'Usei fora da venda', linha: 'equipe, cortesia, teste', cor: 'ambar', ir: depois(() => tela.abrirSaida()) },
     { icone: 'ri-knife-line', titulo: 'Produzi na cozinha', linha: 'guacamole, cheddar…', cor: 'ambar', ir: depois(() => tela.irPara('producao')) },
     { icone: 'ri-scales-3-line', titulo: 'Contei', linha: 'alguns ou tudo', cor: 'azul', ir: depois(() => tela.irPara('inventario')) },
-    { icone: 'ri-store-2-line', titulo: 'Mandei para outra loja', linha: 'transferência', cor: 'ambar', ir: depois(() => tela.abrirTransferir()) },
+    // Empréstimo entre lojas: sai daqui e só entra na outra quando ela conferir (/receber/emprestimos)
+    { icone: 'ri-store-2-line', titulo: 'Mandei para outra loja', linha: 'empréstimo · a outra loja confere', cor: 'ambar',
+      ir: () => { onFechar(); sairDasCamadas(() => navigate('/receber/emprestimos?mandar=1')); } },
+    { icone: 'ri-arrow-left-down-line', titulo: 'Chegou de outra loja', linha: podeReceber ? 'empréstimo · digitar o que chegou' : 'quem recebe a mercadoria confere', cor: 'verde', bloqueada: !podeReceber,
+      ir: () => { onFechar(); sairDasCamadas(() => navigate('/receber/emprestimos?receber=1')); } },
     { icone: 'ri-shopping-basket-line', titulo: 'Comprei no mercado', linha: 'cupom, Pix na hora', cor: 'ambar', ir: depois(() => tela.abrirCompra()) },
     { icone: 'ri-add-box-line', titulo: 'Insumo novo', linha: 'cadastrar', cor: 'ambar', ir: depois(() => tela.abrirNovoInsumo()) },
   ];
