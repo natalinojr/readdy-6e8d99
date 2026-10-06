@@ -149,6 +149,11 @@ function OpcoesKiosk({ item, onAdicionar, onClose, tr }: OpcoesKioskProps) {
   const [selecionadas, setSelecionadas] = useState<Record<string, OpcaoTrackKiosk[]>>({});
   const [obsLivre, setObsLivre] = useState('');
   const [obsTags, setObsTags] = useState<string[]>([]);
+  // Com 2+ unidades, cada uma pode ganhar observação própria, somada à de "Todas"
+  // (obsTags/obsLivre). obsAlvo null = editando "Todas". Unidades com a mesma
+  // observação final viram uma linha só no carrinho.
+  const [obsUnidades, setObsUnidades] = useState<{ tags: string[]; livre: string }[]>([]);
+  const [obsAlvo, setObsAlvo] = useState<number | null>(null);
   // "Escolha: grupo" é recalculado a cada seleção e some quando o mínimo é atingido.
   const [avisoMax, setAvisoMax] = useState('');
   const [tentouAdicionar, setTentouAdicionar] = useState(false);
@@ -179,14 +184,59 @@ function OpcoesKiosk({ item, onAdicionar, onClose, tr }: OpcoesKioskProps) {
 
   const total = (item.preco + totalOpcoes) * qtd;
 
+  const mudarQtd = (novaQtd: number) => {
+    const q = Math.max(1, novaQtd);
+    // Voltou para 1: a observação da Un. 1 passa a valer para o item (não some calada).
+    const u0 = obsUnidades[0];
+    if (q === 1 && u0) {
+      setObsTags((prev) => [...prev, ...u0.tags.filter((tg) => !prev.includes(tg))]);
+      setObsLivre((prev) => [prev.trim(), u0.livre.trim()].filter(Boolean).join(' '));
+    }
+    setObsUnidades((prev) => prev.slice(0, q === 1 ? 0 : q));
+    if (obsAlvo !== null && (q === 1 || obsAlvo >= q)) setObsAlvo(null);
+    setQtd(q);
+  };
+
+  const tagsAtuais = obsAlvo === null ? obsTags : (obsUnidades[obsAlvo]?.tags ?? []);
+  const livreAtual = obsAlvo === null ? obsLivre : (obsUnidades[obsAlvo]?.livre ?? '');
+  const mudarObsUnidade = (idx: number, muda: (u: { tags: string[]; livre: string }) => { tags: string[]; livre: string }) => {
+    setObsUnidades((prev) => {
+      const arr = prev.slice();
+      while (arr.length <= idx) arr.push({ tags: [], livre: '' });
+      arr[idx] = muda(arr[idx]);
+      return arr;
+    });
+  };
+  const toggleTag = (tag: string) => {
+    const alterna = (prev: string[]) => (prev.includes(tag) ? prev.filter((p) => p !== tag) : [...prev, tag]);
+    if (obsAlvo === null) setObsTags(alterna);
+    else mudarObsUnidade(obsAlvo, (u) => ({ ...u, tags: alterna(u.tags) }));
+  };
+  const mudarLivre = (v: string) => {
+    if (obsAlvo === null) setObsLivre(v);
+    else mudarObsUnidade(obsAlvo, (u) => ({ ...u, livre: v }));
+  };
+  const unidadeTemObs = (idx: number) => {
+    const u = obsUnidades[idx];
+    return !!u && (u.tags.length > 0 || u.livre.trim().length > 0);
+  };
+
   const handleAdicionar = () => {
     if (grupoFaltando) { setAvisoMax(''); setTentouAdicionar(true); return; }
-    // Combina observações pré-configuradas + texto livre
-    const obsCompleta = [
-      ...obsTags,
-      ...(obsLivre.trim() ? [obsLivre.trim()] : []),
-    ].join('; ');
-    onAdicionar({ itemId: item.id, nome: item.nome, categoria: item.categoria, preco: item.preco + totalOpcoes, quantidade: qtd, opcoesSelecionadas: Object.values(selecionadas).flat(), observacao: obsCompleta, clienteNome: 'Kiosk', semPreparo: item.semPreparo ?? false, stationId: item.stationId ?? null });
+    // Combina observações pré-configuradas + texto livre ("Todas" primeiro, depois a da unidade)
+    const partesDe = (tags: string[], livre: string) => [...tags, ...(livre.trim() ? [livre.trim()] : [])];
+    const comum = partesDe(obsTags, obsLivre);
+    const porObs = new Map<string, number>();
+    for (let i = 0; i < qtd; i++) {
+      const u = qtd > 1 ? obsUnidades[i] : undefined;
+      const partes = [...comum];
+      if (u) for (const p of partesDe(u.tags, u.livre)) if (!partes.includes(p)) partes.push(p);
+      const obs = partes.join('; ');
+      porObs.set(obs, (porObs.get(obs) ?? 0) + 1);
+    }
+    for (const [obsCompleta, quantidade] of porObs) {
+      onAdicionar({ itemId: item.id, nome: item.nome, categoria: item.categoria, preco: item.preco + totalOpcoes, quantidade, opcoesSelecionadas: Object.values(selecionadas).flat(), observacao: obsCompleta, clienteNome: 'Kiosk', semPreparo: item.semPreparo ?? false, stationId: item.stationId ?? null });
+    }
     onClose();
   };
 
@@ -255,27 +305,55 @@ function OpcoesKiosk({ item, onAdicionar, onClose, tr }: OpcoesKioskProps) {
               </div>
             ))}
 
+            {qtd > 1 && (
+              <div>
+                <h3 className="text-lg font-bold text-white mb-2">{t('cliente.obsParaQual')}</h3>
+                <div className="flex flex-wrap gap-2">
+                  {[null, ...Array.from({ length: qtd }, (_, i) => i)].map((alvo) => {
+                    const ativo = obsAlvo === alvo;
+                    return (
+                      <button
+                        key={alvo ?? 'todas'}
+                        onClick={() => setObsAlvo(alvo)}
+                        className={`px-4 py-2 rounded-lg text-base font-bold transition-all cursor-pointer whitespace-nowrap ${
+                          ativo
+                            ? 'bg-white text-zinc-950'
+                            : 'bg-zinc-800 text-zinc-300 border border-zinc-700 hover:border-zinc-500'
+                        }`}
+                      >
+                        {alvo === null ? t('cliente.obsTodas') : t('cliente.unidadeN', { n: alvo + 1 })}
+                        {alvo !== null && unidadeTemObs(alvo) && (
+                          <span className="ml-1.5 inline-block w-2 h-2 rounded-full bg-amber-500 align-middle" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+                {obsAlvo !== null && (
+                  <p className="text-sm text-amber-400 font-semibold mt-2">{t('cliente.obsSoUnidade', { n: obsAlvo + 1 })}</p>
+                )}
+              </div>
+            )}
+
             {item.observacoesPadrao && item.observacoesPadrao.length > 0 && (
               <div>
                 <h3 className="text-lg font-bold text-white mb-2">{t('cliente.observacoes')}</h3>
                 <div className="flex flex-wrap gap-2">
                   {item.observacoesPadrao.map((obsPadrao, idxObs) => {
-                    const ativa = obsTags.includes(obsPadrao);
+                    // Na aba de uma unidade, o que já está em "Todas" aparece marcado e travado.
+                    const herdada = obsAlvo !== null && obsTags.includes(obsPadrao);
+                    const ativa = herdada || tagsAtuais.includes(obsPadrao);
                     return (
                       <button
                         key={obsPadrao}
-                        onClick={() => {
-                          setObsTags((prev) => {
-                            if (prev.includes(obsPadrao)) {
-                              return prev.filter((p) => p !== obsPadrao);
-                            }
-                            return [...prev, obsPadrao];
-                          });
-                        }}
-                        className={`px-4 py-2 rounded-lg text-base font-semibold transition-all cursor-pointer whitespace-nowrap ${
-                          ativa
-                            ? 'bg-amber-500 text-zinc-950'
-                            : 'bg-zinc-800 text-zinc-300 border border-zinc-700 hover:border-zinc-500'
+                        disabled={herdada}
+                        onClick={() => toggleTag(obsPadrao)}
+                        className={`px-4 py-2 rounded-lg text-base font-semibold transition-all whitespace-nowrap ${
+                          herdada
+                            ? 'bg-amber-500/40 text-zinc-950 cursor-default'
+                            : ativa
+                            ? 'bg-amber-500 text-zinc-950 cursor-pointer'
+                            : 'bg-zinc-800 text-zinc-300 border border-zinc-700 hover:border-zinc-500 cursor-pointer'
                         }`}
                       >
                         {ativa && <i className="ri-check-line mr-1" />}
@@ -290,14 +368,14 @@ function OpcoesKiosk({ item, onAdicionar, onClose, tr }: OpcoesKioskProps) {
             {item.observacoesPadrao && item.observacoesPadrao.length > 0 && (
               <div className="border-t border-zinc-800 pt-4">
                 <h3 className="text-base font-bold text-zinc-500 mb-3 uppercase tracking-wider">{t('cliente.outraObservacao')}</h3>
-                <TecladoVirtual value={obsLivre} onChange={setObsLivre} placeholder={t('cliente.exObservacao')} />
+                <TecladoVirtual value={livreAtual} onChange={mudarLivre} placeholder={t('cliente.exObservacao')} />
               </div>
             )}
 
             {(!item.observacoesPadrao || item.observacoesPadrao.length === 0) && (
               <div>
                 <h3 className="text-lg font-bold text-white mb-2">{t('cliente.observacoes')}</h3>
-                <TecladoVirtual value={obsLivre} onChange={setObsLivre} placeholder={t('cliente.exObservacao')} />
+                <TecladoVirtual value={livreAtual} onChange={mudarLivre} placeholder={t('cliente.exObservacao')} />
               </div>
             )}
 
@@ -317,11 +395,11 @@ function OpcoesKiosk({ item, onAdicionar, onClose, tr }: OpcoesKioskProps) {
 
           <div className="p-6 [@media(max-height:820px)]:p-3 border-t border-zinc-800 flex items-center gap-4 flex-shrink-0">
             <div className="flex items-center gap-4 bg-zinc-800 rounded-2xl px-4 py-3">
-              <button onClick={() => setQtd((q) => Math.max(1, q - 1))} className="w-12 h-12 flex items-center justify-center rounded-xl bg-zinc-700 hover:bg-zinc-600 cursor-pointer transition-colors">
+              <button onClick={() => mudarQtd(qtd - 1)} className="w-12 h-12 flex items-center justify-center rounded-xl bg-zinc-700 hover:bg-zinc-600 cursor-pointer transition-colors">
                 <Minus size={18} className="text-white" />
               </button>
               <span className="text-xl font-black text-white w-10 text-center">{qtd}</span>
-              <button onClick={() => setQtd((q) => q + 1)} className="w-12 h-12 flex items-center justify-center rounded-xl bg-amber-500 hover:bg-amber-400 cursor-pointer transition-colors">
+              <button onClick={() => mudarQtd(qtd + 1)} className="w-12 h-12 flex items-center justify-center rounded-xl bg-amber-500 hover:bg-amber-400 cursor-pointer transition-colors">
                 <Plus size={18} className="text-zinc-950" />
               </button>
             </div>
