@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { extraMinimoOpcoes } from '../../../lib/precoAPartirDe';
 import { formatCurrency } from '@/lib/formatters';
 import { scrollFocusedFieldIntoView } from '@/lib/scrollFocusIntoView';
 import { useKeyboardInset } from '@/hooks/useKeyboardInset';
@@ -557,17 +558,7 @@ export default function CardapioMesaQR(props: Props) {
   // está nos burritos escolhidos) aparecia como "R$ 0,00". Soma o mais barato de
   // cada grupo obrigatório para mostrar o menor valor possível.
   function extraMinimo(item: CardapioItem) {
-    let extra = 0;
-    gruposDoItem(item.id).forEach(function (g) {
-      const min = minExigido(g);
-      if (min <= 0) return;
-      const precos = opcoesDoGrupo(g.id)
-        .filter(function (o) { return o.is_active !== false && !opcoesIndisponiveisIds.includes(o.id); })
-        .map(function (o) { return o.additional_price || 0; })
-        .sort(function (a, b) { return a - b; });
-      for (let k = 0; k < min && k < precos.length; k++) extra += precos[k];
-    });
-    return extra;
+    return extraMinimoOpcoes(gruposDoItem(item.id), options, opcoesIndisponiveisIds);
   }
 
   function rotuloCategoria(cat: CardapioCategory) {

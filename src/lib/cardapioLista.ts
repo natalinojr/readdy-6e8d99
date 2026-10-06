@@ -1,6 +1,7 @@
 // Regras puras da lista de itens do Cardápio (layout novo, 2026-10-06): "Acabou hoje", ordem por mais vendidos,
 // busca sem acento, preço na linha e ações em lote (o que muda, o que dizer e como desfazer).
 // Sem custo nem margem por decisão do dono: a lista só mostra preço, situação e onde o item aparece.
+import { extraMinimoGruposItem } from './precoAPartirDe';
 import type { Destaque, Item } from '@/types/cardapio';
 
 // ── "Acabou hoje" ────────────────────────────────────────────────────────────
@@ -222,6 +223,8 @@ export function pendenciasCardapio(itens: Item[], destaques: Destaque[], resumo:
     const item = porId.get(d.itemId);
     if (!item) continue;
     const precoItem = item.preco;
+    // Item cujo preço vem das opções obrigatórias ("a partir de" > 0): destaque R$ 0,00 não é erro.
+    if (Number(d.customPrice) === 0 && extraMinimoGruposItem(item.gruposOpcoes) > 0) continue;
     if (Number(d.customPrice) === 0) out.push({ tipo: 'destaque_zero', destaque: d, precoItem });
     else if (Math.abs(Number(d.customPrice) - precoItem) >= 0.005) diferentes.push({ destaque: d, precoItem });
   }

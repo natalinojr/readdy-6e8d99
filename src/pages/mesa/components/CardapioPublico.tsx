@@ -1,3 +1,4 @@
+import { extraMinimoGruposItem } from '@/lib/precoAPartirDe';
 import { useState, useMemo } from 'react';
 import { Plus, Minus, X, ChevronRight, Clock } from 'lucide-react';
 import type { ItemCardapioPublico, ItemPedidoCliente } from '@/types/mesaCliente';
@@ -71,7 +72,7 @@ function OpcoesModal({ item, clienteNome, onAdicionar, onClose }: OpcoesModalPro
         <div className="p-5">
           <div className="flex items-start justify-between mb-1">
             <h2 className="text-base font-bold text-zinc-900 pr-2">{item.nome}</h2>
-            <span className="text-base font-bold text-amber-600 whitespace-nowrap">{fmt(item.preco)}</span>
+            <span className="text-base font-bold text-amber-600 whitespace-nowrap">{extraMinimoGruposItem(item.opcoes) > 0 && <span className="text-xs font-semibold text-zinc-400">a partir de </span>}{fmt(item.preco + extraMinimoGruposItem(item.opcoes))}</span>
           </div>
           <p className="text-xs text-zinc-500 mb-1">{item.descricao}</p>
           <div className="flex items-center gap-1 mb-4">
@@ -251,7 +252,7 @@ export default function CardapioPublico({ clienteNome, carrinho, onAdicionar, on
                   <p className={`text-sm font-bold truncate ${esgotado ? 'text-zinc-400' : 'text-zinc-900'}`}>{item.nome}</p>
                   <p className="text-xs text-zinc-500 mt-0.5 line-clamp-2">{item.descricao}</p>
                   <div className="flex items-center justify-between mt-2">
-                    <span className={`text-sm font-bold ${esgotado ? 'text-zinc-400' : 'text-amber-600'}`}>{fmt(item.preco)}</span>
+                    <span className={`text-sm font-bold ${esgotado ? 'text-zinc-400' : 'text-amber-600'}`}>{extraMinimoGruposItem(item.opcoes) > 0 && <span className="text-xs font-semibold text-zinc-400">a partir de </span>}{fmt(item.preco + extraMinimoGruposItem(item.opcoes))}</span>
                   </div>
                 </div>
                 {!esgotado && <div className="w-5 h-5 flex items-center justify-center text-zinc-300"><ChevronRight size={14} /></div>}

@@ -2,6 +2,8 @@ import { useState, useMemo, useEffect, useRef, type ReactNode } from 'react';
 import { useCardapio } from '@/contexts/CardapioContext';
 import type { Item } from '@/types/cardapio';
 import ItemModal from './ItemModal';
+import { extraMinimoGruposItem } from '@/lib/precoAPartirDe';
+import { promoAtivaHoje } from '@/lib/promoUtils';
 import ItemImage from '@/components/base/ItemImage';
 import { SeloHorario } from '@/components/feature/HorarioExibicaoEditor';
 import { resumoHorario, temHorario, type CanalHorario } from '@/lib/horarioExibicao';
@@ -78,6 +80,9 @@ function PrecoNaLinha({ item, pode, onSalvar }: { item: Item; pode: boolean; onS
   const fechou = useRef(false);
   const deliveryProprio = temPrecoDeliveryProprio(item);
   const promo = item.promocoes.some((p) => p.ativo);
+  // Preço vem das opções obrigatórias (ex.: base R$ 0,00): mostra "a partir de" (só exibição)
+  const extra = extraMinimoGruposItem(item.gruposOpcoes);
+  const efetivo = (promoAtivaHoje(item.promocoes)?.precoPromocional ?? item.preco) + extra;
 
   const abrir = () => {
     if (!pode) return;
@@ -122,8 +127,14 @@ function PrecoNaLinha({ item, pode, onSalvar }: { item: Item; pode: boolean; onS
       <button type="button" onClick={abrir} disabled={!pode}
         title={pode ? 'Tocar para mudar o preço' : 'Você não tem permissão para mudar preço'}
         className={`text-[14.5px] font-extrabold tabular-nums text-zinc-900 rounded-lg px-1.5 py-0.5 ${pode ? 'cursor-pointer hover:bg-amber-50 border-b border-dashed border-zinc-300' : 'cursor-default'}`}>
-        {brl(item.preco)}
+        {extra > 0 && <span className="text-[10.5px] font-semibold text-zinc-400">a partir de </span>}
+        {extra > 0 ? brl(efetivo) : brl(item.preco)}
       </button>
+      {extra > 0 && (
+        <span className="text-[10.5px] text-zinc-400 font-semibold whitespace-nowrap" title="Tocar no preço muda só o preço base do item; o resto vem das opções obrigatórias.">
+          base {brl(item.preco)} + opções
+        </span>
+      )}
       {deliveryProprio && (
         <span className="text-[10.5px] text-zinc-400 font-semibold whitespace-nowrap" title={`O preço do delivery (${brl(Number(item.delivery?.preco))}) é próprio e muda na janela do item, em Delivery.`}>
           delivery tem preço próprio

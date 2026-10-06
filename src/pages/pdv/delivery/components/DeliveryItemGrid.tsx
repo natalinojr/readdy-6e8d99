@@ -1,3 +1,4 @@
+import { extraMinimoGruposItem } from '@/lib/precoAPartirDe';
 import { useState, useMemo, useRef, useCallback } from 'react';
 import { useCardapio } from '@/contexts/CardapioContext';
 import type { Item, GrupoOpcoes, OpcaoItem } from '@/types/cardapio';
@@ -358,6 +359,7 @@ export default function DeliveryItemGrid({ onAdd }: Props) {
             {itensFiltrados.map((item) => {
               const promoAtiva = promoAtivaHoje(item.promocoes);
               const preco = promoAtiva ? promoAtiva.precoPromocional : item.preco;
+              const extraAPartir = extraMinimoGruposItem(item.gruposOpcoes);
               const insumosFaltando: InsumoFaltando[] = itensSemEstoque.get(item.id) ?? [];
               const semEstoque = insumosFaltando.length > 0;
               // Fora do horário de exibição: some do cardápio do cliente, mas o caixa ainda lança.
@@ -439,8 +441,11 @@ export default function DeliveryItemGrid({ onAdd }: Props) {
                         </p>
                       ) : (
                         <div className="flex items-center justify-between mt-2">
-                          <span className="text-sm font-black text-zinc-900">R$ {preco.toFixed(2)}</span>
-                          {promoAtiva && (
+                          <span className="text-sm font-black text-zinc-900">
+                            {extraAPartir > 0 && <span className="text-[10px] font-semibold text-zinc-400">a partir de </span>}
+                            R$ {(preco + extraAPartir).toFixed(2)}
+                          </span>
+                          {promoAtiva && extraAPartir === 0 && (
                             <span className="text-[10px] text-zinc-400 line-through">
                               R$ {item.preco.toFixed(2)}
                             </span>

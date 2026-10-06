@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useCardapio } from '@/contexts/CardapioContext';
 import ItemImage from '@/components/base/ItemImage';
+import { extraMinimoGruposItem } from '@/lib/precoAPartirDe';
 import { confirmar } from '@/components/base/Dialogos';
 import HorarioExibicaoEditor, { SeloHorario } from '@/components/feature/HorarioExibicaoEditor';
 import {
@@ -21,6 +22,9 @@ export default function DestaquesTab() {
     adicionarDestaque, editarDestaque, removerDestaque, reordenarDestaques,
     saving,
   } = useCardapio();
+
+  // Preço "a partir de": soma das opções obrigatórias mais baratas (só exibição)
+  const extraDoItem = (itemId: string) => extraMinimoGruposItem(itens.find((i) => i.id === itemId)?.gruposOpcoes);
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [buscaAdd, setBuscaAdd] = useState('');
@@ -258,7 +262,8 @@ export default function DestaquesTab() {
               ) : (
                 <div className="flex items-center gap-3 mt-0.5 flex-wrap">
                   <span className="text-sm font-bold text-orange-600">
-                    R$ {(dest.customPrice != null ? dest.customPrice : dest.itemPreco).toFixed(2).replace('.', ',')}
+                    {dest.customPrice == null && extraDoItem(dest.itemId) > 0 && <span className="text-xs font-semibold text-gray-400">a partir de </span>}
+                    R$ {(dest.customPrice != null ? dest.customPrice : dest.itemPreco + extraDoItem(dest.itemId)).toFixed(2).replace('.', ',')}
                   </span>
                   {dest.customPrice != null && (
                     <span className="text-xs text-gray-400 line-through">R$ {dest.itemPreco.toFixed(2).replace('.', ',')}</span>
@@ -419,7 +424,7 @@ export default function DestaquesTab() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-gray-800">{item.nome}</p>
-                        <p className="text-xs text-gray-400">{categoriaMap[item.categoriaId] ?? '—'} · R$ {item.preco.toFixed(2).replace('.', ',')}</p>
+                        <p className="text-xs text-gray-400">{categoriaMap[item.categoriaId] ?? '—'} · {extraDoItem(item.id) > 0 ? 'a partir de ' : ''}R$ {(item.preco + extraDoItem(item.id)).toFixed(2).replace('.', ',')}</p>
                       </div>
                       <i className="ri-add-circle-line text-orange-500 text-lg" />
                     </button>

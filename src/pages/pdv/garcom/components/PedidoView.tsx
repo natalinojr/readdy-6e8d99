@@ -1,3 +1,4 @@
+import { extraMinimoGruposItem } from '@/lib/precoAPartirDe';
 import { useState, useMemo, useRef, useCallback } from 'react';
 import type { Item } from '@/types/cardapio';
 import { useCardapio } from '../../../../contexts/CardapioContext';
@@ -480,6 +481,7 @@ export default function PedidoView({
               {itens.map((item) => {
                 const promoAtiva = promoAtivaHoje(item.promocoes);
                 const preco = promoAtiva ? promoAtiva.precoPromocional : item.preco;
+                const extraAPartir = extraMinimoGruposItem(item.gruposOpcoes);
                 const temOpcaoObrig = item.gruposOpcoes.some((g) => g.obrigatorio);
                 const qtdNoCarrinho = carrinho.filter((c) => c.itemId === item.id).reduce((a, c) => a + c.quantidade, 0);
                 const insumosFaltando: InsumoFaltando[] = itensSemEstoque.get(item.id) ?? [];
@@ -560,7 +562,10 @@ export default function PedidoView({
                           </p>
                         ) : (
                           <div className="flex items-center justify-between gap-1 flex-wrap">
-                            <span className={`text-xs font-bold ${promoAtiva ? 'text-red-500' : 'text-amber-600'}`}>{formatPrice(preco)}</span>
+                            <span className={`text-xs font-bold ${promoAtiva ? 'text-red-500' : 'text-amber-600'}`}>
+                              {extraAPartir > 0 && <span className="text-[10px] font-semibold text-zinc-400">a partir de </span>}
+                              {formatPrice(preco + extraAPartir)}
+                            </span>
                             {temOpcaoObrig && (
                               <span className="text-[9px] font-semibold text-white bg-amber-500 px-1.5 py-0.5 rounded-full whitespace-nowrap">
                                 + opções

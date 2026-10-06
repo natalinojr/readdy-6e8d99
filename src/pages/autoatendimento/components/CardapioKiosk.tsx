@@ -8,6 +8,7 @@ import { useItensSemEstoque } from '@/hooks/useItensSemEstoque';
 import { toggleOpcaoGrupo, primeiroGrupoFaltando, mensagemGrupoFaltando, mensagemMaximoAtingido } from '@/lib/optionGroupSelection';
 import { comQuebraAposVirgula } from '../../../lib/quebraTexto';
 import { useTranslation } from 'react-i18next';
+import { extraMinimoGruposItem } from '../../../lib/precoAPartirDe';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useKioskAuth } from '../../../contexts/KioskAuthContext';
@@ -269,7 +270,10 @@ function OpcoesKiosk({ item, onAdicionar, onClose, tr }: OpcoesKioskProps) {
                   <span className="text-red-400 font-bold">{fmt(item.preco)}</span>
                 </p>
               ) : (
-                <p className="text-zinc-400 text-sm mt-1 font-bold">{fmt(item.preco)}</p>
+                <p className="text-zinc-400 text-sm mt-1 font-bold">
+                  {extraMinimoGruposItem(item.opcoes) > 0 && <span className="font-semibold">{t('cliente.aPartirDe')} </span>}
+                  {fmt(item.preco + extraMinimoGruposItem(item.opcoes))}
+                </p>
               )}
             </div>
           </div>
@@ -752,7 +756,10 @@ export default function CardapioKiosk({ carrinho, onAdicionar, onDiminuir, onVer
                           <span className="font-black text-2xl text-red-400">{fmt(item.preco)}</span>
                         </div>
                       ) : (
-                        <p className={`font-black text-2xl mt-1.5 ${esgotado ? 'text-zinc-600' : 'text-amber-400'}`}>{fmt(item.preco)}</p>
+                        <p className={`font-black text-2xl mt-1.5 ${esgotado ? 'text-zinc-600' : 'text-amber-400'}`}>
+                          {extraMinimoGruposItem(item.opcoes) > 0 && <span className="text-base font-semibold text-zinc-400">{t('cliente.aPartirDe')} </span>}
+                          {fmt(item.preco + extraMinimoGruposItem(item.opcoes))}
+                        </p>
                       )}
                     </div>
 

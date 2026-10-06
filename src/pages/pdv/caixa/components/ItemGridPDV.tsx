@@ -1,3 +1,5 @@
+
+import { extraMinimoGruposItem } from '@/lib/precoAPartirDe';
 import { useMemo, useState, useRef, useCallback } from 'react';
 import type { Item } from '@/types/cardapio';
 import { useEstoque } from '../../../../contexts/EstoqueContext';
@@ -134,6 +136,7 @@ export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItem
         {itens.map((item) => {
           const promoAtiva = promoAtivaHoje(item.promocoes);
           const precoFinal = promoAtiva ? promoAtiva.precoPromocional : item.preco;
+          const extraAPartir = extraMinimoGruposItem(item.gruposOpcoes);
           const insumosFaltando = itensSemEstoque.get(item.id) ?? [];
           const semEstoqueInsumo = insumosFaltando.length > 0;
           const esgotado = itensDesabilitadosIds.includes(item.id) || semEstoqueInsumo;
@@ -251,11 +254,12 @@ export default function ItemGridPDV({ categoriaAtiva, busca, onItemClick, onItem
                     </p>
                   ) : (
                     <div className="flex items-baseline gap-1.5 flex-wrap">
-                      {promoAtiva && (
+                      {promoAtiva && extraAPartir === 0 && (
                         <span className="text-[10px] text-zinc-300 line-through font-medium">{formatPrice(item.preco)}</span>
                       )}
+                      {extraAPartir > 0 && <span className="text-[10px] font-semibold text-zinc-400">a partir de</span>}
                       <span className={`text-sm font-black tabular-nums ${promoAtiva ? 'text-red-500' : 'text-amber-600'}`}>
-                        {formatPrice(precoFinal)}
+                        {formatPrice(precoFinal + extraAPartir)}
                       </span>
                     </div>
                   )}
