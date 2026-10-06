@@ -260,9 +260,10 @@ function ListaAgora({ fixas, dados, avisos, hoje, mostrarLoja, irVer }: {
     const g = grupoMercadoria(m, avisos);
     const prox = m.contas.find((c) => c.status !== 'paid');
     if (g === 'nao_pague' && prox) {
-      itens.push({ chave: `m${m.id}`, pill: !m.chegou_em ? 'Não chegou' : m.diferente ? 'Chegou diferente' : 'Com aviso', tom: m.chegou_em ? 'red' : 'amber',
+      const naoChegou = m.espera_chegar !== false && !m.chegou_em;
+      itens.push({ chave: `m${m.id}`, pill: naoChegou ? 'Não chegou' : m.diferente ? 'Chegou diferente' : 'Com aviso', tom: naoChegou ? 'amber' : 'red',
         titulo: `${m.fornecedor}${m.numero ? ` NF ${m.numero}` : ''} · ${brl(prox.saldo)} · vence ${ddmm(prox.vence)}`,
-        detalhe: `${!m.chegou_em ? `Nota de ${ddmm(m.emitida)}; ninguém confirmou a entrega.` : (avisos[prox.id]?.[0]?.texto ?? 'Chegou diferente na conferência.')}${loja(m.loja)}`, ver: 'mercadoria', ordem: prox.vence });
+        detalhe: `${naoChegou ? `Nota de ${ddmm(m.emitida)}; ninguém confirmou a entrega.` : (avisos[prox.id]?.[0]?.texto ?? 'Chegou diferente na conferência.')}${loja(m.loja)}`, ver: 'mercadoria', ordem: prox.vence });
     }
   }
   for (const n of dados?.notas ?? []) {

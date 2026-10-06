@@ -70,7 +70,7 @@ function CartaoCompra({ c, avisos, mostrarLoja, dono, financeiro, onMudou, irPar
   const abertas = c.contas.filter((x) => x.status !== 'paid');
   const prox = abertas[0];
   const avisosDaCompra = [...new Map(abertas.flatMap((x) => avisos[x.id] ?? []).map((a) => [a.texto, a])).values()];
-  const pill = g === 'nao_pague' ? (!c.chegou_em ? <Pilula tom="amber">Esperando chegar</Pilula> : c.diferente ? <Pilula tom="red">Chegou diferente</Pilula> : <Pilula tom="red">Com aviso</Pilula>)
+  const pill = g === 'nao_pague' ? (c.espera_chegar !== false && !c.chegou_em ? <Pilula tom="amber">Esperando chegar</Pilula> : c.diferente ? <Pilula tom="red">Chegou diferente</Pilula> : <Pilula tom="red">Com aviso</Pilula>)
     : g === 'sem_boleto' ? <Pilula tom="amber">Sem boleto ainda</Pilula> : g === 'pronta' ? <Pilula tom="green">Tudo certo</Pilula> : <Pilula tom="zinc">Paga</Pilula>;
   return (
     <Cartao destaque={g === 'nao_pague' ? (c.chegou_em ? 'red' : 'amber') : undefined}>
@@ -108,7 +108,7 @@ function CartaoCompra({ c, avisos, mostrarLoja, dono, financeiro, onMudou, irPar
       )}
       {g !== 'paga' && (
         <div className="flex flex-wrap gap-2 mt-3">
-          {!c.chegou_em && !c.bonus && (
+          {!c.chegou_em && c.espera_chegar !== false && !c.bonus && (
             <button onClick={() => irPara(c.tenant_id, `/receber?abrir=compra:${c.id}`)} className={SECUNDARIO}><i className="ri-truck-line" /> Chegou — conferir</button>
           )}
           {prox && (financeiro || dono) && (

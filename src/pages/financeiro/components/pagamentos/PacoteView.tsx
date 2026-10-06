@@ -49,11 +49,13 @@ export default function PacoteView({ caixa, avisos, hoje, mostrarLoja, dono, fin
         out.push({ id: x.id, nome: x.nome, ok: !falhou, texto: falhou ? (pg.payment.error ?? 'não foi pago') : pg.payment.status === 'paid' ? 'pago' : 'enviado — falta aprovar no app do Inter' });
       } catch (e) {
         const m = e instanceof Error ? e.message : String(e);
-        out.push({ id: x.id, nome: x.nome, ok: false, texto: m });
-        setRes([...out]);
         const pinErrado = /PIN errado|PIN bloqueado|Bloqueado/i.test(m);
-        // Rascunho que ficou aberto (PIN errado, aviso novo): cancela para não travar a conta por 30 min
-        if (prepId) await cancelar(prepId);
+        // Só cancela o rascunho quando o erro é de ANTES de enviar (PIN, aviso novo, expirou). Erro de rede
+        // pode ter chegado ao Inter: aí não cancela (cancelaria um boleto que saiu) — confira no histórico.
+        const antesDeEnviar = pinErrado || /^Antes de pagar|expirou|Esse já está/i.test(m);
+        out.push({ id: x.id, nome: x.nome, ok: false, texto: antesDeEnviar || !prepId ? m : `${m} — confira no histórico de pagamentos antes de tentar de novo` });
+        setRes([...out]);
+        if (prepId && antesDeEnviar) await cancelar(prepId);
         if (pinErrado) break; // para tudo, sem bloquear o PIN tentando de novo
         continue;
       }
