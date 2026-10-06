@@ -183,6 +183,12 @@ export function useConciliacao(bankAccountId?: string, period?: { from?: string;
   }, [user?.tenantId]);
 
   useEffect(() => { fetchImports(); }, [fetchImports]);
+  // refresh entregue à tela relê SEMPRE a conta/período escolhidos agora. A busca nos bancos ao abrir
+  // leva vários segundos e chamava o refresh guardado no começo (Inter): com o Mercado Pago já
+  // escolhido, a lista voltava a ser a do Inter (05/10).
+  const fetchAtual = useRef(fetchImports);
+  fetchAtual.current = fetchImports;
+  const refresh = useCallback((silent?: boolean) => fetchAtual.current(silent), []);
   useEffect(() => { fetchRules(); }, [fetchRules]);
 
   // Apply rules to a description
@@ -405,7 +411,7 @@ export function useConciliacao(bankAccountId?: string, period?: { from?: string;
     rules,
     loading,
     rulesLoading,
-    refresh: fetchImports,
+    refresh,
     refreshRules: fetchRules,
     updateImport,
     reconcile,
