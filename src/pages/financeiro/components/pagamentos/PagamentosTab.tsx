@@ -101,6 +101,7 @@ export default function PagamentosTab() {
   const aPagarPessoas = pessoas.filter((p) => p.tipo === 'freela' || p.tipo === 'pedido_pagar');
   const aprovar = pessoas.filter((p) => p.tipo === 'aprovar').length;
   const avulsos = dados?.avulsos ?? [];
+  const vencidas = (dados?.caixa ?? []).flatMap((c) => c.contas).filter((c) => c.vencimento < hoje && Number(c.valor) > 0.005);
   const pacote = dados ? pacoteDaSemana(dados.caixa, avisos, hoje, diaDePagar ?? new Date(`${hoje}T12:00:00Z`).getUTCDay()) : null;
 
   const contagem: Partial<Record<Ver, number>> = {
@@ -194,6 +195,7 @@ export default function PagamentosTab() {
               <CartaoTipo icone="ri-stack-line" cor="text-emerald-700 bg-emerald-50" titulo={diaDePagar != null ? 'Pacote do dia de pagar' : 'Próximos 7 dias'}
                 grande={`${pacote.prontas.length} prontas · ${brl(pacote.total)}`} onAbrir={() => irVer('pacote')}
                 linhas={[
+                  vencidas.length ? { tom: 'red', t: `${vencidas.length} ${vencidas.length === 1 ? 'conta vencida' : 'contas vencidas'} — ${brl(vencidas.reduce((x, c) => x + Number(c.valor), 0))}` } : null,
                   pacote.comAviso.length ? { tom: 'red', t: `${pacote.comAviso.length} com aviso, fora do pacote` } : null,
                   pacote.semJeito.length ? { tom: 'amber', t: `${pacote.semJeito.length} sem boleto nem Pix guardado` } : null,
                   ...(dados?.caixa ?? []).map((c) => {
@@ -262,13 +264,30 @@ function ListaAgora({ fixas, dados, avisos, hoje, mostrarLoja, irVer }: {
     if (g === 'nao_pague' && prox) {
       const naoChegou = m.espera_chegar !== false && !m.chegou_em;
       itens.push({ chave: `m${m.id}`, pill: naoChegou ? 'Não chegou' : m.diferente ? 'Chegou diferente' : 'Com aviso', tom: naoChegou ? 'amber' : 'red',
-        titulo: `${m.fornecedor}${m.numero ? ` NF ${m.numero}` : ''} · ${brl(prox.saldo)} · vence ${ddmm(prox.vence)}`,
+        titulo: `${m.fornecedor}${m.numero ? ` NF ${m.numero}` : ''} · ${brl(prox.saldo)} · ${prox.vence < hoje ? 'venceu' : 'vence'} ${ddmm(prox.vence)}`,
         detalhe: `${naoChegou ? `Nota de ${ddmm(m.emitida)}; ninguém confirmou a entrega.` : (avisos[prox.id]?.[0]?.texto ?? 'Chegou diferente na conferência.')}${loja(m.loja)}`, ver: 'mercadoria', ordem: prox.vence });
     }
   }
   for (const n of dados?.notas ?? []) {
     const v = (n.parcelas ?? []).map((p) => p.vencimento).filter(Boolean).sort()[0];
     if (v && v <= hoje.slice(0, 8) + '31') itens.push({ chave: `n${n.id}`, pill: 'Falta lançar', tom: 'amber', titulo: `${n.fornecedor}${n.numero ? ` NF ${n.numero}` : ''} · ${brl(n.valor)}`, detalhe: `A nota não virou compra — sem isso não nasce a conta a pagar${loja(n.loja)}.`, ver: 'mercadoria', ordem: v });
+  }
+  // Qualquer conta vencida ou que vence hoje (2026-10-06, o dono: "estou com um pagamento vencido, não
+  // tinha que estar aí?") — a que já não entrou acima como conta fixa ou mercadoria.
+  const jaNaLista = new Set<string>([
+    ...fixas.flatMap((f) => f.contas.map((c) => c.id)),
+    ...(dados?.mercadoria ?? []).filter((m) => grupoMercadoria(m, avisos) === 'nao_pague').flatMap((m) => m.contas.map((c) => c.id)),
+  ]);
+  for (const cx of dados?.caixa ?? []) {
+    for (const c of cx.contas) {
+      if (c.vencimento > hoje || jaNaLista.has(c.id) || !(Number(c.valor) > 0.005)) continue;
+      const dias = Math.round((Date.parse(`${hoje}T12:00:00Z`) - Date.parse(`${c.vencimento}T12:00:00Z`)) / 86400000);
+      const av = avisos[c.id]?.[0]?.texto;
+      itens.push({ chave: `c${c.id}`, pill: dias > 0 ? 'Vencida' : 'Vence hoje', tom: 'red',
+        titulo: `${c.nome} · ${brl(c.valor)}`,
+        detalhe: `${dias > 0 ? `Venceu ${ddmm(c.vencimento)} (${dias} ${dias === 1 ? 'dia' : 'dias'})` : 'Vence hoje'}${c.tem_boleto ? '' : ' · sem boleto nem Pix guardado'}${av ? ` · ${av}` : ''}${loja(cx.loja)}.`,
+        ver: 'pacote', ordem: c.vencimento });
+    }
   }
   for (const a of (dados?.avulsos ?? []).slice(0, 5)) {
     itens.push({ chave: `a${a.id}`, pill: 'Sem explicação', tom: 'red', titulo: `${brl(a.valor)} → ${a.para}`, detalhe: `Saiu do banco em ${ddmm(a.data)} e ninguém disse o que foi${loja(a.loja)}.`, ver: 'avulsos', ordem: a.data });
