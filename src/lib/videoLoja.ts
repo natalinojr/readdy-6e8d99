@@ -2,7 +2,7 @@
 // Confere o arquivo no navegador, tira um quadro de capa (poster) e manda o vídeo direto
 // ao Storage por URL assinada que o config-write cria (só admin/gerente da loja).
 import { invokeWithAuth, uploadMenuImage, SUPABASE_ANON_KEY } from '@/lib/supabase';
-import { VIDEO_MAX_BYTES, type VideoLoja } from '@/lib/capasLoja';
+import { VIDEOS_MAX_BYTES_TOTAL, type VideoLoja } from '@/lib/capasLoja';
 
 const EXT_POR_TIPO: Record<string, string> = { 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov' };
 const TIPO_POR_EXT: Record<string, string> = { mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime' };
@@ -61,11 +61,23 @@ async function tirarQuadro(v: HTMLVideoElement): Promise<Blob | null> {
   }
 }
 
-export async function enviarVideoLoja(file: File, tenantId: string): Promise<{ video: VideoLoja | null; erro: string | null }> {
+/** Tamanho dos vídeos salvos antes de o tamanho ser gravado (HEAD no arquivo público). */
+export async function tamanhoVideo(url: string): Promise<number> {
+  try {
+    const r = await fetch(url, { method: 'HEAD' });
+    return Number(r.headers.get('content-length')) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** usadoBytes = soma dos vídeos que a loja já tem (o limite é 50 MB no total). */
+export async function enviarVideoLoja(file: File, tenantId: string, usadoBytes = 0): Promise<{ video: VideoLoja | null; erro: string | null }> {
   const ext = EXT_POR_TIPO[file.type] || (/\.(mp4|webm|mov)$/i.exec(file.name)?.[1] || '').toLowerCase();
   if (!ext) return { video: null, erro: 'Envie o vídeo em MP4 (ou WebM/MOV).' };
-  if (file.size > VIDEO_MAX_BYTES) {
-    return { video: null, erro: 'Vídeo com ' + (file.size / 1024 / 1024).toFixed(1) + ' MB. O máximo é ' + (VIDEO_MAX_BYTES / 1024 / 1024) + ' MB — encurte ou exporte em 720p.' };
+  if (usadoBytes + file.size > VIDEOS_MAX_BYTES_TOTAL) {
+    const mb = function (b: number) { return (b / 1024 / 1024).toFixed(1).replace('.', ','); };
+    return { video: null, erro: 'Vídeo com ' + mb(file.size) + ' MB e sobram ' + mb(Math.max(0, VIDEOS_MAX_BYTES_TOTAL - usadoBytes)) + ' MB (máximo 50 MB somando todos). Remova um vídeo ou exporte este em 720p.' };
   }
   if (ext !== 'webm' && videoEhHevc(new Uint8Array(await file.arrayBuffer()))) {
     return { video: null, erro: 'Este vídeo está em HEVC (padrão do iPhone) e não abre em muitos celulares Android. No iPhone: Ajustes › Câmera › Formatos › "Mais compatível" e grave de novo, ou exporte em MP4 (H.264).' };
@@ -107,5 +119,5 @@ export async function enviarVideoLoja(file: File, tenantId: string): Promise<{ v
     const corpo = await res.json().catch(function () { return {} as Record<string, unknown>; });
     return { video: null, erro: String((corpo as Record<string, unknown>).message || (corpo as Record<string, unknown>).error || 'Falha no envio (HTTP ' + res.status + ')') };
   }
-  return { video: { url: data.public_url, poster }, erro: null };
+  return { video: { url: data.public_url, poster, bytes: file.size }, erro: null };
 }

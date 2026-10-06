@@ -3,8 +3,8 @@ import { Store, Camera, Save } from 'lucide-react';
 import { supabase, invokeWithAuth, uploadMenuImage } from '@/lib/supabase';
 import { COR_LOJA_PADRAO } from '@/lib/corLoja';
 import EditorPosicaoCapa from './EditorPosicaoCapa';
-import { lerFotosLoja, lerVideosLoja, MAX_CAPAS, MAX_VIDEOS, VIDEO_MAX_BYTES, type CapaLoja, type VideoLoja } from '@/lib/capasLoja';
-import { enviarVideoLoja } from '@/lib/videoLoja';
+import { lerFotosLoja, lerVideosLoja, MAX_CAPAS, VIDEOS_MAX_BYTES_TOTAL, type CapaLoja, type VideoLoja } from '@/lib/capasLoja';
+import { enviarVideoLoja, tamanhoVideo } from '@/lib/videoLoja';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
 import { avisar } from '@/components/base/Dialogos';
@@ -178,21 +178,35 @@ export default function LojaTab() {
     setCapaSel((sel) => Math.max(0, sel > i ? sel - 1 : Math.min(sel, capas.length - 2)));
   };
 
-  // Vídeos (até 3): tocam no topo do delivery/QR e em loop na tela de espera do totem
+  // Vídeos (quantos quiser, até 50 MB somados): tocam no topo do delivery/QR e em loop na tela de espera do totem
   const [videos, setVideos] = useState<VideoLoja[]>([]);
   const [enviandoVideo, setEnviandoVideo] = useState(false);
   const enviando = enviandoCapa || enviandoVideo;
+  const usadoVideos = videos.reduce((s, v) => s + (v.bytes ?? 0), 0);
+  const mbVideo = (b: number) => (b / 1024 / 1024).toFixed(1).replace('.', ',');
+
+  // Vídeos salvos antes de o tamanho ser gravado: busca o tamanho no arquivo para a conta dos 50 MB
+  const semTamanho = videos.filter((v) => !v.bytes).map((v) => v.url).join('|');
+  useEffect(() => {
+    if (!semTamanho) return;
+    let ativo = true;
+    void Promise.all(semTamanho.split('|').map(async (url) => [url, await tamanhoVideo(url)] as const)).then((pares) => {
+      if (!ativo) return;
+      const mapa = new Map(pares.filter(([, b]) => b > 0));
+      if (mapa.size) setVideos((atual) => atual.map((v) => (!v.bytes && mapa.has(v.url) ? { ...v, bytes: mapa.get(v.url) } : v)));
+    });
+    return () => { ativo = false; };
+  }, [semTamanho]);
 
   const enviarVideo = async (file: File | undefined) => {
     if (!file || !user?.tenantId) return;
-    if (videos.length >= MAX_VIDEOS) { void avisar('Já são ' + MAX_VIDEOS + ' vídeos. Remova um para enviar outro.'); return; }
     setEnviandoVideo(true);
     const loja = user.tenantId;
-    const { video, erro } = await enviarVideoLoja(file, loja);
+    const { video, erro } = await enviarVideoLoja(file, loja, usadoVideos);
     setEnviandoVideo(false);
     if (lojaAtualRef.current !== loja) return;
     if (erro || !video) { void avisar(erro || 'Não foi possível enviar o vídeo.'); return; }
-    setVideos((atual) => [...atual, video].slice(0, MAX_VIDEOS));
+    setVideos((atual) => [...atual, video]);
   };
 
   const moverVideo = (de: number, para: number) => {
@@ -484,7 +498,7 @@ export default function LojaTab() {
           <div className="sm:col-span-2 border-t border-zinc-100 pt-4">
             <div className="flex items-baseline justify-between mb-2">
               <p className="text-xs font-semibold text-zinc-600">Vídeos da loja</p>
-              <p className="text-[10px] text-zinc-400">{videos.length} de {MAX_VIDEOS}</p>
+              <p className={'text-[10px] ' + (usadoVideos > VIDEOS_MAX_BYTES_TOTAL ? 'text-red-500 font-semibold' : 'text-zinc-400')}>{mbVideo(usadoVideos)} de {VIDEOS_MAX_BYTES_TOTAL / 1024 / 1024} MB</p>
             </div>
             {videos.length > 0 ? (
               <div className="flex flex-wrap gap-3 mb-2">
@@ -509,7 +523,7 @@ export default function LojaTab() {
                 ))}
               </div>
             ) : null}
-            {videos.length < MAX_VIDEOS ? (
+            {usadoVideos < VIDEOS_MAX_BYTES_TOTAL ? (
               <label className={'inline-flex items-center gap-2 px-3 py-2 bg-zinc-100 text-zinc-700 text-xs font-semibold rounded-lg hover:bg-zinc-200 transition-colors whitespace-nowrap ' + (enviando ? 'opacity-60 pointer-events-none' : 'cursor-pointer')}>
                 {enviandoVideo ? <i className="ri-loader-4-line animate-spin" /> : <i className="ri-video-add-line" />}
                 {enviandoVideo ? 'Enviando vídeo…' : 'Enviar vídeo'}
@@ -527,7 +541,7 @@ export default function LojaTab() {
               </label>
             ) : null}
             <p className="text-[10px] text-zinc-400 mt-1">
-              Até {MAX_VIDEOS} vídeos (até {VIDEO_MAX_BYTES / 1024 / 1024} MB cada, MP4). Tocam sem som no topo do delivery e do QR, antes das fotos, e em sequência na tela de espera do totem. Quem está em economia de dados vê só a foto do vídeo.
+              Quantos vídeos quiser, até {VIDEOS_MAX_BYTES_TOTAL / 1024 / 1024} MB somando todos (MP4; exportar em 720p deixa leve). Tocam sem som no topo do delivery e do QR, antes das fotos, e em sequência na tela de espera do totem. Quem está em economia de dados vê só a foto do vídeo.
             </p>
           </div>
         </div>

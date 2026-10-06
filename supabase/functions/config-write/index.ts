@@ -660,16 +660,21 @@ Deno.serve(async (req) => {
         updateData.cover_url = capas[0]?.url || null
         updateData.cover_position = capas[0]?.position || null
       }
-      // Vídeos da loja (até 3): só arquivos do bucket loja-videos desta loja
+      // Vídeos da loja: quantos quiser, até 50 MB somados (tamanho real lido do Storage);
+      // só arquivos do bucket loja-videos desta loja
       if (rest.cover_videos !== undefined) {
         const lista = Array.isArray(rest.cover_videos) ? rest.cover_videos : null
-        if (!lista || lista.length > 3) {
-          return new Response(JSON.stringify({ success: false, error: 'Envie no máximo 3 vídeos' }), {
+        if (!lista) {
+          return new Response(JSON.stringify({ success: false, error: 'Lista de vídeos inválida' }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
           })
         }
+        const { data: arquivos } = await supabaseAdmin.storage.from('loja-videos').list(tenantIdFromBody, { limit: 1000 })
+        const tamanhoDe = new Map<string, number>()
+        for (const a of arquivos ?? []) tamanhoDe.set(a.name, Number((a.metadata as Record<string, unknown> | null)?.size ?? 0))
         const prefixo = `${Deno.env.get('SUPABASE_URL')}/storage/v1/object/public/loja-videos/${tenantIdFromBody}/`
-        const videos: { url: string; poster: string }[] = []
+        const videos: { url: string; poster: string; bytes: number }[] = []
+        let total = 0
         for (const item of lista) {
           const url = String((item as Record<string, unknown>)?.url ?? '').trim()
           const poster = String((item as Record<string, unknown>)?.poster ?? '').trim()
@@ -682,7 +687,14 @@ Deno.serve(async (req) => {
               headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
             })
           }
-          videos.push({ url, poster })
+          const bytes = tamanhoDe.get(nomeArquivo) ?? 0
+          total += bytes
+          videos.push({ url, poster, bytes })
+        }
+        if (total > 50 * 1024 * 1024) {
+          return new Response(JSON.stringify({ success: false, error: `Os vídeos somam ${(total / 1024 / 1024).toFixed(1)} MB. O máximo é 50 MB no total — remova algum.` }), {
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 400,
+          })
         }
         updateData.cover_videos = videos
       }
@@ -710,7 +722,7 @@ Deno.serve(async (req) => {
     }
 
     // Upload de vídeo da loja: devolve URL assinada (vale 2 h) para o navegador mandar o
-    // arquivo direto ao Storage — 10 MB passando pela Edge seria lento e caro.
+    // arquivo direto ao Storage — dezenas de MB passando pela Edge seria lento e caro.
     if (action === 'cover_video_upload_url') {
       const tenantIdFromBody = tenant_id || active_tenant_id
       const ext = String(rest.ext ?? '').toLowerCase()
