@@ -239,6 +239,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
     const hoje = new Date();
     const today = `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}-${String(hoje.getDate()).padStart(2, '0')}`;
     const falhas: string[] = [];
+    const comAviso: string[] = [];
     for (const id of Array.from(selectedIds)) {
       const bill = billsDoMes.find((b) => b.id === id);
       if (!bill || bill.status === 'paid') continue;
@@ -250,11 +251,16 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
       try {
         await pay(id, today, valor, 'Dinheiro');
       } catch (err) {
-        falhas.push(`${bill.description}: ${err instanceof Error ? err.message : 'erro'}`);
+        // Aviso antes de pagar (2026-10-06): no lote não dá para dizer o motivo de cada uma — fica de fora.
+        if ((err as { code?: string }).code === PRECISA_CONFIRMAR) comAviso.push(bill.description);
+        else falhas.push(`${bill.description}: ${err instanceof Error ? err.message : 'erro'}`);
       }
     }
-    if (falhas.length > 0) {
-      setBulkPayError(`${falhas.length} conta(s) não foram pagas — ${falhas[0]}${falhas.length > 1 ? ` (e mais ${falhas.length - 1})` : ''}`);
+    if (falhas.length > 0 || comAviso.length > 0) {
+      setBulkPayError([
+        falhas.length ? `${falhas.length} conta(s) não foram pagas — ${falhas[0]}${falhas.length > 1 ? ` (e mais ${falhas.length - 1})` : ''}` : '',
+        comAviso.length ? `${comAviso.length} com aviso ficaram de fora (mercadoria não chegou, valor fora…): dê a baixa uma por uma — ${comAviso.slice(0, 3).join(', ')}` : '',
+      ].filter(Boolean).join(' · '));
     }
     setSelectedIds(new Set());
     setBulkPaying(false);

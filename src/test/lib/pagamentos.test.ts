@@ -42,6 +42,16 @@ describe('mercadoria a prazo', () => {
   it('aviso do servidor (ex.: pago antes) = não pague ainda', () => {
     expect(grupoMercadoria(compra({}), { b1: [{ tipo: 'pago_antes', texto: 'x' }] })).toBe('nao_pague');
   });
+  it('compra que não precisa chegar (compra online, nota de despesa) não fica em "não pague"', () => {
+    expect(grupoMercadoria(compra({ chegou_em: null, espera_chegar: false }), {})).toBe('pronta');
+    expect(trilhos(compra({ chegou_em: null, espera_chegar: false })).dinheiro[2]).toBe('agora');
+  });
+  it('conta já paga em parte não entra no pacote (o boleto pagaria o valor cheio)', () => {
+    const c = { tenant_id: 't', loja: 'L', no_banco: 0, n_bancos: 1, contas: [{ id: 'p', nome: 'X', descricao: null, valor: 50, vencimento: '2026-10-07', tem_boleto: true, origem: 'purchase', parcial: true }] };
+    const p = pacoteDaSemana([c], {}, '2026-10-06', 2);
+    expect(p.prontas).toHaveLength(0);
+    expect(p.semJeito.map((x) => x.id)).toEqual(['p']);
+  });
   it('bonificação não espera chegar', () => {
     expect(grupoMercadoria(compra({ bonus: true, chegou_em: null }), {})).toBe('pronta');
   });

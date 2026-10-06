@@ -5,7 +5,7 @@ import { caixaDaSemana, type Caixa } from './previsao.ts';
 
 export interface AvisoPagar { tipo: string; texto: string }
 
-export interface ContaAbertaCaixa { id: string; nome: string; descricao: string | null; valor: number; vencimento: string; tem_boleto: boolean; origem: string | null }
+export interface ContaAbertaCaixa { id: string; nome: string; descricao: string | null; valor: number; vencimento: string; tem_boleto: boolean; origem: string | null; parcial?: boolean }
 export interface CaixaLoja { tenant_id: string; loja: string; no_banco: number; n_bancos: number; contas: ContaAbertaCaixa[] }
 
 /** Mesma régua do aviso "Caixa da semana" (previsao.ts): vencidas + próximos 7 dias contra o saldo. */
@@ -49,7 +49,8 @@ export function pacoteDaSemana(caixas: CaixaLoja[], avisos: Record<string, Aviso
       const base = { ...x, valor: Number(x.valor), tenant_id: c.tenant_id, loja: c.loja };
       const av = avisos[x.id] ?? [];
       if (av.length) p.comAviso.push({ ...base, avisos: av });
-      else if (!x.tem_boleto) p.semJeito.push(base);
+      // sem linha digitável/Pix, ou já paga em parte (o boleto pagaria o valor cheio): uma por uma
+      else if (!x.tem_boleto || x.parcial) p.semJeito.push(base);
       else { p.prontas.push(base); p.total += base.valor; }
     }
   }

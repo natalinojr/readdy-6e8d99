@@ -3,7 +3,7 @@
 // Cinco tipos, cada um com o seu caminho: contas fixas, mercadoria a prazo, compra à vista, pessoas, avulsos.
 // A Trilha continua igual (o histórico de cada despesa); aqui é o que falta acontecer.
 // Regras no banco (fn_contas_fixas, fn_pagamentos, fn_aviso_pagar) — as mesmas da Hoje e do botão de pagar.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { DONO_EMAIL } from '../../../../../supabase/functions/_shared/pendencia-visivel';
@@ -48,6 +48,7 @@ export default function PagamentosTab() {
   const [versao, setVersao] = useState(0);
   const [diaDePagar, setDiaDePagar] = useState<number | null>(null);
   const recarregar = useCallback(() => setVersao((v) => v + 1), []);
+  const ultimaCarga = useRef(0);
   // A visão geral é sempre do mês corrente (o mês só muda dentro de Contas fixas).
   useEffect(() => { if (ver !== 'fixas') setMes(mesAtual); }, [ver, mesAtual]);
 
@@ -61,6 +62,7 @@ export default function PagamentosTab() {
     if (!tenants.length) return;
     let vivo = true;
     setCarregando(true); setErro(null);
+    ultimaCarga.current = Date.now();
     Promise.all([carregarFixas(tenants, mes), carregarPagamentos(tenants)])
       .then(([f, d]) => { if (vivo) { setFixas(f); setDados(d); } })
       .catch((e) => { if (vivo) setErro(e instanceof Error ? e.message : String(e)); })
@@ -68,9 +70,12 @@ export default function PagamentosTab() {
     return () => { vivo = false; };
   }, [tenants, mes, versao]);
 
-  // O chat do dono paga com PIN; quando volta, a lista precisa se atualizar.
+  // Outra loja: nada da loja anterior na tela.
+  useEffect(() => { setDados(null); setFixas([]); }, [tenants]);
+  // O chat do dono paga com PIN; quando volta, a lista precisa se atualizar (no máximo 1× por minuto:
+  // as funções do banco são pesadas e o banco já travou por IO uma vez).
   useEffect(() => {
-    const f = () => { if (document.visibilityState === 'visible') recarregar(); };
+    const f = () => { if (document.visibilityState === 'visible' && Date.now() - ultimaCarga.current > 60_000) recarregar(); };
     document.addEventListener('visibilitychange', f);
     return () => document.removeEventListener('visibilitychange', f);
   }, [recarregar]);

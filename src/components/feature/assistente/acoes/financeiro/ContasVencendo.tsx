@@ -17,7 +17,7 @@ interface Conta {
   amount: number; paid_amount: number | null; due_date: string; status: string;
   dre_category_id: string | null; reference_type: string | null;
 }
-type Passo = 'carregando' | 'lista' | 'detalhe' | 'data' | 'valor' | 'forma' | 'dre' | 'confirmar' | 'gravando' | 'fim';
+type Passo = 'carregando' | 'lista' | 'detalhe' | 'data' | 'valor' | 'forma' | 'dre' | 'confirmar' | 'motivo' | 'gravando' | 'fim';
 
 const saldo = (c: Conta) => Math.max(0, Math.round((Number(c.amount ?? 0) - Number(c.paid_amount ?? 0)) * 100) / 100);
 /** Mesma regra do DreClassificacaoSelect.precisaClassificarDRE / pay_bill. */
@@ -147,17 +147,23 @@ export default function ContasVencendo({ onFechar, irPara }: AcaoProps) {
     setPasso('confirmar');
   };
 
-  const gravar = async () => {
+  // Aviso antes de pagar (2026-10-06): o servidor pede o motivo (mercadoria não chegou, valor fora…).
+  const gravar = async (motivo?: string) => {
     if (travado.current) return;
     travado.current = true;
-    eu('Confirmar baixa');
+    eu(motivo ? motivo : 'Confirmar baixa');
     setPasso('gravando');
     const c = conta!;
     const r = await finWrite('pay_bill', tenantId, {
       id: c.id, paid_date: pagData, paid_amount: pagValor, payment_method: pagForma,
       ...(precisaDre(c) && pagDre ? dreParaPayBill(pagDre) : {}),
+      ...(motivo ? { motivo_aviso: motivo } : {}),
     });
     travado.current = false;
+    if (r.error && /^Antes de dar baixa:/i.test(String(r.error)) && !motivo) {
+      bot(`⚠️ ${r.error}\n\nSe quiser dar baixa mesmo assim, escreva o motivo (fica registrado).`);
+      setPasso('motivo'); return;
+    }
     if (r.error) { bot(`❌ Baixa não registrada: ${r.error}`); setPasso('detalhe'); return; }
     bot(`✅ Baixa registrada: ${c.description} · ${brl(pagValor)} · ${dataBR(pagData)}`);
     await carregar(false);
@@ -207,8 +213,14 @@ export default function ContasVencendo({ onFechar, irPara }: AcaoProps) {
       )}
       {passo === 'confirmar' && (
         <>
-          <Opcao onClick={gravar}>Confirmar baixa</Opcao>
+          <Opcao onClick={() => gravar()}>Confirmar baixa</Opcao>
           <OpcaoNeutra onClick={() => { eu('Cancelar'); bot('Baixa cancelada.'); setPasso('detalhe'); }}>Cancelar</OpcaoNeutra>
+        </>
+      )}
+      {passo === 'motivo' && (
+        <>
+          <Campo placeholder="Motivo, ex.: fornecedor exige antes" onEnviar={(t) => { if (t.trim().length >= 3) void gravar(t.trim()); }} />
+          <OpcaoNeutra onClick={() => { eu('Não dar baixa'); bot('Baixa cancelada.'); setPasso('detalhe'); }}>Não dar baixa</OpcaoNeutra>
         </>
       )}
       {passo === 'fim' && <Fim onFechar={onFechar} acoes={[{ label: 'Abrir Contas a Pagar', onClick: () => irPara('/financeiro?tab=pagar') }]} />}

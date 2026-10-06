@@ -459,7 +459,7 @@ Deno.serve(async (req) => {
         let avisosBaixa: Array<{ tipo: string; texto: string }> = [];
         const motivoAviso = String(payload.motivo_aviso ?? '').trim();
         if (payload.registro !== true) {
-          const { data: av } = await supabase.rpc('fn_aviso_pagar', { p_bill_ids: [id] });
+          const { data: av } = await supabase.rpc('fn_aviso_pagar', { p_bill_ids: [id], p_canal: 'baixa' });
           avisosBaixa = ((av ?? {}) as Record<string, Array<{ tipo: string; texto: string }>>)[String(id)] ?? [];
           if (avisosBaixa.length && motivoAviso.length < 3) {
             return new Response(JSON.stringify({

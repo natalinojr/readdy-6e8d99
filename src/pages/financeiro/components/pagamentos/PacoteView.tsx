@@ -29,10 +29,21 @@ export default function PacoteView({ caixa, avisos, hoje, mostrarLoja, dono, fin
     if (!/^\d{4,8}$/.test(pin) || pagando) return;
     setPagando(true); setRes([]);
     const out: Resultado[] = [];
+    const cancelar = (id: string) => assistente('pay', { id, op: 'no' }).catch(() => null);
     for (const x of escolhidas) {
+      let prepId: string | null = null;
       try {
         const prep = await assistente<{ payment: PagamentoInter }>('conta_pagar', { bill_id: x.id });
+        prepId = prep.payment.id;
         if (!['draft', 'awaiting_pin'].includes(prep.payment.status)) throw new Error(prep.payment.error ?? prep.payment.status_label ?? 'o Inter não deixou preparar');
+        // O Inter recalcula boleto vencido (multa e juros): se o valor não é o que a lista mostrou, não paga
+        // no escuro — cancela este e deixa para conferir um por um.
+        if (Math.abs(Number(prep.payment.amount ?? 0) - x.valor) > 0.01) {
+          await cancelar(prep.payment.id);
+          out.push({ id: x.id, nome: x.nome, ok: false, texto: `o Inter calculou ${brl(Number(prep.payment.amount ?? 0))} (multa/juros?) — pague esta pela conta, conferindo` });
+          setRes([...out]);
+          continue;
+        }
         const pg = await assistente<{ payment: PagamentoInter }>('pay', { id: prep.payment.id, op: 'ok', pin, lote: true });
         const falhou = ['rejected', 'failed', 'expired'].includes(pg.payment.status);
         out.push({ id: x.id, nome: x.nome, ok: !falhou, texto: falhou ? (pg.payment.error ?? 'não foi pago') : pg.payment.status === 'paid' ? 'pago' : 'enviado — falta aprovar no app do Inter' });
@@ -40,7 +51,10 @@ export default function PacoteView({ caixa, avisos, hoje, mostrarLoja, dono, fin
         const m = e instanceof Error ? e.message : String(e);
         out.push({ id: x.id, nome: x.nome, ok: false, texto: m });
         setRes([...out]);
-        if (/PIN/i.test(m)) break; // PIN errado: para tudo, sem bloquear o PIN tentando de novo
+        const pinErrado = /PIN errado|PIN bloqueado|Bloqueado/i.test(m);
+        // Rascunho que ficou aberto (PIN errado, aviso novo): cancela para não travar a conta por 30 min
+        if (prepId) await cancelar(prepId);
+        if (pinErrado) break; // para tudo, sem bloquear o PIN tentando de novo
         continue;
       }
       setRes([...out]);

@@ -2272,7 +2272,7 @@ menu-write (cardápio; retorna {success,data})
 
 financial-write (financeiro/RH; retorna {data})
 - upsert_bill (conta a pagar): id?, supplier, description, category?, amount, due_date, status?('pending'), dre_category_id?, bank_account_id?, notes?, is_recurring?, installments?.
-- pay_bill (S): id, paid_date, paid_amount, payment_method, bank_account_id?, dre_category_id? (conta sem classificação DRE e não vinda de compra/folha → erro dre_category_required: pergunte a categoria; ids em fin_dre_categories). delete_bill (S): id.
+- pay_bill (S): id, paid_date, paid_amount, payment_method, bank_account_id?, dre_category_id?, motivo_aviso? (conta sem classificação DRE e não vinda de compra/folha → erro dre_category_required: pergunte a categoria; ids em fin_dre_categories). Erro 409 precisa_confirmar ("Antes de dar baixa: …" — mercadoria não chegou, chegou diferente, valor fora da média, parece já paga): NUNCA insista nem invente motivo; mostre os avisos ao dono e pergunte se dá baixa mesmo assim e por quê; com a resposta dele, chame de novo com motivo_aviso = o motivo que ele disse. delete_bill (S): id.
 - insert_cash_flow: type 'income'|'expense', amount, description, category?, date, cost_center_id?, origin 'manual'. delete_cash_flow (S): id.
 - bank_manual_transaction (S): bank_account_id, type 'debit'|'credit', amount, description, transaction_date?.
 - (fornecedor: BLOQUEADO para o assistente — o Natalino cadastra na tela). upsert_cost_center: id?, name. upsert_dre_category: id?, name, group_type.

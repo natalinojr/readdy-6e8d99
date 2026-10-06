@@ -64,6 +64,8 @@ export interface ContaCompra { id: string; valor: number; saldo: number; vence: 
 export interface Mercadoria {
   tipo: 'compra'; id: string; tenant_id: string; loja: string; fornecedor: string; numero: string | null; emitida: string;
   valor: number; bonus: boolean; chegou_em: string | null; diferente: boolean; itens: number; itens_ligados: number; contas: ContaCompra[];
+  /** precisa chegar antes de pagar (não é bonificação, compra online/reembolso nem nota de despesa) */
+  espera_chegar?: boolean;
 }
 export interface NotaSemCompra {
   tipo: 'nota'; id: string; tenant_id: string; loja: string; fornecedor: string; numero: string | null; emitida: string; valor: number;
@@ -82,7 +84,8 @@ export const GRUPO_MERC: Record<GrupoMerc, { titulo: string; tom: 'red' | 'amber
 export function grupoMercadoria(m: Mercadoria, avisos: Record<string, AvisoPagar[]>): GrupoMerc {
   const abertas = m.contas.filter((c) => c.status !== 'paid');
   if (!abertas.length) return 'paga';
-  if (!m.bonus && (!m.chegou_em || m.diferente || abertas.some((c) => (avisos[c.id] ?? []).length > 0))) return 'nao_pague';
+  const espera = m.espera_chegar ?? !m.bonus;
+  if ((espera && (!m.chegou_em || m.diferente)) || abertas.some((c) => (avisos[c.id] ?? []).length > 0)) return 'nao_pague';
   if (abertas.some((c) => c.boleto && !c.tem_boleto)) return 'sem_boleto';
   return 'pronta';
 }
@@ -91,10 +94,11 @@ export function grupoMercadoria(m: Mercadoria, avisos: Record<string, AvisoPagar
 export type Passo = 'ok' | 'agora' | 'espera' | 'problema';
 export function trilhos(m: Mercadoria): { mercadoria: Passo[]; dinheiro: Passo[] } {
   const abertas = m.contas.filter((c) => c.status !== 'paid');
-  const chegou: Passo = m.chegou_em ? 'ok' : 'agora';
-  const conferida: Passo = !m.chegou_em ? 'espera' : m.diferente ? 'problema' : 'ok';
+  const espera = m.espera_chegar ?? !m.bonus;
+  const chegou: Passo = m.chegou_em || !espera ? 'ok' : 'agora';
+  const conferida: Passo = !espera ? 'ok' : !m.chegou_em ? 'espera' : m.diferente ? 'problema' : 'ok';
   const conta: Passo = m.contas.length ? (abertas.some((c) => c.boleto && !c.tem_boleto) ? 'agora' : 'ok') : 'agora';
-  const pago: Passo = !abertas.length ? 'ok' : m.chegou_em && !m.diferente ? 'agora' : 'espera';
+  const pago: Passo = !abertas.length ? 'ok' : !espera || (m.chegou_em && !m.diferente) ? 'agora' : 'espera';
   return { mercadoria: ['ok', chegou, conferida], dinheiro: ['ok', conta, pago] };
 }
 

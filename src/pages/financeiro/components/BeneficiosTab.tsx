@@ -247,7 +247,7 @@ function LancarModal({ tenantId, mes, funcs, jaLancados, cats, onClose, onDone }
       const falhas: string[] = [];
       for (const c of (contas ?? []) as Array<{ id: string; amount: number }>) {
         const { data: r, error: e } = await invokeWithAuth<{ error?: string }>('financial-write', {
-          body: { action: 'pay_bill', tenant_id: tenantId, payload: { id: c.id, paid_date: venc, paid_amount: Number(c.amount), payment_method: forma, bank_account_id: conta } },
+          body: { action: 'pay_bill', tenant_id: tenantId, payload: { id: c.id, paid_date: venc, paid_amount: Number(c.amount), payment_method: forma, bank_account_id: conta, registro: true } },
         });
         if (e || r?.error) falhas.push(e?.message ?? String(r?.error));
       }

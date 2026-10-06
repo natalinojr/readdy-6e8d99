@@ -1506,6 +1506,10 @@ const ddmmDe = (ymd: string) => `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}`;
 async function syncContasFixas(admin: SupabaseClient, t: { id: string; name: string }) {
   try {
     await db()`select public.fn_contas_fixas_gerar(${t.id}::uuid)`;
+  } catch (e) {
+    log('WARN', 'contas fixas: lançar as sem documento', { loja: t.name, error: errMsg(e) });
+  }
+  try {
     const [{ j }] = await db()<Array<{ j: any[] }>>`select public.fn_contas_fixas(array[${t.id}::uuid], null) j`;
     const hoje = localDate();
     const { data: semBoleto } = await admin.from('pendencias').select('ref')
@@ -1569,10 +1573,17 @@ async function syncContasFixas(admin: SupabaseClient, t: { id: string; name: str
 // deno-lint-ignore no-explicit-any
 async function syncMercadoriaChegou(admin: SupabaseClient, t: { id: string; name: string }, ownerId: string) {
   try {
-    const itens = await db()<Array<{ tipo: string; id: string; forn: string; num: string | null; data: string; valor: number }>>`
+    // Só nas lojas que recebem pelo Receber mercadoria (alguém confirmou entrega por lá nos últimos 60
+    // dias); nas outras a pergunta viraria barulho — a compra nunca seria "confirmada".
+    const [usa] = await db()<Array<{ ok: boolean }>>`
+      select exists (select 1 from fin_purchases where tenant_id = ${t.id}
+        and (delivery_registered_at >= now() - interval '60 days'
+             or (delivery_confirmed_at >= now() - interval '60 days' and delivery_notes ilike 'Recebido pelo celular%'))) ok`;
+    const itens = !usa?.ok ? [] : await db()<Array<{ tipo: string; id: string; forn: string; num: string | null; data: string; valor: number }>>`
       select 'compra' tipo, p.id::text, coalesce(p.supplier, 'Fornecedor') forn, p.invoice_number num, p.purchase_date::text data, p.total_amount::float valor
         from fin_purchases p
-       where p.tenant_id = ${t.id} and p.delivery_confirmed_at is null and not coalesce(p.is_bonus, false)
+       where p.tenant_id = ${t.id} and p.delivery_confirmed_at is null and p.stock_applied_at is null
+         and public.fn_compra_espera_chegar(p.id)
          and p.invoice_number is not null
          and p.purchase_date >= (now() at time zone 'America/Sao_Paulo')::date - 20
          and p.created_at < now() - interval '20 hours'
@@ -1580,20 +1591,26 @@ async function syncMercadoriaChegou(admin: SupabaseClient, t: { id: string; name
       select 'nota', d.id::text, coalesce(d.emitente_nome, 'Fornecedor'), d.numero::text, (d.emitted_at at time zone 'America/Sao_Paulo')::date::text, d.valor_total::float
         from fiscal_inbound_documents d
        where d.tenant_id = ${t.id} and d.status = 'new' and d.modelo = 55 and d.sefaz_status is distinct from 2
+         and public.fn_item_doc_classe(d.id) is distinct from 'despesa'
          and d.emitted_at >= now() - interval '20 days' and d.emitted_at < now() - interval '20 hours'`;
-    const { data: antes } = await admin.from('pendencias').select('ref, status, payload')
+    const { data: antes } = await admin.from('pendencias').select('id, ref, status, payload, vista_em')
       .eq('tenant_id', t.id).eq('kind', 'mercadoria_chegou');
     const antigo = new Map((antes ?? []).map((r) => [String(r.ref), r]));
     // A nota lançada vira compra (ref muda de nota:… para compra:…): não avisa a loja duas vezes.
+    const chaveNota = (num: unknown, forn: unknown) => `${String(num)}|${String(forn ?? '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 6)}`;
     const jaAvisadas = new Set((antes ?? []).filter((r) => r.payload?.avisado === true && r.payload?.numero)
-      .map((r) => String(r.payload.numero)));
+      .map((r) => chaveNota(r.payload.numero, r.payload.fornecedor)));
     const vivas = new Set<string>();
     for (const m of itens) {
       const ref = `${m.tipo}:${m.id}`;
       vivas.add(ref);
       const ja = antigo.get(ref);
       if (ja && ['resolvida', 'descartada'].includes(String(ja.status))) continue;
-      const avisado = ja?.payload?.avisado === true || (!!m.num && jaAvisadas.has(String(m.num)));
+      const avisado = ja?.payload?.avisado === true || (!!m.num && jaAvisadas.has(chaveNota(m.num, m.forn)));
+      // "Ainda não chegou" na Hoje (vista) cala só até o dia seguinte: depois de 20h volta a perguntar.
+      if (ja?.status === 'vista' && ja.vista_em && Date.now() - new Date(String(ja.vista_em)).getTime() > 20 * 3600_000) {
+        await admin.from('pendencias').update({ status: 'aberta', vista_em: null }).eq('id', ja.id).eq('status', 'vista');
+      }
       const titulo = `Chegou a mercadoria da ${m.forn}?`.slice(0, 200);
       const corpo = `NF ${m.num ?? '?'} de ${ddmmDe(m.data)} (${brl(m.valor)}). Ninguém confirmou a entrega no Receber mercadoria.`;
       let push = avisado;
@@ -1605,7 +1622,7 @@ async function syncMercadoriaChegou(admin: SupabaseClient, t: { id: string; name
       await admin.rpc('fn_pendencia_upsert', {
         p_tenant: t.id, p_kind: 'mercadoria_chegou', p_ref: ref, p_titulo: titulo,
         p_detalhe: `${corpo} Se chegou, confira pelo Receber; se não chegou, não pague ainda.`,
-        p_payload: { valor: m.valor, tipo: m.tipo, id: m.id, numero: m.num, emitida: m.data, avisado: push },
+        p_payload: { valor: m.valor, tipo: m.tipo, id: m.id, numero: m.num, fornecedor: m.forn, emitida: m.data, avisado: push },
         p_rota: `/receber?abrir=${ref}`, p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'cron', p_reabrir: false,
       });
     }
@@ -1665,16 +1682,18 @@ async function resumoAvisosSemana(admin: SupabaseClient, cfg: Record<string, any
   if (!inWindow('08:00', localHHMM(), 3)) return null;
   if (cfg.last_resumo_avisos === hoje) return null;
   await admin.from('asst_settings').upsert({ key: 'last_resumo_avisos', value: hoje, updated_at: new Date().toISOString() });
+  const lojas = (await getTenants(admin, cfg)).map((t) => t.id);
+  if (!lojas.length) return null;
   const linhas = await db()<Array<{ loja: string; nome: string; valor: number; motivo: string; tipos: string; quando: string; chegou: string | null }>>`
     select t.name loja, coalesce(nullif(a.supplier, ''), a.description, 'Conta') nome, a.amount::float valor, v.motivo,
            (select string_agg(distinct x->>'tipo', ',') from jsonb_array_elements(v.avisos) x) tipos,
            to_char(v.created_at at time zone 'America/Sao_Paulo', 'DD/MM') quando,
-           to_char(p.delivery_confirmed_at at time zone 'America/Sao_Paulo', 'DD/MM') chegou
+           to_char(coalesce(p.delivery_confirmed_at, p.stock_applied_at) at time zone 'America/Sao_Paulo', 'DD/MM') chegou
       from fin_pagamento_avisos v
       join tenants t on t.id = v.tenant_id
       left join fin_accounts_payable a on a.id = v.bill_id
       left join fin_purchases p on p.id = coalesce(v.purchase_id, case when a.reference_type = 'purchase' then a.reference_id end)
-     where v.created_at >= now() - interval '7 days'
+     where v.created_at >= now() - interval '7 days' and v.tenant_id = any (${lojas}::uuid[])
      order by v.created_at`;
   if (!linhas.length) return { enviado: false, motivo: 'nenhum pagamento com aviso' };
   const TIPO: Record<string, string> = { nao_chegou: 'não tinha chegado', chegou_diferente: 'chegou diferente', valor_maior: 'cobrava mais do que chegou', valor_fora: 'valor fora do normal', pago_antes: 'parecia já paga', no_inter: 'já tinha Pix no Inter' };

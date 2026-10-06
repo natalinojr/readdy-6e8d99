@@ -2,6 +2,7 @@
 // marcada "todo mês"; o sistema espera uma conta por fornecedor que já apareceu nela. Dados: fn_contas_fixas.
 import { useEffect, useMemo, useState } from 'react';
 import { pedirAoChat } from '@/lib/assistenteFoco';
+import { lerValorBR } from '@/lib/formatters';
 import {
   ESTADO_FIXA, grupoDaCategoria, ordemFixa, resumoFixas, textoEsperando, type ContaFixa,
 } from '@/lib/pagamentos';
@@ -270,7 +271,7 @@ function ConfigSemDocumento({ f, ocupado, onSalvar }: { f: ContaFixa; ocupado: b
   return (
     <form className="rounded-xl bg-white border border-zinc-200 p-3 flex flex-col gap-2" onSubmit={(e) => {
       e.preventDefault();
-      const v = valor.trim() ? Number(valor.replace(/\./g, '').replace(',', '.')) : null;
+      const v = valor.trim() ? lerValorBR(valor) : null;
       onSalvar({ sem_documento: sem, dia_vence: dia ? Number(dia) : null, valor: v, criar_dias_antes: Number(antes) || 5 });
     }}>
       <label className="flex items-center gap-2 text-sm font-semibold text-zinc-800">

@@ -25,15 +25,53 @@ create policy fin_pagamento_avisos_ler on public.fin_pagamento_avisos for select
 grant select on public.fin_pagamento_avisos to authenticated;
 grant all on public.fin_pagamento_avisos to service_role;
 
+-- Valor em reais no padrão brasileiro (R$ 3.000,00) para os textos de aviso.
+create or replace function public.fn_brl(v numeric)
+returns text language sql immutable as $$
+  select 'R$ ' || translate(to_char(coalesce(v, 0), 'FM999,999,999,990.00'), ',.', '.,')
+$$;
+
+-- Mercadoria que precisa chegar antes de pagar: compra (não bonificação) que não veio de pedido de
+-- pagamento (compra online, reembolso — já pagas por natureza) e cuja nota não é de despesa/serviço.
+-- "Chegou" = entrega confirmada OU estoque aplicado (compras antigas, antes de 11/09, só têm o segundo).
+create or replace function public.fn_compra_espera_chegar(p_purchase uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select not coalesce(p.is_bonus, false)
+     and not exists (select 1 from fin_payment_requests r where r.purchase_id = p.id)
+     and coalesce((select public.fn_item_doc_classe(d.id) from fiscal_inbound_documents d
+                    where d.purchase_id = p.id order by d.created_at limit 1), 'cmv') is distinct from 'despesa'
+    from fin_purchases p where p.id = p_purchase
+$$;
+revoke all on function public.fn_compra_espera_chegar(uuid) from public, anon;
+grant execute on function public.fn_compra_espera_chegar(uuid) to authenticated, service_role;
+
+-- Primeira palavra do fornecedor que identifica alguém (não "comercial", "distribuidora"…).
+create or replace function public.fn_fornecedor_token(t text)
+returns text language sql immutable as $$
+  select case when length(x) >= 4 and x not in ('comercial', 'comercio', 'distribuidora', 'distribuidor', 'industria',
+                'supermercado', 'mercado', 'super', 'posto', 'loja', 'casa', 'auto', 'atacado', 'atacadao', 'empresa',
+                'restaurante', 'servicos', 'pix', 'pagamento', 'boleto', 'conta', 'banco')
+              then x end
+    from (select split_part(public.fn_fixa_chave(t), ' ', 1) x) q
+$$;
+
 -- Avisos antes de pagar. Devolve { "<bill_id>": [ {tipo, texto}, ... ] } só das contas com aviso.
---   nao_chegou        compra (não bonificação) sem entrega confirmada
+--   nao_chegou        compra que precisa chegar (fn_compra_espera_chegar) e não chegou
 --   chegou_diferente  a conferência do /receber marcou item com quantidade diferente
 --   valor_maior       as contas da compra somam mais do que o que chegou
---   valor_fora        conta fixa com valor 20%+ fora da média dos últimos meses
---   pago_antes        outra conta do mesmo fornecedor e mesmo valor paga nos últimos 7 dias, ou
---                     saída do banco igual (mesmo valor, mesmo fornecedor) que não está ligada a esta conta
+--   valor_fora        conta fixa (categoria "todo mês") com valor 20%+ fora da média
+--   pago_antes        outra conta do MESMO fornecedor e mesmo valor paga nos últimos 5 dias (sem as
+--                     parcelas irmãs da mesma compra); ou — só ao PAGAR, não na baixa de quem já pagou por
+--                     fora — saída igual no banco ainda sem ligação
 --   no_inter          já tem pagamento desta conta em andamento no Inter
-create or replace function public.fn_aviso_pagar(p_bill_ids uuid[])
+-- p_canal: 'pagar' (Inter/PIN) ou 'baixa' (marcar como paga).
+drop function if exists public.fn_aviso_pagar(uuid[]);
+create or replace function public.fn_aviso_pagar(p_bill_ids uuid[], p_canal text default 'pagar')
 returns jsonb
 language plpgsql
 stable
@@ -50,12 +88,16 @@ declare
   v_x record;
   v_fx jsonb;
   v_tok text;
+  v_cache jsonb := '{}'::jsonb;  -- fn_contas_fixas por loja+mês (uma vez só por chamada)
+  v_ck text;
 begin
   for r in
     select a.id, a.tenant_id, a.amount::numeric amount, coalesce(a.paid_amount, 0)::numeric pago, a.status, a.due_date,
            a.reference_type, a.reference_id, a.dre_category_id,
            coalesce(nullif(trim(a.supplier), ''), a.description) nome,
-           p.id pid, p.delivery_confirmed_at, p.is_bonus, p.purchase_date, p.invoice_number
+           p.id pid, coalesce(p.delivery_confirmed_at, p.stock_applied_at) chegou, p.purchase_date, p.invoice_number,
+           (select coalesce(c.todo_mes, false) or coalesce(pai.todo_mes, false) from fin_dre_categories c
+              left join fin_dre_categories pai on pai.id = c.parent_id where c.id = a.dre_category_id) fixa
       from fin_accounts_payable a
       left join fin_purchases p on a.reference_type = 'purchase' and p.id = a.reference_id
      where a.id = any (p_bill_ids)
@@ -64,8 +106,8 @@ begin
     continue when auth.uid() is not null and r.tenant_id not in (select public.auth_lojas_financeiro());
     v_av := '[]'::jsonb;
 
-    if r.pid is not null and not coalesce(r.is_bonus, false) then
-      if r.delivery_confirmed_at is null then
+    if r.pid is not null and public.fn_compra_espera_chegar(r.pid) then
+      if r.chegou is null then
         v_av := v_av || jsonb_build_array(jsonb_build_object('tipo', 'nao_chegou', 'texto',
           'A mercadoria ainda não chegou' ||
           case when r.invoice_number is not null then ' (NF ' || r.invoice_number || ' de ' || to_char(r.purchase_date, 'DD/MM') || ')' else '' end ||
@@ -82,7 +124,6 @@ begin
           v_av := v_av || jsonb_build_array(jsonb_build_object('tipo', 'chegou_diferente', 'texto',
             'Chegou diferente na conferência: ' || v_txt || '.'));
         end if;
-        -- o que chegou (itens recebidos) × o que se cobra (contas da compra, sem as canceladas)
         select coalesce(sum(coalesce(i.received_total_price, i.total_price)), 0) into v_n
           from fin_purchase_items i where i.purchase_id = r.pid;
         select v_n, coalesce(sum(a2.amount), 0) as cobra into v_x
@@ -91,56 +132,65 @@ begin
         if v_n > 0 and v_x.cobra - v_n >= 1 and (v_x.cobra - v_n) / v_x.cobra >= 0.01
            and exists (select 1 from fin_purchase_items i where i.purchase_id = r.pid and i.received_quantity is not null) then
           v_av := v_av || jsonb_build_array(jsonb_build_object('tipo', 'valor_maior', 'texto',
-            'O que se cobra (' || to_char(v_x.cobra, 'FM"R$ "999G999G990D00') || ') é mais do que chegou (' ||
-            to_char(v_n, 'FM"R$ "999G999G990D00') || '). Combine o desconto ou a reposição com o fornecedor.'));
+            'O que se cobra (' || public.fn_brl(v_x.cobra) || ') é mais do que chegou (' ||
+            public.fn_brl(v_n) || '). Combine o desconto ou a reposição com o fornecedor.'));
         end if;
       end if;
     end if;
 
-    -- conta fixa com valor fora do normal
-    if r.dre_category_id is not null then
+    -- conta fixa com valor fora do normal (só categoria "todo mês"; fn_contas_fixas uma vez por loja+mês)
+    if coalesce(r.fixa, false) then
+      v_ck := r.tenant_id::text || '|' || date_trunc('month', r.due_date)::date::text;
+      if not v_cache ? v_ck then
+        v_cache := v_cache || jsonb_build_object(v_ck, public.fn_contas_fixas(array[r.tenant_id], date_trunc('month', r.due_date)::date));
+      end if;
       select x into v_fx
-        from jsonb_array_elements(public.fn_contas_fixas(array[r.tenant_id], date_trunc('month', r.due_date)::date)) x
+        from jsonb_array_elements(v_cache -> v_ck) x
        where x->'contas' @> jsonb_build_array(jsonb_build_object('id', r.id)) and x->>'fora_pct' is not null
        limit 1;
       if v_fx is not null then
         v_av := v_av || jsonb_build_array(jsonb_build_object('tipo', 'valor_fora', 'texto',
           (v_fx->>'nome') || ' veio ' || abs((v_fx->>'fora_pct')::int) || '% ' ||
           case when (v_fx->>'fora_pct')::int > 0 then 'acima' else 'abaixo' end ||
-          ' da média dos últimos meses (' || to_char((v_fx->>'media')::numeric, 'FM"R$ "999G999G990D00') || ').'));
+          ' da média dos últimos meses (' || public.fn_brl((v_fx->>'media')::numeric) || ').'));
+        v_fx := null;
       end if;
     end if;
 
-    -- pago antes: mesmo fornecedor (1ª palavra do nome) e mesmo valor, nos últimos 7 dias
-    -- (freela/folha ficam de fora: diárias de mesmo valor são normais)
-    v_tok := split_part(public.fn_fixa_chave(r.nome), ' ', 1);
-    if coalesce(v_tok, '') <> '' and coalesce(r.reference_type, '') not in ('freelancer', 'hr_payroll', 'hr_beneficio', 'conciliacao_juros') then
+    -- pago antes (freela, folha, benefício, juros, acerto de entregador e pedidos ficam de fora: valores
+    -- iguais toda semana são normais)
+    if coalesce(r.reference_type, '') not in ('freelancer', 'hr_payroll', 'hr_beneficio', 'conciliacao_juros',
+                                              'delivery_driver_settlement', 'pedido_pagamento') then
       select a2.paid_date, a2.amount into v_x
         from fin_accounts_payable a2
        where a2.tenant_id = r.tenant_id and a2.id <> r.id and a2.status = 'paid'
          and abs(a2.amount - (r.amount - r.pago)) <= 0.01
-         and a2.paid_date >= v_hoje - 7
-         and split_part(public.fn_fixa_chave(coalesce(nullif(trim(a2.supplier), ''), a2.description)), ' ', 1) = v_tok
+         and a2.paid_date >= v_hoje - 5
+         and not (r.reference_id is not null and a2.reference_type is not distinct from r.reference_type
+                  and a2.reference_id = r.reference_id)
+         and public.fn_fixa_chave(coalesce(nullif(trim(a2.supplier), ''), a2.description)) = public.fn_fixa_chave(r.nome)
        order by a2.paid_date desc limit 1;
       if found then
         v_av := v_av || jsonb_build_array(jsonb_build_object('tipo', 'pago_antes', 'texto',
-          'Já foi paga outra conta de ' || to_char(v_x.amount, 'FM"R$ "999G999G990D00') || ' para ' || r.nome ||
+          'Já foi paga outra conta de ' || public.fn_brl(v_x.amount) || ' para ' || r.nome ||
           ' em ' || to_char(v_x.paid_date, 'DD/MM') || '. É outra cobrança?'));
-      else
-        select s.transaction_date, s.amount into v_x
-          from fin_bank_statement_imports s
-         where s.tenant_id = r.tenant_id and s.transaction_type = 'debit'
-           and abs(abs(s.amount) - (r.amount - r.pago)) <= 0.01
-           and s.transaction_date >= least(r.due_date, v_hoje) - 7
-           and split_part(public.fn_fixa_chave(coalesce(nullif(s.counterpart_name, ''), s.description)), ' ', 1) = v_tok
-           and coalesce(s.match_ref_id::text, '') <> r.id::text
-           and not coalesce(s.match_detail->'confirmed' @> to_jsonb(array[r.id::text]), false)
-           and s.status <> 'matched'
-         order by s.transaction_date desc limit 1;
-        if found then
-          v_av := v_av || jsonb_build_array(jsonb_build_object('tipo', 'pago_antes', 'texto',
-            'Saiu ' || to_char(abs(v_x.amount), 'FM"R$ "999G999G990D00') || ' do banco para ' || r.nome || ' em ' ||
-            to_char(v_x.transaction_date, 'DD/MM') || ' e não está ligado a nenhuma conta. Pode ser esta, já paga.'));
+      elsif p_canal <> 'baixa' then
+        v_tok := public.fn_fornecedor_token(r.nome);
+        if v_tok is not null then
+          select s.transaction_date, s.amount into v_x
+            from fin_bank_statement_imports s
+           where s.tenant_id = r.tenant_id and s.transaction_type = 'debit'
+             and abs(abs(s.amount) - (r.amount - r.pago)) <= 0.01
+             and s.transaction_date >= least(r.due_date, v_hoje) - 5
+             and public.fn_fornecedor_token(coalesce(nullif(s.counterpart_name, ''), s.description)) = v_tok
+             and coalesce(s.match_ref_id::text, '') <> r.id::text
+             and s.status = 'pending' and coalesce(s.reconciled, false) = false
+           order by s.transaction_date desc limit 1;
+          if found then
+            v_av := v_av || jsonb_build_array(jsonb_build_object('tipo', 'pago_antes', 'texto',
+              'Saiu ' || public.fn_brl(abs(v_x.amount)) || ' do banco para ' || r.nome || ' em ' ||
+              to_char(v_x.transaction_date, 'DD/MM') || ' e não está ligado a nenhuma conta. Pode ser esta, já paga — se for, dê a baixa em vez de pagar.'));
+          end if;
         end if;
       end if;
     end if;
@@ -158,8 +208,8 @@ begin
   return v_out;
 end;
 $$;
-revoke all on function public.fn_aviso_pagar(uuid[]) from public, anon;
-grant execute on function public.fn_aviso_pagar(uuid[]) to authenticated, service_role;
+revoke all on function public.fn_aviso_pagar(uuid[], text) from public, anon;
+grant execute on function public.fn_aviso_pagar(uuid[], text) to authenticated, service_role;
 
 -- Os outros 4 tipos, para uma ou várias lojas.
 create or replace function public.fn_pagamentos(p_tenants uuid[])
@@ -192,7 +242,7 @@ begin
     select p.*,
       (select jsonb_agg(jsonb_build_object('id', a.id, 'valor', a.amount, 'saldo', greatest(a.amount - coalesce(a.paid_amount, 0), 0),
           'vence', a.due_date, 'status', a.status, 'pago_em', a.paid_date,
-          'tem_boleto', (a.boleto_digitavel is not null or a.boleto_barcode is not null or a.boleto_pix_copia is not null),
+          'tem_boleto', (a.boleto_digitavel is not null or a.boleto_pix_copia is not null),
           'boleto', coalesce(a.payment_method, p.payment_method, '') ilike '%boleto%') order by a.due_date)
          from fin_accounts_payable a where a.reference_type = 'purchase' and a.reference_id = p.id and coalesce(a.status, '') <> 'cancelled') contas
       from fin_purchases p
@@ -205,7 +255,8 @@ begin
            'tipo', 'compra', 'id', c.id, 'tenant_id', c.tenant_id, 'loja', t.name,
            'fornecedor', coalesce(c.supplier, 'Fornecedor'), 'numero', c.invoice_number, 'emitida', c.purchase_date,
            'valor', c.total_amount, 'bonus', coalesce(c.is_bonus, false),
-           'chegou_em', c.delivery_confirmed_at,
+           'chegou_em', coalesce(c.delivery_confirmed_at, c.stock_applied_at),
+           'espera_chegar', public.fn_compra_espera_chegar(c.id),
            'diferente', exists (select 1 from fin_purchase_items i where i.purchase_id = c.id and i.received_quantity is not null
                                  and abs(i.received_quantity - i.quantity) > 0.0001),
            'itens', (select count(*) from fin_purchase_items i where i.purchase_id = c.id),
@@ -301,7 +352,8 @@ begin
            'contas', (select coalesce(jsonb_agg(jsonb_build_object('id', a.id,
                          'nome', coalesce(nullif(a.supplier, ''), a.description, 'Conta'), 'descricao', a.description,
                          'valor', greatest(a.amount - coalesce(a.paid_amount, 0), 0), 'vencimento', a.due_date,
-                         'tem_boleto', (a.boleto_digitavel is not null or a.boleto_barcode is not null or a.boleto_pix_copia is not null),
+                         'tem_boleto', (a.boleto_digitavel is not null or a.boleto_pix_copia is not null),
+                         'parcial', a.status = 'partial' or coalesce(a.paid_amount, 0) > 0,
                          'origem', a.reference_type) order by a.due_date), '[]'::jsonb)
                         from fin_accounts_payable a
                        where a.tenant_id = t.id and a.status in ('pending', 'overdue', 'partial')

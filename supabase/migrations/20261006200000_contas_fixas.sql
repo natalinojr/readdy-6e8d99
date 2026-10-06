@@ -139,8 +139,9 @@ begin
                    rows between unbounded preceding and unbounded following))[1] as cat_ult
       from contas0 c0
   ),
-  -- Fornecedor com nome escrito de outro jeito: se na categoria só UM fornecedor tem histórico
-  -- (meses antes do mês olhado), as contas de nomes desconhecidos da mesma categoria são dele.
+  -- Fornecedor com nome escrito de outro jeito ("ESTAÇÃO LITORAL…" × "Estacao Litoral…"): se na
+  -- categoria só UM fornecedor tem histórico e o nome desconhecido começa com a mesma palavra, é ele.
+  -- Nome diferente (Vivo × Claro na categoria Internet) continua separado.
   hist_chaves as (
     select tenant_id, cat_ult as cat, chave from contas where mes < v_mes group by 1, 2, 3
     union
@@ -152,7 +153,8 @@ begin
   contas2 as (
     select c.id, c.tenant_id, c.cat_ult cat, c.amount, c.paid_amount, c.status, c.due_date, c.paid_date,
            c.reference_type, c.reference_id, c.nome_conta, c.chegou_em, c.tem_boleto, c.mes,
-           case when hc.chave is null and u.chave is not null then u.chave else c.chave end as chave_final
+           case when hc.chave is null and u.chave is not null
+                 and split_part(c.chave, ' ', 1) = split_part(u.chave, ' ', 1) then u.chave else c.chave end as chave_final
       from contas c
       left join hist_chaves hc on hc.tenant_id = c.tenant_id and hc.cat = c.cat_ult and hc.chave = c.chave
       left join unico u on u.tenant_id = c.tenant_id and u.cat = c.cat_ult
@@ -170,7 +172,8 @@ begin
            jsonb_agg(jsonb_build_object('id', id, 'valor', amount, 'pago', paid_amount, 'status', status,
              'vence', due_date, 'tem_boleto', tem_boleto, 'origem', reference_type,
              'auto', reference_type = 'recurring') order by due_date) contas,
-           (array_agg(nome_conta order by due_date desc))[1] nome
+           (array_agg(nome_conta order by due_date desc))[1] nome,
+           (array_agg(amount order by due_date desc))[1] ultima_conta
       from contas2
      group by 1, 2, 3, 4
   ),
@@ -187,7 +190,7 @@ begin
            (select round(avg(h.total), 2) from (select h2.total from por_mes h2
                where h2.tenant_id = k.tenant_id and h2.cat = k.cat and h2.chave = k.chave and h2.mes < v_mes
                order by h2.mes desc limit 3) h) media,
-           (select h.total from por_mes h where h.tenant_id = k.tenant_id and h.cat = k.cat and h.chave = k.chave and h.mes < v_mes
+           (select h.ultima_conta from por_mes h where h.tenant_id = k.tenant_id and h.cat = k.cat and h.chave = k.chave and h.mes < v_mes
              order by h.mes desc limit 1) ultimo_valor,
            (select percentile_disc(0.5) within group (order by extract(day from h.vence)::int) from por_mes h
              where h.tenant_id = k.tenant_id and h.cat = k.cat and h.chave = k.chave and h.mes < v_mes) dia_vence_hist,
@@ -329,8 +332,13 @@ revoke all on function public.fn_conta_fixa_marcar(uuid, uuid, text, text, text,
 grant execute on function public.fn_conta_fixa_marcar(uuid, uuid, text, text, text, jsonb) to authenticated;
 
 -- Conta fixa sem documento: o sistema cria a conta a pagar sozinho, criar_dias_antes dias antes
--- do dia de vencer, com o valor fixo (ou o último pago). Só o cron chama (sem usuário).
--- Devolve quantas criou.
+-- do dia de vencer, com o valor fixo (ou o da última conta). Só o cron chama (sem usuário).
+-- Olha o mês corrente e o seguinte (conta que vence dia 1–5 nasce no fim do mês anterior).
+-- Trava contra duas rodadas juntas: índice único por conta fixa e mês. Devolve quantas criou.
+create unique index if not exists fin_ap_conta_fixa_mes_uq
+  on public.fin_accounts_payable (tenant_id, reference_id, (date_trunc('month', due_date::timestamp)))
+  where reference_type = 'recurring' and status is distinct from 'cancelled';
+
 create or replace function public.fn_contas_fixas_gerar(p_tenant uuid)
 returns int
 language plpgsql
@@ -339,37 +347,39 @@ set search_path = public
 as $$
 declare
   v_hoje date := (now() at time zone 'America/Sao_Paulo')::date;
-  v_mes date := date_trunc('month', (now() at time zone 'America/Sao_Paulo')::date)::date;
+  v_mes date;
   v_n int := 0;
   r record;
   v_vence date;
   v_valor numeric;
 begin
   if auth.uid() is not null then raise exception 'só o sistema gera' using errcode = '42501'; end if;
-  for r in
-    select x.*, f.id cfg_id, f.nome cfg_nome, c.name cat_nome
-      from jsonb_to_recordset(public.fn_contas_fixas(array[p_tenant], v_mes))
-           as x(categoria_id uuid, chave text, estado text, dia_vence int, valor_fixo numeric,
-                ultimo_valor numeric, sem_documento boolean, criar_dias_antes int, conta_fixa_id uuid)
-      join fin_contas_fixas f on f.id = x.conta_fixa_id
-      join fin_dre_categories c on c.id = x.categoria_id
-     where x.sem_documento and x.estado in ('esperando', 'atrasada_chegar') and x.dia_vence is not null
-  loop
-    v_vence := make_date(extract(year from v_mes)::int, extract(month from v_mes)::int,
-                         least(r.dia_vence, extract(day from (v_mes + interval '1 month' - interval '1 day'))::int));
-    v_valor := coalesce(r.valor_fixo, r.ultimo_valor);
-    continue when v_valor is null or v_valor <= 0;
-    continue when v_hoje < v_vence - r.criar_dias_antes;
-    -- trava contra corrida (cron a cada 30 min): já existe conta do sistema para este mês
-    continue when exists (select 1 from fin_accounts_payable a where a.tenant_id = p_tenant
-      and a.reference_type = 'recurring' and a.reference_id = r.cfg_id
-      and date_trunc('month', a.due_date) = v_mes and coalesce(a.status, '') <> 'cancelled');
-    insert into fin_accounts_payable (tenant_id, description, supplier, category, amount, due_date, status,
-                                      dre_category_id, reference_type, reference_id, notes)
-    values (p_tenant, r.cfg_nome || ' — ' || to_char(v_mes, 'MM/YYYY'), r.cfg_nome, r.cat_nome, v_valor, v_vence,
-            'pending', r.categoria_id, 'recurring', r.cfg_id,
-            'Criada pelo sistema: conta fixa sem documento (Financeiro › Pagamentos).');
-    v_n := v_n + 1;
+  foreach v_mes in array array[date_trunc('month', v_hoje)::date, (date_trunc('month', v_hoje) + interval '1 month')::date] loop
+    for r in
+      select x.*, f.id cfg_id, f.nome cfg_nome, c.name cat_nome
+        from jsonb_to_recordset(public.fn_contas_fixas(array[p_tenant], v_mes))
+             as x(categoria_id uuid, chave text, estado text, dia_vence int, valor_fixo numeric,
+                  ultimo_valor numeric, sem_documento boolean, criar_dias_antes int, conta_fixa_id uuid)
+        join fin_contas_fixas f on f.id = x.conta_fixa_id
+        join fin_dre_categories c on c.id = x.categoria_id
+       where x.sem_documento and x.estado in ('esperando', 'atrasada_chegar') and x.dia_vence is not null
+    loop
+      v_vence := make_date(extract(year from v_mes)::int, extract(month from v_mes)::int,
+                           least(r.dia_vence, extract(day from (v_mes + interval '1 month' - interval '1 day'))::int));
+      v_valor := coalesce(r.valor_fixo, r.ultimo_valor);
+      continue when v_valor is null or v_valor <= 0;
+      continue when v_hoje < v_vence - r.criar_dias_antes;
+      begin
+        insert into fin_accounts_payable (tenant_id, description, supplier, category, amount, due_date, status,
+                                          dre_category_id, reference_type, reference_id, notes)
+        values (p_tenant, r.cfg_nome || ' — ' || to_char(v_mes, 'MM/YYYY'), r.cfg_nome, r.cat_nome, v_valor, v_vence,
+                'pending', r.categoria_id, 'recurring', r.cfg_id,
+                'Criada pelo sistema: conta fixa sem documento (Financeiro › Pagamentos).');
+        v_n := v_n + 1;
+      exception when unique_violation then
+        null; -- outra rodada já criou a deste mês
+      end;
+    end loop;
   end loop;
   return v_n;
 end;

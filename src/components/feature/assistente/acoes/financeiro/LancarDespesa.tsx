@@ -108,7 +108,8 @@ export default function LancarDespesa({ onFechar, irPara }: AcaoProps) {
       bot(`✅ Conta a pagar lançada: ${desc} · ${brl(valor)} · vence ${dataBR(data)}`);
       setOk(true); setPasso('fim'); return;
     }
-    const pay = await finWrite('pay_bill', tenantId, { id: billId, paid_date: data, paid_amount: valor, payment_method: forma });
+    // registro: o dinheiro já saiu (despesa que nasce paga) — o aviso antes de pagar não se aplica
+    const pay = await finWrite('pay_bill', tenantId, { id: billId, paid_date: data, paid_amount: valor, payment_method: forma, registro: true });
     if (pay.error) {
       // Mesmo desfecho da conciliação: sem baixa, a conta criada agora é apagada para não ficar pela metade.
       const del = await finWrite('delete_bill', tenantId, { id: billId });
