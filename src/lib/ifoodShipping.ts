@@ -191,6 +191,9 @@ export const ifoodPodeDespachar = (p: Pick<IfoodOrder, 'order_type' | 'delivered
 export async function fetchIfoodOrders(tenantId: string, desde: string): Promise<IfoodOrder[]> {
   const { data } = await supabase.from('ifood_orders')
     .select('id, merchant_id, ifood_order_id, display_id, status, order_type, order_timing, sales_channel, delivered_by, is_test, ordered_at, customer_name, customer_document, customer_orders_count, pickup_code, delivery_observations, address, total, payments, benefits, extra_info, schedule, dispute, cancel_reason, cancel_requested, last_event, timeline, created_at, updated_at, takeout:raw->takeout, dine_in:raw->dineIn, order_id, funnel_error, erpos:orders!ifood_orders_order_id_fkey(number, status, is_draft), ifood_order_items(id, idx, name, quantity, unit, unit_price, options_price, total_price, observations, external_code, options)')
-    .eq('tenant_id', tenantId).gte('created_at', desde).order('created_at', { ascending: false }).limit(300);
+    // Pela hora do PEDIDO (ordered_at): pedidos antigos trazidos ao conectar a loja entram com created_at de hoje e
+    // apareciam todos como "de hoje". Pedido recém-chegado ainda sem detalhe (ordered_at nulo) entra pelo created_at.
+    .eq('tenant_id', tenantId).or(`ordered_at.gte.${desde},and(ordered_at.is.null,created_at.gte.${desde})`)
+    .order('created_at', { ascending: false }).limit(300);
   return (data ?? []) as unknown as IfoodOrder[];
 }
