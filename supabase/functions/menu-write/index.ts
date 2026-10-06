@@ -688,6 +688,30 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (error) throw new Error(`ligar_opcoes_estoque: ${error.message}`);
       result = { ligadas: linhas.length };
     }
+    else if (action === 'ligar_opcoes_produto') {
+      // Aba Opções × Estoque (2026-10-06): liga várias opções a um PRODUTO do cardápio (options.linked_item_id) —
+      // baixa e custo seguem a ficha técnica atual dele (gatilho fn_option_sync_linked). Troca o produto anterior da
+      // opção, se havia; não mexe nos insumos digitados. A opção do próprio produto fica de fora.
+      const { item_id, option_ids } = payload as { item_id?: string; option_ids?: string[] };
+      const ids = [...new Set((option_ids ?? []).filter((id) => isValidUuid(id)))];
+      if (!ids.length) return errResp('Nenhuma opção informada', 400);
+      if (!isValidUuid(item_id)) return errResp('Escolha o produto', 400);
+      const { data: papel } = await admin.from('user_tenants').select('role').eq('user_id', user.id).eq('tenant_id', tenantId).maybeSingle();
+      if (!['admin', 'manager'].includes(String(papel?.role ?? ''))) return errResp('Só administrador ou supervisor pode ligar opções ao estoque', 403);
+      const { data: prod } = await admin.from('menu_items').select('id').eq('id', item_id).eq('tenant_id', tenantId).is('deleted_at', null).maybeSingle();
+      if (!prod) return errResp('Produto não encontrado nesta loja', 404);
+      const { data: opts } = await admin.from('options').select('id, group_id').in('id', ids).eq('tenant_id', tenantId).is('deleted_at', null);
+      const grupos = [...new Set(((opts ?? []) as Array<{ group_id: string }>).map((o) => o.group_id))];
+      const { data: gs } = grupos.length
+        ? await admin.from('option_groups').select('id, item_id').in('id', grupos).eq('tenant_id', tenantId)
+        : { data: [] };
+      const itemDoGrupo = new Map(((gs ?? []) as Array<{ id: string; item_id: string }>).map((g) => [g.id, g.item_id]));
+      const validas = ((opts ?? []) as Array<{ id: string; group_id: string }>).filter((o) => itemDoGrupo.get(o.group_id) !== item_id).map((o) => o.id);
+      if (!validas.length) return errResp('Opções não encontradas nesta loja', 404);
+      const { error } = await admin.from('options').update({ linked_item_id: item_id }).in('id', validas).eq('tenant_id', tenantId);
+      if (error) throw new Error(`ligar_opcoes_produto: ${error.message}`);
+      result = { ligadas: validas.length };
+    }
     else if (action === 'upsert_global_obs') {
       const { id, text, is_active, excluded_item_ids, excluded_category_ids } = payload as {
         id?: string; text: string; is_active?: boolean;
