@@ -44,6 +44,8 @@ export interface Opcao {
 // Empresa sem PDV (tenants.kind = 'financeiro'): o /modulos esconde Recebimentos e Caixa até do Admin (tela vazia).
 const temPdv = (c: ContextoAcesso) => c.temPdv !== false;
 const receber = (c: ContextoAcesso) => temPdv(c) && rotaLiberada('/receber', c) && (c.pode('estoque_receber') || c.pode('estoque_movimentar'));
+// Empréstimo entre lojas (2026-10-06): mandar tira do estoque daqui — mesma chave de quem movimenta o estoque.
+const movimentar = (c: ContextoAcesso) => temPdv(c) && rotaLiberada('/receber', c) && c.pode('estoque_movimentar');
 const pedido = (k: PermissaoKey) => (c: ContextoAcesso) => temPdv(c) && rotaLiberada('/receber', c) && c.pode(k);
 const aba = (a: string) => (c: ContextoAcesso) => rotaLiberada(`/financeiro?tab=${a}`, c);
 // A Contabilidade entra no Financeiro só para conferir e mandar guia/folha (financial-write recusa o resto).
@@ -195,6 +197,21 @@ export const OPCOES: Opcao[] = [
   {
     id: 'bolso', icone: 'ri-wallet-3-line', titulo: 'Gastei do meu bolso', sub: 'Pede o reembolso, com a foto do comprovante',
     vars: [{ pode: pedido('pag_reembolso'), destino: r('/receber?pedido=reembolso'), onde: 'Pedir reembolso', aprova: true }],
+  },
+  {
+    // 2026-10-06: insumo emprestado entre lojas do mesmo dono. Quem recebe confere às cegas (digita o que chegou).
+    id: 'emprestimo', icone: 'ri-arrow-left-right-line', titulo: 'Empréstimo entre lojas', sub: 'Mandei insumo para outra loja, ou chegou de outra',
+    pergunta: 'Vai ou chegou?',
+    filhos: [
+      {
+        id: 'emprestimo-mandar', icone: 'ri-arrow-right-up-line', titulo: 'Vou mandar para outra loja', sub: 'Escolho os insumos e quanto vai. Sai do estoque daqui.',
+        vars: [{ pode: movimentar, destino: r('/receber/emprestimos?mandar=1'), onde: 'Recebimentos › Empréstimo entre lojas' }],
+      },
+      {
+        id: 'emprestimo-chegou', icone: 'ri-arrow-left-down-line', titulo: 'Chegou de outra loja', sub: 'Confiro e digito o que chegou. Entra no estoque daqui.',
+        vars: [{ pode: receber, destino: r('/receber/emprestimos?receber=1'), onde: 'Recebimentos › Empréstimo entre lojas' }],
+      },
+    ],
   },
 ];
 

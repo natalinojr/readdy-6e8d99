@@ -274,6 +274,15 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-10-06 — Empréstimo de insumo entre lojas
+- **Onde:** "O que aconteceu?" › Empréstimo entre lojas (`opcoes.ts`, ids `emprestimo-mandar`/`emprestimo-chegou`) e atalho no `/receber`; tela `src/pages/receber/emprestimos/page.tsx` em `/receber/emprestimos` (`?mandar=1`, `?receber=<id>|1`). Herda a trava de rota do `/receber`.
+- **Regra (migração `20261006120000_emprestimo_entre_lojas.sql`):** tabela `estoque_emprestimos` (status `enviado|recebido|cancelado`, itens em jsonb) + RPCs `fn_emprestimo_lojas/insumos/enviar/receber/cancelar/listar`. Mandar = `transfer_out` na hora (exige `estoque_movimentar`); receber = quem recebe escolhe os insumos DA LOJA DELE e digita o que chegou → `transfer_in` (exige `estoque_receber` ou `estoque_movimentar`). Movimentos com `source_tenant_id`/`destination_tenant_id` e `notes = 'emprestimo:<id>'`. Cancelar (só antes de receber) devolve com `transfer_in` "Empréstimo cancelado (voltou)".
+- **Conferência às cegas:** `fn_emprestimo_listar` não manda a quantidade para a loja que recebe enquanto está `enviado`; depois de receber, os dois lados veem mandou × chegou e quem mandou recebe aviso (`avisos` kind `emprestimo_recebido`). A loja de destino recebe `emprestimo_chegando`.
+- **Quais lojas:** não existe grupo de lojas no banco — vale "tem um mesmo Admin" (`fn_emprestimo_lojas`). Hoje o dono é Admin de todas, então a Testes PDV aparece na lista das lojas reais.
+- **Permissão no SQL:** `_estoque_pessoa_pode(tenant, user, chaves[])` = Admin, senão `user_permissions` › `permissions` do cargo › padrão (só Gerente). Reaproveitar para outras regras de estoque.
+- **Valor:** custo da loja que mandou (`unit_price`, senão `last_purchase_price`); "quem deve a quem" soma os não cancelados. Devolver = mandar de volta. Não mexe na DRE. No Consumo (`useConsumoIngredientes`) o `transfer_out` continua no balde "transferência" como já era.
+
+
 ### 2026-10-06 — Financeiro › Pagamentos ("em que pé está"), contas fixas e aviso antes de pagar
 - **Pedido do dono:** ver em que pé está cada pagamento **por tipo**: contas fixas, mercadoria a prazo, compra à vista, pessoas, avulsos (+ "Dia de pagar" e "Caminho de cada tipo"). Aba `pagamentos` no grupo Pagar (`src/pages/financeiro/components/pagamentos/*`), permissão `fin_pagamentos`, "Todas as lojas". A Trilha continua igual (histórico de cada despesa).
 - **Conta fixa = categoria do DRE marcada `todo_mes`** (ou filha de uma marcada). O sistema espera **uma conta por fornecedor** (`fn_fixa_chave`) que apareceu em 2+ dos últimos 4 meses; com 1 mês vira "é fixa?". Ajustes da pessoa em `fin_contas_fixas` (confirmada / não é fixa / encerrada / sem documento) e `fin_contas_fixas_mes` (não vem este mês) via `fn_conta_fixa_marcar`. Situação do mês: `fn_contas_fixas(p_tenants[], p_mes)` — a MESMA regra da aba, do cron e do aviso.

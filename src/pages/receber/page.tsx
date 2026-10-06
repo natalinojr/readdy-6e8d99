@@ -7,9 +7,11 @@
 // Links: ?pedido=reembolso|freelancer|fornecedor|compra_online|beneficio, ?aprovar=1, ?meus=1.
 // ?compartilhado=1: veio do "Compartilhar" do celular com link de loja online (sw.js) — o link já vem colado.
 // ?receber=cupom (2026-10-03, "O que aconteceu?" › Cupom de mercado): abre já com o leitor do cupom.
+// Empréstimo entre lojas (2026-10-06): tela própria em ./emprestimos (/receber/emprestimos); aqui só o atalho e o aviso do que está chegando.
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import NovoPedido from './pedidos/NovoPedido';
 import ListaPedidos from './pedidos/ListaPedidos';
@@ -92,6 +94,17 @@ export default function ReceberPage() {
     carregarCtxPed();
   }, [tenantId, carregarCtxPed]);
   useEffect(() => { carregarPendentes(); }, [carregarPendentes]);
+  // Empréstimo de outra loja a caminho: aviso no topo (a conferência é na tela de empréstimos)
+  const [empChegando, setEmpChegando] = useState<{ origem: string }[]>([]);
+  useEffect(() => {
+    setEmpChegando([]);
+    if (!tenantId || !podeReceber) return;
+    let vivo = true;
+    supabase.rpc('fn_emprestimo_listar', { p_tenant: tenantId }).then(({ data }) => {
+      if (vivo) setEmpChegando(((data as { chegando?: { origem: string }[] } | null)?.chegando) ?? []);
+    });
+    return () => { vivo = false; };
+  }, [tenantId, podeReceber]);
   // Voltou ao início por qualquer caminho (erro de leitura inclusive): próximo recebimento é normal
   useEffect(() => { if (tela === 'inicio') modoReembolso.current = false; }, [tela]);
 
@@ -415,6 +428,17 @@ export default function ReceberPage() {
               </button>
             )}
 
+            {podeReceber && empChegando.length > 0 && (
+              <button onClick={() => navigate('/receber/emprestimos?receber=1')} className="w-full mb-4 flex items-center gap-3 bg-emerald-500 text-white rounded-3xl p-4 text-left shadow-lg shadow-emerald-500/25 cursor-pointer active:scale-[0.99]">
+                <i className="ri-arrow-left-right-line text-3xl" />
+                <div className="flex-1">
+                  <p className="text-[15px] font-bold">{empChegando.length === 1 ? `Empréstimo de ${empChegando[0].origem} a caminho` : `${empChegando.length} empréstimos de outras lojas a caminho`}</p>
+                  <p className="text-xs text-white/85">Quando chegar, confira e digite o que veio</p>
+                </div>
+                <i className="ri-arrow-right-s-line text-2xl" />
+              </button>
+            )}
+
             {podePedir && (
               <div className="mb-6">
                 <p className="text-sm font-bold text-zinc-700 px-1 mb-2">Pedir pagamento</p>
@@ -458,6 +482,14 @@ export default function ReceberPage() {
               </div>
               <BotaoGrande cor="bg-white text-zinc-800" icone="ri-inbox-unarchive-line" titulo="Chegou sem nota" sub="Lançar ou avisar o financeiro" onClick={() => setTela('sem_nota_pergunta')} />
               <BotaoGrande cor="bg-white text-zinc-800" icone="ri-keyboard-line" titulo="Digitar nº da nota" sub="Se o código não ler" onClick={() => { setDigitado(''); setTela('digitar'); }} />
+              <button onClick={() => navigate('/receber/emprestimos')} className="col-span-2 flex items-center gap-3 bg-white border border-zinc-100 rounded-3xl px-4 py-3.5 text-left active:scale-[0.99] cursor-pointer">
+                <i className="ri-arrow-left-right-line text-2xl text-amber-500" />
+                <div className="flex-1">
+                  <p className="text-[15px] font-bold text-zinc-800 leading-tight">Empréstimo entre lojas</p>
+                  <p className="text-xs text-zinc-500">Mandar insumo para outra loja ou conferir o que chegou</p>
+                </div>
+                <i className="ri-arrow-right-s-line text-xl text-zinc-400" />
+              </button>
             </div>
 
             <div className="mt-6 grid grid-cols-2 gap-1 bg-zinc-100 rounded-2xl p-1">
