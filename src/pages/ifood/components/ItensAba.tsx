@@ -320,7 +320,7 @@ export default function ItensAba({ tenantId, loja, lojas, periodo, acesso, dados
         <b>De onde vêm os números:</b>{' '}
         {fonte === 'cardapio' && periodoCardapio
           ? `itens do relatório de Cardápio importado do Portal do Parceiro (${ddmm(periodoCardapio.de)} a ${ddmm(periodoCardapio.ate)}). Ele não traz a taxa de cada pedido, então a sobra usa a média do período (*).`
-          : 'cada pedido do iFood traz os itens na hora, e o lucro bruto usa o que chegou de cada pedido depois das taxas (estimado pela média da loja até o iFood fechar, no dia seguinte).'}
+          : 'cada pedido do iFood traz os itens na hora. Aqui a conta é sem promoções: preço do item − comissão e taxa de pagamento médias da loja − comida pela ficha. O que as promoções tiraram de cada pedido fica em Pedidos › Custos.'}
         {' '}A comida vem da ficha atual do item no estoque. Conta gerencial: não entra na DRE.
       </Nota>
 
