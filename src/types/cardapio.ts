@@ -46,6 +46,8 @@ export interface OpcaoItem {
   source?: 'ingredient' | 'production';
   /** Insumos da opção — vários (2026-09-26). Fonte da verdade quando presente; ingredientId/consumption* = o primeiro */
   ingredientes?: InsumoDaOpcaoCardapio[];
+  /** Produto (item do cardápio) a que a opção está ligada: baixa e custo seguem a ficha técnica atual dele (2026-10-06) */
+  linkedItemId?: string | null;
   created_at?: string;
   updated_at?: string;
   deleted_at?: string | null;
