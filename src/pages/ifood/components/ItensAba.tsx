@@ -3,6 +3,7 @@ import ExplicaLucro from './ExplicaLucro';
 import { useSearchParams } from 'react-router-dom';
 import { fetchCardapioIfood, type MenuLinha } from '@/lib/ifoodDashboard';
 import { itensDoCardapio, itensDosPedidos, resumoItens, type ItemArea } from '@/lib/ifoodArea';
+import type { EscolhaItem } from '@/lib/ifoodArea';
 import { btn, brl, brlInteiro, CartaoAcao, Chips, Faixa, Nota, Vazio, type OpcaoChip } from '@/components/kit';
 import { Folha } from '@/components/kit';
 import type { AbaProps } from '../lib/tipos';
@@ -329,7 +330,11 @@ export default function ItensAba({ tenantId, loja, lojas, periodo, acesso, dados
             {aberto.tipoLigacao || aberto.custoUnit != null ? 'Trocar a ligação' : 'Ligar à ficha'}
           </button>
         ) : undefined}>
-        {aberto && <ContaDoItem i={aberto} dinheiro={verDinheiro} bloqueado={bloqueadoPorComplemento(aberto, dados.custos)} />}
+        {aberto && <ContaDoItem i={aberto} dinheiro={verDinheiro} bloqueado={bloqueadoPorComplemento(aberto, dados.custos)}
+          onLigarEscolha={acesso.ligar ? (e) => {
+            setItemAberto(null);
+            setLigar({ fila: [{ nivel: 'complemento', nome: e.nome, grupo: e.grupo, qtd: e.qtd, faturado: e.preco * e.qtd }], indice: 0, troca: e.custoUnit != null });
+          } : undefined} />}
       </Folha>
 
       <LigarFichaFolha
@@ -371,7 +376,7 @@ function SeletorFonte({ fonte, onChange, periodoCardapio, primeiroDia }: {
   );
 }
 
-function ContaDoItem({ i, dinheiro, bloqueado }: { i: ItemArea; dinheiro: boolean; bloqueado: boolean }) {
+function ContaDoItem({ i, dinheiro, bloqueado, onLigarEscolha }: { i: ItemArea; dinheiro: boolean; bloqueado: boolean; onLigarEscolha?: (e: EscolhaItem) => void }) {
   const Linha = ({ rot, valor, sub, tom }: { rot: import('react').ReactNode; valor: string; sub?: string; tom?: 'red' | 'green' }) => (
     <div className="flex items-start justify-between gap-3 py-2.5 border-t border-zinc-100 first:border-t-0">
       <div className="min-w-0"><p className="text-[13.5px] text-zinc-700">{rot}</p>{sub && <p className="text-[11.5px] text-zinc-400 mt-0.5">{sub}</p>}</div>
@@ -402,6 +407,29 @@ function ContaDoItem({ i, dinheiro, bloqueado }: { i: ItemArea; dinheiro: boolea
         )}
       </div>
       {complemento && <p className="text-[11.5px] text-zinc-400 mt-2">O valor do complemento já está dentro do preço do item; a conta do lucro bruto é feita no item.</p>}
+      {!complemento && i.escolhas && i.escolhas.length > 0 && (
+        <div className="mt-3">
+          <p className="text-[11px] font-extrabold uppercase tracking-wide text-zinc-400">O que os clientes escolhem neste item</p>
+          {i.tipoLigacao === 'escolhas' && <p className="text-[11.5px] text-zinc-500 mt-0.5">Combo de escolhas: a comida é a soma do que o cliente escolheu, então cada escolha precisa estar ligada.</p>}
+          <div className="mt-1.5 rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
+            {i.escolhas.map((e) => (
+              <div key={e.chave} className="flex items-center gap-2.5 px-3 py-2">
+                <span className="w-9 text-right text-[12.5px] font-extrabold tabular-nums text-zinc-500">{e.qtd.toLocaleString('pt-BR')}×</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[13px] text-zinc-800 truncate">{e.nome}</p>
+                  <p className="text-[11px] text-zinc-400 truncate">{e.grupo ?? 'complemento'}{e.preco > 0.005 ? ` · ${brl(e.preco)}` : ' · sem cobrar à parte'}</p>
+                </div>
+                {e.custoUnit != null
+                  ? <span className="text-[11.5px] text-zinc-500 whitespace-nowrap">comida {brl(e.custoUnit)}</span>
+                  : (e.preco > 0.005 || i.tipoLigacao === 'escolhas')
+                    ? <span className="text-[11.5px] font-bold text-orange-600 whitespace-nowrap">sem ficha</span>
+                    : <span className="text-[11px] text-zinc-400 whitespace-nowrap">sem custo</span>}
+                {onLigarEscolha && <button type="button" onClick={() => onLigarEscolha(e)} className={btn(e.custoUnit == null ? 'p' : 'out', 'sm')}>{e.custoUnit == null ? 'Ligar' : 'Trocar'}</button>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {dinheiro && !complemento && (i.precoEmpata != null || i.precoMesmoBalcao != null) && (
         <div className="mt-3 rounded-2xl bg-amber-50 px-3.5 py-3 space-y-1.5">
           {i.precoEmpata != null && <p className="text-[13px] text-zinc-800">Preço que empata (lucro bruto zero): <b>{brl(i.precoEmpata)}</b></p>}

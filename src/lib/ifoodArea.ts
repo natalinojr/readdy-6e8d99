@@ -195,7 +195,7 @@ export interface CustoAlvo {
   custo: number | null;
   /** O que está ligado: "Burrito de Frango", "Combo X", "Não usa estoque", "Custo montado à mão". */
   alvo: string | null;
-  tipo: 'item' | 'combo' | 'option' | 'sem_estoque' | 'composicao' | 'ficha' | null;
+  tipo: 'item' | 'combo' | 'option' | 'sem_estoque' | 'escolhas' | 'composicao' | 'ficha' | null;
   /** Preço no balcão do que está ligado (item/combo do cardápio; adicional da opção). */
   precoBalcao: number | null;
 }
@@ -236,7 +236,8 @@ export function custoDaLinha(mapa: MapaCustos, it: ItemPedidoIfood): CustoLinha 
   for (const c of it.complementos) {
     const cc = custoDoComplemento(mapa, c.nome, c.grupo);
     if (cc?.custo != null) { if (comida != null) comida += cc.custo * c.qtd; }
-    else if (cc || c.preco > 0.005) { semFicha.push(c.nome); comida = null; }
+    // Combo de escolhas: a comida é o que o cliente escolheu, então todo complemento precisa de ficha (até a Coca grátis).
+    else if (cc || c.preco > 0.005 || base?.tipo === 'escolhas') { semFicha.push(c.nome); comida = null; }
     if (balcao != null) {
       if (cc?.precoBalcao != null) balcao += cc.precoBalcao * c.qtd;
       else if (c.preco > 0.005) balcao = null;
@@ -392,6 +393,20 @@ export interface ItemArea {
   fator: number | null;
   /** true = fator pela média do período (relatório de cardápio), não pedido a pedido. */
   fatorMedio: boolean;
+  /** Item: o que os clientes escolheram nele (complementos), do mais escolhido para o menos. */
+  escolhas?: EscolhaItem[];
+}
+
+export interface EscolhaItem {
+  chave: string;
+  nome: string;
+  grupo: string | null;
+  qtd: number;
+  /** Preço médio cobrado pelo complemento (0 = vem de graça no combo). */
+  preco: number;
+  /** Custo pela ficha por unidade; null = sem ficha. */
+  custoUnit: number | null;
+  alvo: string | null;
 }
 
 /**
@@ -401,6 +416,8 @@ export interface ItemArea {
 export function itensDosPedidos(pedidos: PedidoArea[], custos: MapaCustos): ItemArea[] {
   type Acc = { nivel: 'item' | 'complemento'; nome: string; grupo: string | null; qtd: number; faturado: number; chega: number; comida: number | null };
   const m = new Map<string, Acc>();
+  // Por item: o que os clientes escolheram nele (chave do complemento → quantidade e valor).
+  const escolhas = new Map<string, Map<string, { nome: string; grupo: string | null; qtd: number; valor: number }>>();
   for (const p of pedidos) {
     if (p.cancelado || !p.order) continue;
     const totalItens = p.order.itens.reduce((s, i) => s + i.total, 0);
@@ -417,6 +434,10 @@ export function itensDosPedidos(pedidos: PedidoArea[], custos: MapaCustos): Item
       m.set(k, a);
       for (const c of it.complementos) {
         const kc = chaveComplementoIfood(c.nome, c.grupo);
+        const doItem = escolhas.get(k) ?? new Map();
+        const e = doItem.get(kc) ?? { nome: c.nome, grupo: c.grupo, qtd: 0, valor: 0 };
+        e.qtd += c.qtd; e.valor += c.preco * c.qtd;
+        doItem.set(kc, e); escolhas.set(k, doItem);
         const b = m.get(kc) ?? { nivel: 'complemento', nome: c.nome, grupo: c.grupo, qtd: 0, faturado: 0, chega: NaN, comida: null };
         b.qtd += c.qtd; b.faturado += c.preco * c.qtd;
         m.set(kc, b);
@@ -429,7 +450,15 @@ export function itensDosPedidos(pedidos: PedidoArea[], custos: MapaCustos): Item
     const fator = a.nivel === 'item' && a.faturado > 0.005 && !Number.isNaN(a.chega) ? a.chega / a.faturado : null;
     // Item: custo por unidade com os complementos escolhidos (média do período). Complemento: custo da ligação dele.
     const custoUnit = a.nivel === 'item' ? (a.comida == null || a.qtd <= 0 ? null : a.comida / a.qtd) : cu?.custo ?? null;
-    return finalizarItem(chave, a.nivel, a.nome, a.grupo, a.qtd, a.faturado, precoMedio, cu, fator, false, custoUnit);
+    const item = finalizarItem(chave, a.nivel, a.nome, a.grupo, a.qtd, a.faturado, precoMedio, cu, fator, false, custoUnit);
+    const es = escolhas.get(chave);
+    if (es && es.size) {
+      item.escolhas = [...es.entries()].map(([ck, e]) => {
+        const cc = custoDoComplemento(custos, e.nome, e.grupo);
+        return { chave: ck, nome: e.nome, grupo: e.grupo, qtd: e.qtd, preco: e.qtd > 0 ? r2(e.valor / e.qtd) : 0, custoUnit: cc?.custo ?? null, alvo: cc?.alvo ?? null };
+      }).sort((x, y) => y.qtd - x.qtd);
+    }
+    return item;
   }).sort((x, y) => y.faturado - x.faturado || y.qtd - x.qtd);
 }
 

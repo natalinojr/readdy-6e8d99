@@ -341,17 +341,24 @@ export default function DetalhePedidoIfood({ p, lojas, acesso, tenantId, modo, o
                   <div className="w-6 h-6 rounded-lg bg-zinc-100 text-zinc-600 text-[12px] font-extrabold flex items-center justify-center flex-none">{it.qtd}</div>
                   <div className="flex-1 min-w-0">
                     <b className="block text-[13.5px] font-bold leading-snug">{it.nome}</b>
-                    {it.complementos.map((c, k) => (
-                      <span key={k} className="block text-[12px] text-zinc-500">+ {c.qtd > 1 ? `${c.qtd}× ` : ''}{c.nome}{c.preco > 0.005 ? ` (${brl(c.preco)})` : ''}</span>
-                    ))}
+                    {it.complementos.map((c, k) => {
+                      const faltaEsta = acesso.dinheiro && !p.cancelado && !!l?.semFicha.includes(c.nome);
+                      return (
+                        <span key={k} className="block text-[12px] text-zinc-500">
+                          + {c.qtd > 1 ? `${c.qtd}× ` : ''}{c.nome}{c.preco > 0.005 ? ` (${brl(c.preco)})` : ''}
+                          {faltaEsta && <span className="text-orange-600 font-semibold"> · sem ficha{acesso.itens && <> · <button type="button" onClick={() => irLigar(chaveComplementoIfood(c.nome, c.grupo))} className="underline font-extrabold cursor-pointer">Ligar</button></>}</span>}
+                        </span>
+                      );
+                    })}
                     {it.obs && <span className="block text-[12px] text-amber-700 font-semibold">Obs.: {it.obs}</span>}
                     {acesso.dinheiro && l && !p.cancelado && (
                       l.comida != null ? (
                         <span className="block text-[11.5px] text-zinc-400 mt-0.5">ficha: {l.alvo ?? 'ligada'} · comida {brl(l.comida)}</span>
                       ) : (
                         <span className="block text-[11.5px] text-orange-600 font-semibold mt-0.5">
-                          sem ficha{l.semFicha.length && !faltaItem ? `: ${l.semFicha.join(', ')}` : ''}
-                          {acesso.itens && <> · <button type="button" onClick={() => irLigar(chaveLigar)} className="underline font-extrabold cursor-pointer">Ligar</button></>}
+                          {faltaItem
+                            ? <>sem ficha: {it.nome}{acesso.itens && <> · <button type="button" onClick={() => irLigar(chaveLigar)} className="underline font-extrabold cursor-pointer">Ligar</button></>}</>
+                            : <>falta ligar {l.semFicha.length === 1 ? 'a escolha marcada acima' : `${l.semFicha.length} escolhas marcadas acima`}</>}
                         </span>
                       )
                     )}

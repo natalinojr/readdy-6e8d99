@@ -109,3 +109,29 @@ describe('pedido que o iFood ainda não fechou (API de Vendas sem taxas)', () =>
     expect(p.chega).toBeCloseTo(100 - 20 - 5, 2);
   });
 });
+
+describe('combo de escolhas', () => {
+  it('a comida é a soma das escolhas e a escolha grátis também precisa de ficha', () => {
+    const combo: OrderRow = { ...row, id: 'r2', ifood_order_id: 'o2', benefits: [], total: { subTotal: 54.89 } };
+    const its: ItemRow[] = [{
+      order_row_id: 'r2', idx: 1, name: 'Combo Burrito com Coca Cola Grátis', quantity: 1, total_price: 54.89, observations: null,
+      options: [
+        { name: 'Burritos Chili com Carne', groupName: 'Escolha o burrito', quantity: 1, price: 49.9 },
+        { name: 'Coca Cola Zero 350 Ml', groupName: 'Bebida', quantity: 1, price: 0 },
+      ],
+    }];
+    const base: MapaCustos = new Map([
+      ['item|combo burrito com coca cola grátis', { custo: 0, alvo: 'Combo de escolhas', tipo: 'escolhas', precoBalcao: null }],
+      ['complemento|burritos chili com carne|escolha o burrito', { custo: 14, alvo: 'Burrito Chilli', tipo: 'item', precoBalcao: 45 }],
+    ]);
+    const [p1] = montarPedidosArea([montarPedidoOrder(combo, its)], [], base, new Map([['*', 0.2]]));
+    expect(p1.comida).toBeNull();
+    expect(p1.semFicha).toEqual(['Coca Cola Zero 350 Ml']);
+    const comCoca: MapaCustos = new Map([...base, ['complemento|coca cola zero 350 ml|bebida', { custo: 3.1, alvo: 'Coca Zero', tipo: 'item', precoBalcao: 7 }]]);
+    const [p2] = montarPedidosArea([montarPedidoOrder(combo, its)], [], comCoca, new Map([['*', 0.2]]));
+    expect(p2.comida).toBeCloseTo(17.1, 2);
+    const item = itensDosPedidos([p2], comCoca).find((i) => i.nivel === 'item')!;
+    expect(item.escolhas?.map((e) => e.nome)).toEqual(['Burritos Chili com Carne', 'Coca Cola Zero 350 Ml']);
+    expect(item.escolhas?.[1].custoUnit).toBeCloseTo(3.1, 2);
+  });
+});

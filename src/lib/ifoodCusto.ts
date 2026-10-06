@@ -86,6 +86,9 @@ export async function fetchCustosIfood(tenantId: string): Promise<{ mapa: MapaCu
       } else if (l.target_kind === 'option' && l.option_id) {
         const op = opcoes.get(l.option_id);
         alvo = { custo: custoOpcao.get(l.option_id) ?? 0, alvo: op?.name ?? 'Opção do cardápio', tipo: 'option', precoBalcao: op?.price ?? null };
+      } else if (l.target_kind === 'escolhas') {
+        // Combo de escolhas: sem custo próprio; a comida vem dos complementos (ifoodArea.custoDaLinha).
+        alvo = { custo: 0, alvo: 'Combo de escolhas (custo pelo que o cliente escolhe)', tipo: 'escolhas', precoBalcao: null };
       } else {
         alvo = { custo: 0, alvo: 'Não usa estoque', tipo: 'sem_estoque', precoBalcao: null };
       }

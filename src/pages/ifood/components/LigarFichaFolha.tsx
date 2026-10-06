@@ -69,7 +69,7 @@ export default function LigarFichaFolha({ tenantId, aberta, fila, indice = 0, tr
   const [alvos, setAlvos] = useState<AlvoCardapio[] | null>(null);
   const [info, setInfo] = useState<Map<string, InfoAlvo>>(new Map());
   const [busca, setBusca] = useState('');
-  const [escolha, setEscolha] = useState<AlvoCardapio | 'sem_estoque' | null>(null);
+  const [escolha, setEscolha] = useState<AlvoCardapio | 'sem_estoque' | 'escolhas' | null>(null);
   const [modo, setModo] = useState<'escolher' | 'montar'>('escolher');
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -130,7 +130,7 @@ export default function LigarFichaFolha({ tenantId, aberta, fila, indice = 0, tr
 
   const ligar = async () => {
     if (!escolha) return;
-    const ok = escolha === 'sem_estoque' ? await gravar('sem_estoque', null) : await gravar(escolha.kind, escolha.id);
+    const ok = escolha === 'sem_estoque' || escolha === 'escolhas' ? await gravar(escolha, null) : await gravar(escolha.kind, escolha.id);
     if (ok) avancar();
   };
 
@@ -176,7 +176,7 @@ export default function LigarFichaFolha({ tenantId, aberta, fila, indice = 0, tr
               ) : (
                 <div className="rounded-2xl border border-zinc-200 divide-y divide-zinc-100 max-h-[40dvh] overflow-y-auto">
                   {achados.map((a, k) => {
-                    const sel = escolha !== 'sem_estoque' && escolha?.kind === a.kind && escolha.id === a.id;
+                    const sel = typeof escolha === 'object' && escolha?.kind === a.kind && escolha.id === a.id;
                     const inf = info.get(chaveAlvo(a));
                     return (
                       <button key={chaveAlvo(a)} type="button" disabled={salvando} onClick={() => setEscolha(a)}
@@ -202,6 +202,13 @@ export default function LigarFichaFolha({ tenantId, aberta, fila, indice = 0, tr
               )}
 
               <div className="space-y-2">
+                {atual.nivel === 'item' && (
+                  <button type="button" disabled={salvando} onClick={() => setEscolha('escolhas')}
+                    className={`w-full text-left px-3 py-2.5 rounded-xl border flex items-center gap-2.5 cursor-pointer ${escolha === 'escolhas' ? 'border-amber-300 bg-amber-50' : 'border-zinc-200 hover:bg-zinc-50'}`}>
+                    <i className={`${escolha === 'escolhas' ? 'ri-check-line text-amber-700' : 'ri-stack-line text-zinc-400'} text-lg`} />
+                    <span><b className="block text-[13px] text-zinc-800">É um combo de escolhas</b><span className="block text-[11.5px] text-zinc-500">O cliente escolhe o burrito, a bebida… nos complementos. A comida é a soma do que ele escolheu: depois ligue cada escolha ao item do cardápio.</span></span>
+                  </button>
+                )}
                 <button type="button" disabled={salvando} onClick={() => setEscolha('sem_estoque')}
                   className={`w-full text-left px-3 py-2.5 rounded-xl border flex items-center gap-2.5 cursor-pointer ${escolha === 'sem_estoque' ? 'border-amber-300 bg-amber-50' : 'border-zinc-200 hover:bg-zinc-50'}`}>
                   <i className={`${escolha === 'sem_estoque' ? 'ri-check-line text-amber-700' : 'ri-prohibited-line text-zinc-400'} text-lg`} />
@@ -220,7 +227,7 @@ export default function LigarFichaFolha({ tenantId, aberta, fila, indice = 0, tr
               </p>
             </div>
           ) : (
-            <MontarFicha tenantId={tenantId} item={atual} ultimo={ultimo} itensCardapio={principais} inicial={escolha && escolha !== 'sem_estoque' ? escolha : null} onVoltar={() => { setModo('escolher'); setErro(null); }}
+            <MontarFicha tenantId={tenantId} item={atual} ultimo={ultimo} itensCardapio={principais} inicial={typeof escolha === 'object' ? escolha : null} onVoltar={() => { setModo('escolher'); setErro(null); }}
               onSalvou={async () => { await custosIfood(tenantId, true).catch(() => null); onLigou(); avancar(); }} />
           )}
         </div>

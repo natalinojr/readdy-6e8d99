@@ -67,6 +67,7 @@ export function descricaoLigacao(i: Pick<ItemArea, 'tipoLigacao' | 'alvo'>): str
     case 'option': return `opção do cardápio: ${i.alvo ?? ''}`.trim();
     case 'composicao': return 'custo montado à mão';
     case 'sem_estoque': return 'Não usa estoque';
+    case 'escolhas': return 'Combo de escolhas: a comida é o que o cliente escolhe';
     default: return 'sem ficha';
   }
 }
