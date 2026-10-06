@@ -302,6 +302,90 @@ serve(async (req) => {
     const orderId = String(body.order_id ?? "");
     if (!orderId) return json({ error: "order_id obrigatorio" }, 400);
 
+    // ── Navegação dentro do app: rota da posição do motoboy até o cliente (e as próximas paradas
+    // da saída montada no Gestor, na ordem). Só para pedido de delivery em aberto e entregador ativo
+    // da loja — a chave do ORS não fica exposta para qualquer origem/destino.
+    if (body.action === "navegar") {
+      const driverId = String(body.driver_id ?? "").trim();
+      const fromLat = Number(body.lat), fromLng = Number(body.lng);
+      if (!driverId || !Number.isFinite(fromLat) || !Number.isFinite(fromLng)) return json({ error: "params" }, 200);
+      const { data: order } = await admin.from("orders")
+        .select("id, tenant_id, status, origin_type, delivery_platform")
+        .eq("id", orderId).maybeSingle();
+      if (!order || order.origin_type !== "delivery" || order.delivery_platform === "retirada") return json({ error: "not_found" }, 200);
+      if (order.status === "delivered" || order.status === "cancelled") return json({ ok: false, error: "encerrado" }, 200);
+      const tenantId = order.tenant_id as string;
+      const { data: driver } = await admin.from("delivery_drivers")
+        .select("id, is_active").eq("id", driverId).eq("tenant_id", tenantId).maybeSingle();
+      if (!driver?.is_active) return json({ ok: false, error: "driver_invalido" }, 200);
+
+      // Paradas: este pedido primeiro; depois as outras pendentes da saída dele (últimas 6 h), na ordem do Gestor.
+      let ids = [orderId];
+      const { data: saida } = await admin.from("delivery_saidas").select("pedidos")
+        .eq("tenant_id", tenantId).eq("driver_id", driverId).gte("created_at", new Date(Date.now() - 6 * 3600000).toISOString())
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      const daSaida = ((saida?.pedidos as string[] | null) ?? []);
+      if (daSaida.includes(orderId)) ids = [orderId, ...daSaida.filter((id) => id !== orderId)];
+      const { data: peds } = await admin.from("orders")
+        .select("id, number, destination_name, delivery_address, delivery_lat, delivery_lng, status, motoboy_status, motoboy_driver_id, out_for_delivery_at")
+        .eq("tenant_id", tenantId).in("id", ids);
+      const porId = new Map(((peds ?? []) as Record<string, unknown>[]).map((p) => [p.id as string, p]));
+      const paradas = ids.map((id) => porId.get(id)).filter((p): p is Record<string, unknown> => !!p)
+        .filter((p) => p.id === orderId || (p.status !== "delivered" && p.status !== "cancelled" && p.motoboy_status !== "entregou"
+          && (!p.motoboy_driver_id || p.motoboy_driver_id === driverId)))
+        .map((p) => ({
+          id: p.id as string,
+          number: p.number as string,
+          cliente: nomeLimpo(p.destination_name as string | null),
+          endereco: (p.delivery_address as string | null) ?? "",
+          lat: p.delivery_lat != null ? Number(p.delivery_lat) : null,
+          lng: p.delivery_lng != null ? Number(p.delivery_lng) : null,
+          motoboy_status: (p.motoboy_status as string | null) ?? null,
+          em_rota: !!p.out_for_delivery_at,
+        }));
+      const comPin = paradas.filter((p) => p.lat != null && p.lng != null);
+      if (!comPin.length || comPin[0].id !== orderId) return json({ ok: false, error: "sem_pin", paradas }, 200);
+
+      const apiKey = Deno.env.get("ORS_API_KEY");
+      if (!apiKey) return json({ ok: false, error: "sem_rota", paradas }, 200);
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 8000);
+        const res = await fetch("https://api.openrouteservice.org/v2/directions/driving-car/geojson", {
+          method: "POST",
+          headers: { "Authorization": apiKey, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            coordinates: [[fromLng, fromLat], ...comPin.map((p) => [p.lng, p.lat])],
+            language: "pt", instructions: true, units: "m", radiuses: [-1, ...comPin.map(() => -1)],
+          }),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) return json({ ok: false, error: "sem_rota", detalhe: res.status, paradas }, 200);
+        const geo = await res.json();
+        const f = geo?.features?.[0];
+        const coords = ((f?.geometry?.coordinates ?? []) as number[][]).map((c) => [c[1], c[0]]);
+        // deno-lint-ignore no-explicit-any
+        const pernas = ((f?.properties?.segments ?? []) as any[]).map((s, i) => ({
+          parada_id: comPin[i]?.id ?? null,
+          distancia_m: Math.round(Number(s.distance ?? 0)),
+          duracao_s: Math.round(Number(s.duration ?? 0)),
+          // deno-lint-ignore no-explicit-any
+          passos: ((s.steps ?? []) as any[]).map((st) => ({
+            texto: String(st.instruction ?? ""),
+            tipo: Number(st.type ?? -1),
+            distancia_m: Math.round(Number(st.distance ?? 0)),
+            duracao_s: Math.round(Number(st.duration ?? 0)),
+            ini: Number(st.way_points?.[0] ?? 0),
+            fim: Number(st.way_points?.[1] ?? 0),
+          })),
+        }));
+        return json({ ok: true, paradas: comPin, sem_pin: paradas.filter((p) => p.lat == null || p.lng == null), linha: coords, pernas });
+      } catch {
+        return json({ ok: false, error: "sem_rota", paradas }, 200);
+      }
+    }
+
     if (body.action === "get_order") {
       const bodyTenantId = String(body.tenant_id ?? "").trim();
       let getOrderQuery = admin.from("orders")

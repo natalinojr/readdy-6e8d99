@@ -1,6 +1,9 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { lazy, Suspense, useEffect, useState, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useMotoboyGps, textoGps } from './useMotoboyGps';
+
+// Mapa com a rota dentro do app (Leaflet só carrega quando o motoboy abre).
+const NavegacaoMotoboy = lazy(() => import('./NavegacaoMotoboy'));
 
 function edgeUrl(): string {
   const base = (import.meta.env.VITE_PUBLIC_SUPABASE_URL as string || '').replace(/\/$/, '');
@@ -99,6 +102,7 @@ export default function MotoboyPage() {
   const [entrando, setEntrando] = useState(false);
   const [loginErro, setLoginErro] = useState('');
   const [aviso, setAviso] = useState('');
+  const [showNav, setShowNav] = useState(false);
   // Teclado virtual: empurra a tela pra cima pro campo de "problema" não ficar escondido.
   const [kbInset, setKbInset] = useState(0);
   const problemaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -350,6 +354,13 @@ export default function MotoboyPage() {
               <Botao signal={proximo.signal} label={proximo.label} icon={proximo.icon} cor={proximo.cor} />
             ) : null}
 
+            {order.lat != null && order.lng != null ? (
+              <button type="button" onClick={() => setShowNav(true)}
+                className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm">
+                <i className="ri-navigation-line text-lg" /> Ir até o cliente (mapa com a rota)
+              </button>
+            ) : null}
+
             <button type="button" onClick={() => setShowProblema(true)} className="w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl border-2 border-red-200 text-red-600 font-bold text-sm">
               <i className="ri-alert-line text-lg" /> Tive um problema na entrega
             </button>
@@ -367,7 +378,7 @@ export default function MotoboyPage() {
             <p className="text-sm text-zinc-700">{order.endereco || '—'}</p>
             {mapsUrl ? (
               <a href={mapsUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 mt-1 text-xs font-bold text-blue-600">
-                <i className="ri-map-pin-line" /> Abrir no mapa
+                <i className="ri-map-pin-line" /> Abrir no Google Maps
               </a>
             ) : null}
           </div>
@@ -457,6 +468,12 @@ export default function MotoboyPage() {
         </div>
 
       </div>
+
+      {showNav && session ? (
+        <Suspense fallback={null}>
+          <NavegacaoMotoboy orderId={orderId} driverId={session.driver_id} onFechar={() => setShowNav(false)} onMudou={carregar} />
+        </Suspense>
+      ) : null}
 
       {/* Modal "problema" ancorado no TOPO: o teclado fica embaixo e nunca cobre o campo. */}
       {showProblema ? (
