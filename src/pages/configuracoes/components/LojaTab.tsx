@@ -3,7 +3,7 @@ import { Store, Camera, Save } from 'lucide-react';
 import { supabase, invokeWithAuth, uploadMenuImage } from '@/lib/supabase';
 import { COR_LOJA_PADRAO } from '@/lib/corLoja';
 import EditorPosicaoCapa from './EditorPosicaoCapa';
-import { lerFotosLoja, lerVideosLoja, MAX_CAPAS, MAX_VIDEOS, VIDEO_MAX_BYTES, VIDEO_MAX_SEGUNDOS, type CapaLoja, type VideoLoja } from '@/lib/capasLoja';
+import { lerFotosLoja, lerVideosLoja, MAX_CAPAS, MAX_VIDEOS, VIDEO_MAX_BYTES, type CapaLoja, type VideoLoja } from '@/lib/capasLoja';
 import { enviarVideoLoja } from '@/lib/videoLoja';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/contexts/ToastContext';
@@ -527,7 +527,7 @@ export default function LojaTab() {
               </label>
             ) : null}
             <p className="text-[10px] text-zinc-400 mt-1">
-              Até {MAX_VIDEOS} vídeos curtos (até {VIDEO_MAX_SEGUNDOS} s e {VIDEO_MAX_BYTES / 1024 / 1024} MB cada, MP4). Tocam sem som no topo do delivery e do QR, antes das fotos, e em sequência na tela de espera do totem. Quem está em economia de dados vê só a foto do vídeo.
+              Até {MAX_VIDEOS} vídeos (até {VIDEO_MAX_BYTES / 1024 / 1024} MB cada, MP4). Tocam sem som no topo do delivery e do QR, antes das fotos, e em sequência na tela de espera do totem. Quem está em economia de dados vê só a foto do vídeo.
             </p>
           </div>
         </div>

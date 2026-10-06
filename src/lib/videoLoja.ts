@@ -2,7 +2,7 @@
 // Confere o arquivo no navegador, tira um quadro de capa (poster) e manda o vídeo direto
 // ao Storage por URL assinada que o config-write cria (só admin/gerente da loja).
 import { invokeWithAuth, uploadMenuImage, SUPABASE_ANON_KEY } from '@/lib/supabase';
-import { VIDEO_MAX_BYTES, VIDEO_MAX_SEGUNDOS, type VideoLoja } from '@/lib/capasLoja';
+import { VIDEO_MAX_BYTES, type VideoLoja } from '@/lib/capasLoja';
 
 const EXT_POR_TIPO: Record<string, string> = { 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov' };
 const TIPO_POR_EXT: Record<string, string> = { mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime' };
@@ -76,9 +76,6 @@ export async function enviarVideoLoja(file: File, tenantId: string): Promise<{ v
   let v: HTMLVideoElement | null = null;
   try {
     v = await abrirVideo(local);
-    if (v.duration && v.duration > VIDEO_MAX_SEGUNDOS + 0.5) {
-      return { video: null, erro: 'Vídeo com ' + Math.round(v.duration) + ' s. O máximo é ' + VIDEO_MAX_SEGUNDOS + ' s.' };
-    }
     const quadro = await tirarQuadro(v);
     if (quadro) {
       const { url } = await uploadMenuImage(new File([quadro], 'capa-video.jpg', { type: 'image/jpeg' }), tenantId, 'capa-video');

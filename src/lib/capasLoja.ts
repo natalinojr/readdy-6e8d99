@@ -13,9 +13,8 @@ export interface CapaLoja {
 
 export const MAX_CAPAS = 10;
 export const MAX_VIDEOS = 3;
-/** Limites do vídeo (o bucket loja-videos recusa acima de 10 MB) */
+/** Limite do vídeo (o bucket loja-videos recusa acima de 10 MB); a duração é livre */
 export const VIDEO_MAX_BYTES = 10 * 1024 * 1024;
-export const VIDEO_MAX_SEGUNDOS = 20;
 
 /** Colunas de tenants que as telas do cliente leem para montar o topo da loja. */
 export const COLUNAS_MARCA_LOJA = 'logo_url, cover_url, brand_color, cover_position, cover_images, cover_videos';

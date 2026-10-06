@@ -4525,7 +4525,7 @@ Causa: `AprovacoesContext` (e o `NotificacoesContext`) eram só memória do apar
 
 ### Vídeos da loja: topo do delivery/QR e tela de espera do totem (2026-10-04)
 - **Dado:** `tenants.cover_videos` jsonb `[{url, poster}]` (check: ≤ 3; grant anon). Bucket público `loja-videos` (10 MB; mp4/webm/quicktime), arquivos em `<tenant_id>/video-*.ext`.
-- **Envio** (`src/lib/videoLoja.ts`): o navegador confere tamanho, duração (≤ 20 s) e HEVC. O `config-write` `cover_video_upload_url` (admin/gerente) devolve uma URL assinada, e o vídeo vai direto ao Storage com PUT (10 MB pela Edge seria lento). O quadro de capa sai de um canvas e vai para o `menu-images` via `uploadMenuImage`. O `update_tenant` só aceita URL `loja-videos/<loja>/<nome>.(mp4|webm|mov)` e poster `menu-images/<loja>/<nome>`.
+- **Envio** (`src/lib/videoLoja.ts`): o navegador confere tamanho (10 MB) e HEVC; duração livre desde 06/10 (pedido do dono). O `config-write` `cover_video_upload_url` (admin/gerente) devolve uma URL assinada, e o vídeo vai direto ao Storage com PUT (10 MB pela Edge seria lento). O quadro de capa sai de um canvas e vai para o `menu-images` via `uploadMenuImage`. O `update_tenant` só aceita URL `loja-videos/<loja>/<nome>.(mp4|webm|mov)` e poster `menu-images/<loja>/<nome>`.
 - **Pegadinhas:**
   - **HEVC:** a câmera do iPhone grava em HEVC, que fica preto em muito Android e no Chrome. O envio barra pela caixa `hvc1`/`hev1`, conferindo também o tamanho da caixa para não dar falso positivo.
   - **`muted`:** o React não escreve o atributo `muted`, e o iOS só faz autoplay se o vídeo já nasce mudo. Por isso `VideoMudo` põe o atributo pelo ref.
