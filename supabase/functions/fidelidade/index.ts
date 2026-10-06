@@ -10,6 +10,7 @@
 //
 // Ações do tablet (qualquer membro da loja; o tablet usa o usuário kiosk):
 //   clube_buscar    {cpf}                          → resumo do cliente ou {encontrado:false}
+//   clube_do_pedido {order_id}                     → caixa: CPF já dado no pedido + resumo se for do clube
 //   clube_cadastrar {cpf, nome, celular, nascimento?, aceita_ofertas}
 //   clube_reservar  {customer_id, recompensa_id | beneficio_id, celular_final}
 //   clube_liberar   {customer_id, hold_ids}
@@ -214,6 +215,32 @@ Deno.serve(async (req: Request) => {
         // que pede o aceite. Digitar o CPF sozinho nunca inscreve ninguém (LGPD).
         if (!cli || !cli.loyalty_joined_at) return ok({ ativo: true, encontrado: false });
         return ok({ ativo: true, encontrado: true, resumo: await resumo(cli.id) });
+      }
+
+      // Caixa abrindo o pagamento de um pedido (ex.: do tablet): o CPF que o cliente já
+      // deu (CPF na nota ou o do clube) e, se ele é do clube, o cartão — sem redigitar.
+      if (action === "clube_do_pedido") {
+        const orderId = String(body.order_id ?? "");
+        if (!/^[0-9a-f-]{36}$/i.test(orderId)) return ok({ ativo: true, cpf: null, encontrado: false });
+        const { data: o } = await admin.from("orders").select("customer_id, customer_cpf")
+          .eq("id", orderId).eq("tenant_id", tenantId).maybeSingle();
+        if (!o) return ok({ ativo: true, cpf: null, encontrado: false });
+        let cpf = soDigitos(o.customer_cpf);
+        let membro: string | null = null;
+        if (o.customer_id) {
+          const { data: c } = await admin.from("customers").select("id, cpf, loyalty_joined_at")
+            .eq("id", o.customer_id).eq("tenant_id", tenantId).is("deleted_at", null).maybeSingle();
+          if (c?.loyalty_joined_at) { membro = c.id; if (c.cpf) cpf = soDigitos(c.cpf); }
+          else if (!cpfValido(cpf) && c?.cpf) cpf = soDigitos(c.cpf);
+        }
+        if (!cpfValido(cpf)) return ok({ ativo: true, cpf: null, encontrado: false });
+        if (!membro) {
+          const { data: c } = await admin.from("customers").select("id, loyalty_joined_at")
+            .eq("tenant_id", tenantId).eq("cpf", cpf).is("deleted_at", null).maybeSingle();
+          if (c?.loyalty_joined_at) membro = c.id;
+        }
+        // na_nota: o CPF já estava no pedido como "CPF na nota" (o caixa pode repetir na nota).
+        return ok({ ativo: true, cpf, na_nota: cpfValido(soDigitos(o.customer_cpf)), encontrado: !!membro, resumo: membro ? await resumo(membro) : undefined });
       }
 
       if (action === "clube_cadastrar") {

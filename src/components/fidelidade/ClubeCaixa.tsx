@@ -50,12 +50,34 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
   const [ocupado, setOcupado] = useState(false);
 
   const estado = useRef({ resumo, reservas, manterReservas });
+  // CPF que veio do cadastro do clube (não do "CPF na nota" do pedido) não vai para a nota.
+  const cpfNaNota = useRef(true);
   estado.current = { resumo, reservas, manterReservas };
 
   useEffect(() => {
     if (!tenantId) return;
-    void chamar<{ ativo: boolean }>(tenantId, { action: 'clube_status' }).then((r) => setAtivo(!!r.ativo && !r.error));
-  }, [tenantId]);
+    let vivo = true;
+    void (async () => {
+      const st = await chamar<{ ativo: boolean }>(tenantId, { action: 'clube_status' });
+      const on = !!st.ativo && !st.error;
+      if (!vivo) return;
+      setAtivo(on);
+      if (!on) return;
+      // CPF que o cliente já deu no pedido (tablet: clube ou CPF na nota) vem preenchido;
+      // se ele é do clube, o cartão já aparece.
+      const r = await chamar<{ cpf?: string | null; na_nota?: boolean; encontrado?: boolean; resumo?: ClubeResumo }>(tenantId, { action: 'clube_do_pedido', order_id: orderId });
+      if (!vivo || r.error || !r.cpf) return;
+      setCpf(r.cpf);
+      cpfNaNota.current = !!r.na_nota;
+      setAberto(true);
+      if (r.encontrado && r.resumo) {
+        setResumo(r.resumo);
+        onChange({ customerId: r.resumo.customer_id, holdIds: [], desconto: 0, nomes: [], cpf: r.na_nota ? r.cpf : null });
+      }
+    })();
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, orderId]);
 
   // Fechou o pagamento sem confirmar: devolve os prêmios reservados.
   useEffect(() => () => {
@@ -66,7 +88,7 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
   }, [tenantId]);
 
   const avisarPai = (r: ClubeResumo | null, rs: ClubeReserva[], d: number) => {
-    onChange({ customerId: r?.customer_id ?? null, holdIds: rs.map((x) => x.hold_id), desconto: d, nomes: rs.map((x) => x.reward.nome), cpf: r ? cpf.replace(/\D/g, '') : null });
+    onChange({ customerId: r?.customer_id ?? null, holdIds: rs.map((x) => x.hold_id), desconto: d, nomes: rs.map((x) => x.reward.nome), cpf: r && cpfNaNota.current ? cpf.replace(/\D/g, '') : null });
   };
 
   const simular = async (r: ClubeResumo, rs: ClubeReserva[]) => {
@@ -84,6 +106,7 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
 
   const buscar = async () => {
     setErro(''); setAviso('');
+    cpfNaNota.current = true;
     const d = cpf.replace(/\D/g, '');
     if (!cpfValido(d)) { setErro('CPF inválido.'); return; }
     setOcupado(true);
@@ -154,6 +177,7 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
             </div>
           ) : (
             <>
+              {cpfValido(cpf) && <p className="text-xs text-zinc-500">CPF <b className="text-zinc-700 tabular-nums">{formatarCpf(cpf)}</b></p>}
               <p className="text-xs text-zinc-600">
                 {resumo.nivel ? <><b style={{ color: resumo.nivel.cor }}>{resumo.nivel.emoji} {resumo.nivel.nome}</b> · </> : null}
                 {resumo.compras_janela} compras{resumo.proximo ? ` · faltam ${resumo.faltam_compras} ${resumo.faltam_compras === 1 ? 'compra' : 'compras'} para ${resumo.proximo.nome}` : ''}. Este pedido soma pontos quando for pago.
