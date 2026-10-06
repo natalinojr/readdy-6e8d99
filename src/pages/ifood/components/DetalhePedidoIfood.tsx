@@ -328,7 +328,7 @@ export default function DetalhePedidoIfood({ p, lojas, acesso, tenantId, modo, o
         {!o ? (
           <p className="text-[12.5px] text-zinc-500">Itens não disponíveis (pedido de antes de ligar os pedidos no ERPOS).</p>
         ) : o.itens.length === 0 ? (
-          <p className="text-[12.5px] text-zinc-500">Os itens ainda estão chegando do iFood. Use “Reler do iFood”.</p>
+          <p className="text-[12.5px] text-zinc-500">{Date.now() - p.at.getTime() > 2 * 86_400_000 ? "O iFood não devolve mais os itens deste pedido (pedido antigo, lido depois)." : "Os itens ainda estão chegando do iFood. Use “Reler do iFood”."}</p>
         ) : (
           <div className="divide-y divide-zinc-100">
             {o.itens.map((it, idx) => {

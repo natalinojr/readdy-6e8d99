@@ -142,7 +142,8 @@ export function montarPedidoOrder(o: OrderRow, itens: ItemRow[]): PedidoOrder {
     clientePagou: num(t.orderAmount),
     pagamento,
     itens: itens
-      .filter((i) => i.order_row_id === o.id)
+      // Pedido antigo relido do iFood vem sem os itens: o iFood põe uma linha "Sem itens selecionados" com o total.
+      .filter((i) => i.order_row_id === o.id && !/^sem itens selecionados$/i.test((i.name ?? '').trim()))
       .sort((a, b) => num(a.idx) - num(b.idx))
       .map((i) => {
         const qtd = num(i.quantity) || 1;
