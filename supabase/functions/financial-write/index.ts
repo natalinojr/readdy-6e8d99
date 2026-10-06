@@ -465,7 +465,7 @@ Deno.serve(async (req) => {
             return new Response(JSON.stringify({
               error: `Antes de dar baixa: ${avisosBaixa.map((a) => a.texto).join(' · ')}`,
               code: 'precisa_confirmar', avisos: avisosBaixa,
-            }), { status: 409, headers: corsHeaders });
+            }), { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
           }
         }
 
