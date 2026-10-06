@@ -16,7 +16,7 @@ import type { ItemFiscal } from '@/lib/fiscal';
 import HorarioExibicaoEditor from '@/components/feature/HorarioExibicaoEditor';
 import { erroHorario, resumoHorario, temHorario, type HorarioExibicao } from '@/lib/horarioExibicao';
 import ItemImage from '@/components/base/ItemImage';
-import { uploadMenuImage } from '@/lib/supabase';
+import { uploadMenuImage, supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { useEstoque } from '@/contexts/EstoqueContext';
@@ -1025,6 +1025,23 @@ function OpcoesTab({
 }: OpcoesTabProps) {
   const { user } = useAuth();
   const [aplicarVendas, setAplicarVendas] = useState(false);
+  // O cardápio carrega as fichas vazias: quantos insumos cada produto tem na ficha vem direto do banco.
+  const [fichaPorItem, setFichaPorItem] = useState<Map<string, number> | null>(null);
+  useEffect(() => {
+    if (!user?.tenantId) return;
+    let vivo = true;
+    (async () => {
+      const m = new Map<string, number>();
+      for (let from = 0; ; from += 1000) {
+        const { data, error } = await supabase.from('item_ingredients').select('item_id').eq('tenant_id', user.tenantId!).order('id').range(from, from + 999);
+        if (error) return;
+        for (const r of (data ?? []) as Array<{ item_id: string }>) m.set(r.item_id, (m.get(r.item_id) ?? 0) + 1);
+        if (!data || data.length < 1000) break;
+      }
+      if (vivo) setFichaPorItem(m);
+    })();
+    return () => { vivo = false; };
+  }, [user?.tenantId]);
   const temVinculo = grupos.some(g => g.opcoes.some(o => insumosDaOpcao(o).length > 0 || !!o.linkedItemId));
   const podeAplicar = !!itemId && !itemId.startsWith('item-') && (user?.perfil === 'admin' || user?.perfil === 'gerente');
   const [openVinculo, setOpenVinculo] = useState<string | null>(null);
@@ -1615,7 +1632,7 @@ function OpcoesTab({
                 {/* Produto vinculado (2026-10-06) */}
                 {opc.linkedItemId && (() => {
                   const prod = produtos.find(p => p.id === opc.linkedItemId);
-                  const nIns = prod?.fichaTecnica?.length ?? 0;
+                  const nIns = fichaPorItem?.get(opc.linkedItemId!) ?? 0;
                   return (
                     <div className="bg-sky-50 border border-sky-200 rounded-lg px-3 py-2 flex flex-wrap items-center gap-2">
                       <i className="ri-restaurant-line text-sky-600 text-sm" />
@@ -1624,9 +1641,11 @@ function OpcoesTab({
                       </span>
                       {!prod
                         ? <span className="text-[10px] text-red-500">não encontrei esse produto</span>
-                        : nIns === 0
+                        : fichaPorItem && nIns === 0
                           ? <span className="text-[10px] text-red-500">o produto está sem ficha técnica — nada sai do estoque</span>
-                          : <span className="text-[10px] text-sky-700" title="Baixa e custo seguem a ficha técnica atual do produto">ficha atual · {nIns} {nIns === 1 ? 'insumo' : 'insumos'}</span>}
+                          : fichaPorItem
+                            ? <span className="text-[10px] text-sky-700" title="Baixa e custo seguem a ficha técnica atual do produto">ficha atual · {nIns} {nIns === 1 ? 'insumo' : 'insumos'}</span>
+                            : null}
                       <button
                         onClick={() => onUpdateOpcao(grp.id, opc.id, { linkedItemId: null })}
                         className="text-[10px] text-sky-600 hover:text-red-500 font-medium cursor-pointer whitespace-nowrap transition-colors"
@@ -1739,7 +1758,7 @@ function OpcoesTab({
                             >
                               <span className="text-zinc-700 font-medium truncate">{p.nome}</span>
                               <span className="text-[10px] text-zinc-400 whitespace-nowrap">
-                                {(p.fichaTecnica?.length ?? 0) > 0 ? `${p.fichaTecnica.length} na ficha` : 'sem ficha'}
+                                {!fichaPorItem ? '' : (fichaPorItem.get(p.id) ?? 0) > 0 ? `${fichaPorItem.get(p.id)} na ficha` : 'sem ficha'}
                               </span>
                             </button>
                           ));
