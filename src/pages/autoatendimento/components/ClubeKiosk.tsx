@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from 'react';
 import QRCodeImport from 'react-qr-code';
 import RoletaSvg, { rotacaoParaFatia, type FatiaRoleta } from '@/components/fidelidade/RoletaSvg';
+import SeletorDataNascimento from '@/components/base/SeletorDataNascimento';
 // react-qr-code exporta como default em alguns bundles e como named em outros.
 const QRCode = ((QRCodeImport as unknown as { default: typeof QRCodeImport }).default || QRCodeImport) as typeof QRCodeImport;
 import { cpfValido, formatarCpf, comoSaiProduto, rotuloPremio, type ClubeBeneficio, type ClubeRecompensa, type ClubeResumo, type ClubeReserva } from '@/lib/fidelidade';
@@ -456,10 +457,12 @@ export default function ClubeEntradaKiosk({ status, resumo, reservas, api, onCon
             <span className="text-zinc-300 text-sm font-semibold">Celular com DDD</span>
             <input value={celular} onChange={(e) => setCelular(e.target.value.replace(/[^\d() -]/g, '').slice(0, 16))} inputMode="numeric" autoComplete="off" className={inp} placeholder="(41) 99999-9999" />
           </label>
-          <label className="block">
+          <div className="block">
             <span className="text-zinc-300 text-sm font-semibold">Aniversário <span className="text-zinc-500 font-normal">(opcional — tem presente!)</span></span>
-            <input type="date" value={nascimento} onChange={(e) => setNascimento(e.target.value)} className={inp} />
-          </label>
+            {/* Dia/Mês/Ano em <select>: no tablet o <input type="date"> não deixava digitar/escolher a data */}
+            <SeletorDataNascimento value={nascimento} onChange={setNascimento}
+              selectClassName="w-full px-3 py-4 bg-zinc-800 border-2 border-zinc-700 focus:border-amber-500 rounded-2xl text-white text-lg outline-none cursor-pointer" />
+          </div>
           <label className="flex items-start gap-3 text-zinc-300 cursor-pointer">
             <input type="checkbox" checked={aceita} onChange={(e) => setAceita(e.target.checked)} className="mt-1 w-6 h-6 accent-amber-500" />
             <span>Quero participar do clube. Meu CPF e celular serão usados só para somar pontos e liberar prêmios.</span>

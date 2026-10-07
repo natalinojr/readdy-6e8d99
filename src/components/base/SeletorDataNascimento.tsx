@@ -14,12 +14,14 @@ import { useEffect, useState } from 'react';
 interface Props {
   value: string;
   onChange: (v: string) => void;
+  /** Classe dos <select> (substitui o estilo claro padrão; ex.: tema escuro do totem). */
+  selectClassName?: string;
 }
 
 const MESES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
 const COMPLETA = /^\d{4}-\d{2}-\d{2}$/;
 
-export default function SeletorDataNascimento({ value, onChange }: Props) {
+export default function SeletorDataNascimento({ value, onChange, selectClassName }: Props) {
   const init = COMPLETA.test(value) ? value.split('-') : ['', '', ''];
   const [dia, setDia] = useState(init[2] ? String(Number(init[2])) : '');
   const [mes, setMes] = useState(init[1] ? String(Number(init[1])) : '');
@@ -45,7 +47,7 @@ export default function SeletorDataNascimento({ value, onChange }: Props) {
   const anos: number[] = [];
   for (let a = anoAtual; a >= anoAtual - 100; a--) anos.push(a);
 
-  const cls = 'w-full px-2 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent bg-white cursor-pointer';
+  const cls = selectClassName ?? 'w-full px-2 py-2.5 text-sm border border-zinc-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent bg-white cursor-pointer';
 
   return (
     <div className="grid grid-cols-3 gap-2">
