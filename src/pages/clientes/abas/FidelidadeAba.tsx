@@ -15,7 +15,7 @@ import { avisar, confirmar } from '@/components/base/Dialogos';
 import { formatPhoneBR } from '@/lib/deliveryPhone';
 import JogosAba from './JogosAba';
 import {
-  CORES, avisosConfigPorSecao, chancesRoleta, custoPorPonto, distribuirNiveis, novoId, retornoPercentual, usosDaRecompensa,
+  CORES, avisosConfigPorSecao, chancesRoleta, custoPorPonto, distribuirNiveis, novoId, pctProduto, retornoPercentual, usosDaRecompensa,
   type AvisoConfig, type FaixaHistograma, type FidelidadeConfig, type Nivel, type Premio, type Recompensa,
   type TipoPremio, type TipoPresente, type TipoRecompensa,
 } from '@/lib/fidelidade';
@@ -41,7 +41,7 @@ interface Membro {
 }
 
 const TIPOS_RECOMPENSA: { id: TipoRecompensa; label: string }[] = [
-  { id: 'produto', label: 'Produto grátis' },
+  { id: 'produto', label: 'Produto (grátis ou com desconto)' },
   { id: 'desconto_valor', label: 'Desconto em R$' },
   { id: 'desconto_percentual', label: 'Desconto em %' },
   // 'frete_gratis' (Entrega grátis) não é oferecido: nenhuma tela aplica esse desconto ainda.
@@ -705,9 +705,25 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
                         {niveisOrdenados.map((n) => <option key={n.id} value={n.id}>{n.emoji} {n.nome}</option>)}
                       </select>
                     </label>
+                    {r.tipo === 'produto' && (
+                      <label className="flex items-center gap-1.5 text-xs text-zinc-600">
+                        Desconto no item
+                        <input
+                          type="number" inputMode="numeric" min={1} max={100} step={5} disabled={ro}
+                          value={pctProduto(r.valor)}
+                          onChange={(e) => setRecompensa(r.id, { valor: Math.min(100, Math.max(1, Math.round(Number(e.target.value) || 100))) })}
+                          className="w-16 px-2 py-1 text-xs border border-zinc-200 rounded-md bg-white tabular-nums disabled:bg-zinc-50"
+                        />%
+                        <span className="text-zinc-400">
+                          {pctProduto(r.valor) >= 100 ? '(sai de graça)' : produto ? `(cliente paga ${brl(produto.preco * (1 - pctProduto(r.valor) / 100))})` : ''}
+                        </span>
+                      </label>
+                    )}
                     <span className="text-xs text-zinc-500">
                       = gastar <b className="tabular-nums">{brl(gastoEquivalente)}</b>
-                      {produto && <> · vale <b className="tabular-nums">{brl(produto.preco)}</b> no cardápio</>}
+                      {produto && (pctProduto(r.valor) >= 100
+                        ? <> · vale <b className="tabular-nums">{brl(produto.preco)}</b> no cardápio</>
+                        : <> · desconta <b className="tabular-nums">{brl(produto.preco * pctProduto(r.valor) / 100)}</b> de {brl(produto.preco)}</>)}
                       {' '}· devolve <b className={`tabular-nums ${devolve > 8 ? 'text-rose-600' : 'text-emerald-600'}`}>{pct(devolve)}</b> em custo
                     </span>
                     <div className="flex items-center gap-2 ml-auto">

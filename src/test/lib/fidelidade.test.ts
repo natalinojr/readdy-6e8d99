@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cpfValido, descontoDasReservas, avisosConfig, avisosConfigPorSecao, chancesRoleta, configPadrao, distribuirNiveis, nivelPorCompras, normalizarConfig, retornoPercentual, usosDaRecompensa } from '@/lib/fidelidade';
+import { cpfValido, descontoDasReservas, avisosConfig, avisosConfigPorSecao, chancesRoleta, configPadrao, distribuirNiveis, nivelPorCompras, normalizarConfig, retornoPercentual, rotuloPremio, usosDaRecompensa } from '@/lib/fidelidade';
 
 describe('fidelidade', () => {
   it('config vazia vira o padrão e valores fora de faixa são cortados', () => {
@@ -111,5 +111,40 @@ describe('fidelidade', () => {
     expect(d.total).toBe(9.6);
     const teto = descontoDasReservas([r('x', { tipo: 'desconto_valor', nome: 'R$ 50', valor: 50 })], itens, 36);
     expect(teto.total).toBe(36);
+  });
+});
+
+describe('prêmio de produto com desconto parcial', () => {
+  const itens = [{ id: 'burrito', preco: 38, qtd: 1 }, { id: 'coca', preco: 8, qtd: 2 }];
+  const reserva = (hold_id: string, produto_id: string, valor: number) =>
+    ({ hold_id, fonte: 'pontos' as const, reward: { tipo: 'produto' as const, nome: 'X', valor, produto_id } });
+
+  it('valor 0 (config antiga) ou 100 = grátis', () => {
+    expect(descontoDasReservas([reserva('a', 'burrito', 0)], itens, 54).total).toBe(38);
+    expect(descontoDasReservas([reserva('a', 'burrito', 100)], itens, 54).total).toBe(38);
+  });
+
+  it('50% desconta metade do preço de 1 unidade', () => {
+    expect(descontoDasReservas([reserva('a', 'burrito', 50)], itens, 54).total).toBe(19);
+  });
+
+  it('arredonda em centavos e só vale com o item no carrinho', () => {
+    expect(descontoDasReservas([reserva('a', 'coca', 33)], itens, 54).total).toBe(2.64);
+    expect(descontoDasReservas([reserva('a', 'nachos', 50)], itens, 54).total).toBe(0);
+  });
+
+  it('normalizarConfig limita o % do produto a 0–100 e não mexe no R$ do desconto em valor', () => {
+    const c = normalizarConfig({ recompensas: [
+      { id: 'p', nome: 'P', tipo: 'produto', valor: 250, custo_pontos: 10 },
+      { id: 'v', nome: 'V', tipo: 'desconto_valor', valor: 250, custo_pontos: 10 },
+    ] });
+    expect(c.recompensas[0].valor).toBe(100);
+    expect(c.recompensas[1].valor).toBe(250);
+  });
+
+  it('rótulo mostra o % só quando não é grátis', () => {
+    expect(rotuloPremio({ nome: 'Burrito', tipo: 'produto', valor: 50 })).toBe('Burrito com 50% de desconto');
+    expect(rotuloPremio({ nome: 'Burrito', tipo: 'produto', valor: 0 })).toBe('Burrito');
+    expect(rotuloPremio({ nome: 'R$ 10', tipo: 'desconto_valor', valor: 10 })).toBe('R$ 10');
   });
 });

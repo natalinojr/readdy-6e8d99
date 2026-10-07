@@ -25,7 +25,8 @@ export interface Recompensa {
   id: string;
   nome: string;
   tipo: TipoRecompensa;
-  /** R$ (desconto_valor) ou % (desconto_percentual). Produto/frete: 0. */
+  /** R$ (desconto_valor), % do pedido (desconto_percentual) ou, no produto, % de desconto
+   *  no item (0 ou 100 = sai de graça; 50 = metade do preço). Frete: 0. */
   valor: number;
   produto_id: string | null;
   custo_pontos: number;
@@ -173,17 +174,20 @@ export function normalizarConfig(bruto: unknown): FidelidadeConfig {
   const tr = c.trilha ?? {};
   const ro = c.roleta ?? {};
 
-  const recompensas: Recompensa[] = (Array.isArray(c.recompensas) ? c.recompensas : p.recompensas).slice(0, 50).map((r: any) => ({
+  const recompensas: Recompensa[] = (Array.isArray(c.recompensas) ? c.recompensas : p.recompensas).slice(0, 50).map((r: any) => {
+    const tipo = um(r?.tipo, ['produto', 'desconto_valor', 'desconto_percentual', 'frete_gratis'] as const, 'produto');
+    return {
     id: idOuNull(r?.id) ?? novoId('rw'),
     nome: txt(r?.nome, 'Recompensa'),
-    tipo: um(r?.tipo, ['produto', 'desconto_valor', 'desconto_percentual', 'frete_gratis'] as const, 'produto'),
-    valor: num(r?.valor, 0, 0, 100_000),
+    tipo,
+    valor: tipo === 'produto' ? Math.round(num(r?.valor, 0, 0, 100)) : num(r?.valor, 0, 0, 100_000),
     produto_id: idOuNull(r?.produto_id),
     custo_pontos: Math.round(num(r?.custo_pontos, 100, 1, 1_000_000)),
     custo_loja: num(r?.custo_loja, 0, 0, 100_000),
     nivel_minimo: idOuNull(r?.nivel_minimo),
     ativo: bool(r?.ativo, true),
-  }));
+    };
+  });
 
   const niveis: Nivel[] = (Array.isArray(tr.niveis) ? tr.niveis : p.trilha.niveis).slice(0, 10).map((n: any) => ({
     id: idOuNull(n?.id) ?? novoId('lv'),
@@ -408,8 +412,27 @@ export interface ClubeReserva {
   reward: { tipo: TipoRecompensa; nome: string; valor: number; produto_id?: string | null; custo_pontos?: number };
 }
 
-/** Quanto cada reserva desconta do pedido, dado o carrinho. Produto grátis só
- *  vale se o produto estiver no carrinho (desconta 1 unidade). Nunca passa do subtotal. */
+/** % de desconto de um prêmio de produto: 1–99 = parte do preço; 0 (configs antigas) ou 100 = grátis. */
+export function pctProduto(valor: unknown): number {
+  const v = Math.round(Number(valor));
+  return Number.isFinite(v) && v > 0 && v < 100 ? v : 100;
+}
+
+/** "grátis" ou "com 50% de desconto" — o que o prêmio de produto faz com o preço. */
+export function textoDescontoProduto(valor: unknown): string {
+  const p = pctProduto(valor);
+  return p >= 100 ? 'grátis' : `com ${p}% de desconto`;
+}
+
+/** Nome do prêmio como o cliente vê: "Burrito Classic com 50% de desconto" (grátis = só o nome). */
+export function rotuloPremio(r: { nome: string; tipo?: string; valor?: unknown }): string {
+  const p = pctProduto(r.valor);
+  return r.tipo === 'produto' && p < 100 ? `${r.nome} com ${p}% de desconto` : r.nome;
+}
+
+/** Quanto cada reserva desconta do pedido, dado o carrinho. Prêmio de produto só
+ *  vale se o produto estiver no carrinho (desconta o % configurado de 1 unidade,
+ *  pelo preço de cardápio). Nunca passa do subtotal. */
 export function descontoDasReservas(
   reservas: ClubeReserva[],
   itens: { id: string; preco: number; qtd: number }[],
@@ -424,7 +447,7 @@ export function descontoDasReservas(
     if (w.tipo === 'produto' && w.produto_id) {
       const it = itens.find((i) => i.id === w.produto_id);
       const ja = usados.get(w.produto_id) ?? 0;
-      if (it && it.qtd > ja) { v = it.preco; usados.set(w.produto_id, ja + 1); }
+      if (it && it.qtd > ja) { v = it.preco * pctProduto(w.valor) / 100; usados.set(w.produto_id, ja + 1); }
     } else if (w.tipo === 'desconto_valor') {
       v = Number(w.valor) || 0;
     } else if (w.tipo === 'desconto_percentual') {

@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import RoletaSvg, { rotacaoParaFatia } from '@/components/fidelidade/RoletaSvg';
-import { cpfValido, formatarCpf } from '@/lib/fidelidade';
+import { cpfValido, formatarCpf, rotuloPremio } from '@/lib/fidelidade';
 import {
   clubeChamar, clubeSalvarToken, clubeTokenSalvo,
   type ClubeDados, type ClubeProgramaPublico,
@@ -302,7 +302,7 @@ export default function ClubePage() {
                   {programa.recompensas.map((w) => (
                     <div key={w.id} className="rounded-xl border border-zinc-200 overflow-hidden">
                       {w.foto ? <img src={w.foto} alt="" className="w-full h-24 object-cover" /> : <div className="h-24 flex items-center justify-center text-4xl bg-amber-50">🎁</div>}
-                      <div className="p-2"><p className="text-sm font-bold leading-tight">{w.nome}</p><p className="text-xs text-amber-600 font-bold">{pts(w.custo_pontos)} pts</p></div>
+                      <div className="p-2"><p className="text-sm font-bold leading-tight">{rotuloPremio(w)}</p><p className="text-xs text-amber-600 font-bold">{pts(w.custo_pontos)} pts</p></div>
                     </div>
                   ))}
                 </div>
@@ -343,8 +343,8 @@ export default function ClubePage() {
               <section className="bg-white rounded-2xl border-2 border-emerald-300 p-4">
                 <h3 className="font-black text-emerald-700 mb-2">🎁 Você já pode usar</h3>
                 <ul className="space-y-1.5 text-sm">
-                  {r.beneficios.map((b) => <li key={b.id} className="flex justify-between gap-2"><span><b>{b.reward.nome}</b> <span className="text-zinc-500">· {b.reward.motivo ?? 'prêmio'}</span></span>{b.expires_at && <span className="text-xs text-zinc-400 whitespace-nowrap">até {dataBR(b.expires_at)}</span>}</li>)}
-                  {r.recompensas.filter((w) => w.nivel_ok && w.falta <= 0).map((w) => <li key={w.id} className="flex justify-between gap-2"><b>{w.nome}</b><span className="text-amber-600 font-bold whitespace-nowrap">{pts(w.custo_pontos)} pts</span></li>)}
+                  {r.beneficios.map((b) => <li key={b.id} className="flex justify-between gap-2"><span><b>{rotuloPremio(b.reward)}</b> <span className="text-zinc-500">· {b.reward.motivo ?? 'prêmio'}</span></span>{b.expires_at && <span className="text-xs text-zinc-400 whitespace-nowrap">até {dataBR(b.expires_at)}</span>}</li>)}
+                  {r.recompensas.filter((w) => w.nivel_ok && w.falta <= 0).map((w) => <li key={w.id} className="flex justify-between gap-2"><b>{rotuloPremio(w)}</b><span className="text-amber-600 font-bold whitespace-nowrap">{pts(w.custo_pontos)} pts</span></li>)}
                 </ul>
                 <p className="text-xs text-zinc-500 mt-3">Use no próximo pedido: no tablet da loja, pelo QR da mesa, no delivery ou no caixa.</p>
               </section>
@@ -360,7 +360,7 @@ export default function ClubePage() {
                     <div key={w.id} className="flex items-center gap-3">
                       {foto ? <img src={foto} alt="" className="w-12 h-12 rounded-xl object-cover" /> : <div className="w-12 h-12 rounded-xl bg-amber-50 flex items-center justify-center text-xl">🎁</div>}
                       <div className="flex-1 min-w-0">
-                        <p className="font-bold text-sm">{w.nome}</p>
+                        <p className="font-bold text-sm">{rotuloPremio(w)}</p>
                         <div className="h-1.5 bg-zinc-100 rounded-full overflow-hidden mt-1"><div className={`h-full rounded-full ${pronto ? 'bg-emerald-500' : 'bg-amber-400'}`} style={{ width: `${Math.min(100, (r.saldo / Math.max(1, w.custo_pontos)) * 100)}%` }} /></div>
                         <p className="text-xs text-zinc-500 mt-0.5">{!w.nivel_ok && w.nivel_minimo ? `A partir do nível ${w.nivel_minimo}` : pronto ? 'Pronto para usar ✓' : `Faltam ${pts(w.falta)} pts`}</p>
                       </div>

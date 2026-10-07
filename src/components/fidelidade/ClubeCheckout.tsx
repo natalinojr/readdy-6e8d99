@@ -6,7 +6,7 @@
 // (delivery-write / mesa-write), com os preços dele. Este componente só avisa o pai
 // qual é o cartão e quais reservas ir no pedido (onChange).
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { cpfValido, descontoDasReservas, formatarCpf } from '@/lib/fidelidade';
+import { cpfValido, descontoDasReservas, formatarCpf, rotuloPremio } from '@/lib/fidelidade';
 import { clubeChamar, clubeSalvarToken, clubeTokenSalvo, type ClubeDados, type ClubeReserva, type ClubeResumo } from '@/lib/clubePublico';
 
 export interface ClubeSelecao { token: string | null; holdIds: string[]; desconto: number; nomes: string[] }
@@ -141,8 +141,8 @@ export default function ClubeCheckout({ tenantId, itens, subtotal, onChange, com
   };
 
   const usaveis = resumo ? [
-    ...resumo.beneficios.map((b) => ({ key: `b_${b.id}`, nome: b.reward.nome, detalhe: b.reward.motivo ?? 'Prêmio', alvo: { beneficio_id: b.id } })),
-    ...resumo.recompensas.filter((w) => w.nivel_ok && w.falta <= 0).map((w) => ({ key: `r_${w.id}`, nome: w.nome, detalhe: `${pts(w.custo_pontos)} pontos`, alvo: { recompensa_id: w.id } })),
+    ...resumo.beneficios.map((b) => ({ key: `b_${b.id}`, nome: rotuloPremio(b.reward), detalhe: b.reward.motivo ?? 'Prêmio', alvo: { beneficio_id: b.id } })),
+    ...resumo.recompensas.filter((w) => w.nivel_ok && w.falta <= 0).map((w) => ({ key: `r_${w.id}`, nome: rotuloPremio(w), detalhe: `${pts(w.custo_pontos)} pontos`, alvo: { recompensa_id: w.id } })),
   ] : [];
 
   return (
@@ -178,7 +178,7 @@ export default function ClubeCheckout({ tenantId, itens, subtotal, onChange, com
                 const v = desc.porReserva[r.hold_id] ?? 0;
                 return (
                   <div key={r.hold_id} className="flex items-center gap-2 text-xs bg-white rounded-lg px-2.5 py-2 border border-green-200">
-                    <span className="flex-1 min-w-0"><b>🎁 {r.reward.nome}</b>{v > 0 ? <span className="text-green-700"> −{brl(v)}</span> : <span className="text-amber-700"> · adicione o item ao carrinho</span>}</span>
+                    <span className="flex-1 min-w-0"><b>🎁 {rotuloPremio(r.reward)}</b>{v > 0 ? <span className="text-green-700"> −{brl(v)}</span> : <span className="text-amber-700"> · adicione o item ao carrinho</span>}</span>
                     <button type="button" onClick={() => { void remover(r.hold_id); }} disabled={ocupado} className="text-zinc-400 hover:text-red-600 cursor-pointer"><i className="ri-close-circle-line" /></button>
                   </div>
                 );

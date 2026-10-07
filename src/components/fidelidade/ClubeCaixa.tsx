@@ -8,7 +8,7 @@
 // (aplicarClubeNoPedido) — antes dos pagamentos.
 import { useEffect, useRef, useState } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
-import { cpfValido, formatarCpf, type ClubeResumo, type ClubeReserva } from '@/lib/fidelidade';
+import { cpfValido, formatarCpf, rotuloPremio, type ClubeResumo, type ClubeReserva } from '@/lib/fidelidade';
 
 export interface ClubeCaixaSel { customerId: string | null; holdIds: string[]; desconto: number; nomes: string[]; cpf: string | null }
 
@@ -97,7 +97,7 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
     const s = await chamar<{ desconto: number }>(tenantId, { action: 'clube_aplicar_pedido', simular: true, customer_id: r.customer_id, order_id: orderId, hold_ids: rs.map((x) => x.hold_id) });
     const d = s.error ? 0 : Number(s.desconto ?? 0);
     if (s.error) setErro(s.message || 'Não consegui calcular o desconto.');
-    else if (d <= 0) setAviso('O item do prêmio não está neste pedido — lance o item para ele sair de graça.');
+    else if (d <= 0) setAviso('O item do prêmio não está neste pedido — lance o item para o prêmio valer.');
     setDesconto(d);
     avisarPai(r, rs, d);
   };
@@ -154,8 +154,8 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
   };
 
   const usaveis = resumo ? [
-    ...resumo.beneficios.map((b) => ({ key: `b_${b.id}`, nome: b.reward.nome, detalhe: b.reward.motivo ?? 'Prêmio', alvo: { beneficio_id: b.id } })),
-    ...resumo.recompensas.filter((w) => w.nivel_ok && w.falta <= 0).map((w) => ({ key: `r_${w.id}`, nome: w.nome, detalhe: `${pts(w.custo_pontos)} pts`, alvo: { recompensa_id: w.id } })),
+    ...resumo.beneficios.map((b) => ({ key: `b_${b.id}`, nome: rotuloPremio(b.reward), detalhe: b.reward.motivo ?? 'Prêmio', alvo: { beneficio_id: b.id } })),
+    ...resumo.recompensas.filter((w) => w.nivel_ok && w.falta <= 0).map((w) => ({ key: `r_${w.id}`, nome: rotuloPremio(w), detalhe: `${pts(w.custo_pontos)} pts`, alvo: { recompensa_id: w.id } })),
   ] : [];
 
   return (
@@ -184,7 +184,7 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
               </p>
               {reservas.map((r) => (
                 <div key={r.hold_id} className="flex items-center gap-2 text-xs bg-white border border-emerald-200 rounded-lg px-2.5 py-1.5">
-                  <span className="flex-1"><b>🎁 {r.reward.nome}</b></span>
+                  <span className="flex-1"><b>🎁 {rotuloPremio(r.reward)}</b></span>
                   <button type="button" onClick={() => { void remover(r.hold_id); }} disabled={ocupado} className="text-zinc-400 hover:text-red-600 cursor-pointer"><i className="ri-close-circle-line" /></button>
                 </div>
               ))}

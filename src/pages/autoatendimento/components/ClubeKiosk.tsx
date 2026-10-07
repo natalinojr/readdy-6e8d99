@@ -12,7 +12,7 @@ import QRCodeImport from 'react-qr-code';
 import RoletaSvg, { rotacaoParaFatia, type FatiaRoleta } from '@/components/fidelidade/RoletaSvg';
 // react-qr-code exporta como default em alguns bundles e como named em outros.
 const QRCode = ((QRCodeImport as unknown as { default: typeof QRCodeImport }).default || QRCodeImport) as typeof QRCodeImport;
-import { cpfValido, formatarCpf, type ClubeBeneficio, type ClubeRecompensa, type ClubeResumo, type ClubeReserva } from '@/lib/fidelidade';
+import { cpfValido, formatarCpf, pctProduto, rotuloPremio, type ClubeBeneficio, type ClubeRecompensa, type ClubeResumo, type ClubeReserva } from '@/lib/fidelidade';
 
 export interface ClubeStatus {
   ativo: boolean;
@@ -238,7 +238,8 @@ export function ClubePainelKiosk({ status, resumo, reservas, api, onContinuar, t
   };
 
   const descricao = (tipo: string, valor: number) =>
-    tipo === 'desconto_valor' ? `${brl(valor)} de desconto` : tipo === 'desconto_percentual' ? `${valor}% de desconto no pedido` : 'Sai de graça neste pedido';
+    tipo === 'desconto_valor' ? `${brl(valor)} de desconto` : tipo === 'desconto_percentual' ? `${valor}% de desconto no pedido`
+      : pctProduto(valor) >= 100 ? 'Sai de graça neste pedido' : `Sai com ${pctProduto(valor)}% de desconto neste pedido`;
 
   const BotaoUsar = ({ titulo, alvo }: { titulo: string; alvo: { recompensa_id?: string; beneficio_id?: string } }) => (!resumo.tem_celular ? (
     <span className="text-zinc-400 text-xs text-right">Use no caixa<br />(cadastro sem celular)</span>
@@ -305,7 +306,7 @@ export function ClubePainelKiosk({ status, resumo, reservas, api, onContinuar, t
           <div className="flex flex-col gap-2">
             {proximas.map((r) => (
               <div key={r.id} className="flex items-center justify-between gap-3 text-sm">
-                <span className="text-zinc-300 truncate">{r.nome}</span>
+                <span className="text-zinc-300 truncate">{rotuloPremio(r)}</span>
                 <span className="text-zinc-500 whitespace-nowrap">
                   {!r.nivel_ok && r.nivel_minimo ? `a partir do nível ${r.nivel_minimo}` : `faltam ${pts(r.falta)} pts`}
                 </span>
