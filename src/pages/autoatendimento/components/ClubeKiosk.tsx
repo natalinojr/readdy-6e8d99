@@ -12,7 +12,7 @@ import QRCodeImport from 'react-qr-code';
 import RoletaSvg, { rotacaoParaFatia, type FatiaRoleta } from '@/components/fidelidade/RoletaSvg';
 // react-qr-code exporta como default em alguns bundles e como named em outros.
 const QRCode = ((QRCodeImport as unknown as { default: typeof QRCodeImport }).default || QRCodeImport) as typeof QRCodeImport;
-import { cpfValido, formatarCpf, pctProduto, rotuloPremio, type ClubeBeneficio, type ClubeRecompensa, type ClubeResumo, type ClubeReserva } from '@/lib/fidelidade';
+import { cpfValido, formatarCpf, comoSaiProduto, rotuloPremio, type ClubeBeneficio, type ClubeRecompensa, type ClubeResumo, type ClubeReserva } from '@/lib/fidelidade';
 
 export interface ClubeStatus {
   ativo: boolean;
@@ -239,7 +239,7 @@ export function ClubePainelKiosk({ status, resumo, reservas, api, onContinuar, t
 
   const descricao = (tipo: string, valor: number) =>
     tipo === 'desconto_valor' ? `${brl(valor)} de desconto` : tipo === 'desconto_percentual' ? `${valor}% de desconto no pedido`
-      : pctProduto(valor) >= 100 ? 'Sai de graça neste pedido' : `Sai com ${pctProduto(valor)}% de desconto neste pedido`;
+      : `Sai ${comoSaiProduto({ tipo, valor })} neste pedido`;
 
   const BotaoUsar = ({ titulo, alvo }: { titulo: string; alvo: { recompensa_id?: string; beneficio_id?: string } }) => (!resumo.tem_celular ? (
     <span className="text-zinc-400 text-xs text-right">Use no caixa<br />(cadastro sem celular)</span>

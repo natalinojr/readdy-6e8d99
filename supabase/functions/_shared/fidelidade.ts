@@ -10,7 +10,12 @@
 // Fase 1 (2026-09-27): só configurar e simular. Nada credita ponto nem dá
 // desconto ainda — isso é a Fase 2 (acúmulo no pedido pago + resgate no caixa).
 
-export type TipoRecompensa = 'produto' | 'desconto_valor' | 'desconto_percentual' | 'frete_gratis';
+// produto = item grátis ou com % de desconto; produto_valor = item com R$ de desconto;
+// desconto_valor / desconto_percentual = desconto no PEDIDO INTEIRO.
+export type TipoRecompensa = 'produto' | 'produto_valor' | 'desconto_valor' | 'desconto_percentual' | 'frete_gratis';
+
+/** Prêmio que vale num item do cardápio (precisa do item no carrinho). */
+export const ehPremioDeProduto = (tipo: unknown): boolean => tipo === 'produto' || tipo === 'produto_valor';
 export type TipoPremio = 'pontos' | 'recompensa' | 'desconto_percentual' | 'nada';
 export type TipoPresente = 'nenhum' | 'pontos' | 'giro' | 'recompensa';
 
@@ -25,8 +30,9 @@ export interface Recompensa {
   id: string;
   nome: string;
   tipo: TipoRecompensa;
-  /** R$ (desconto_valor), % do pedido (desconto_percentual) ou, no produto, % de desconto
-   *  no item (0 ou 100 = sai de graça; 50 = metade do preço). Frete: 0. */
+  /** produto: % de desconto no item (0 ou 100 = grátis; 50 = metade do preço);
+   *  produto_valor: R$ a menos no item; desconto_valor: R$ no pedido inteiro;
+   *  desconto_percentual: % do pedido inteiro. Frete: 0. */
   valor: number;
   produto_id: string | null;
   custo_pontos: number;
@@ -175,7 +181,7 @@ export function normalizarConfig(bruto: unknown): FidelidadeConfig {
   const ro = c.roleta ?? {};
 
   const recompensas: Recompensa[] = (Array.isArray(c.recompensas) ? c.recompensas : p.recompensas).slice(0, 50).map((r: any) => {
-    const tipo = um(r?.tipo, ['produto', 'desconto_valor', 'desconto_percentual', 'frete_gratis'] as const, 'produto');
+    const tipo = um(r?.tipo, ['produto', 'produto_valor', 'desconto_valor', 'desconto_percentual', 'frete_gratis'] as const, 'produto');
     return {
     id: idOuNull(r?.id) ?? novoId('rw'),
     nome: txt(r?.nome, 'Recompensa'),
@@ -316,7 +322,7 @@ export function avisosConfigPorSecao(cfg: FidelidadeConfig): AvisoConfig[] {
   if (cfg.pontos.ativo && !cfg.recompensas.some((r) => r.ativo)) add('recompensas', 'Pontos ligados sem nenhuma recompensa ativa: o cliente acumula e não tem no que trocar.');
   for (const r of cfg.recompensas) {
     if (r.nivel_minimo && !niveisIds.has(r.nivel_minimo)) add('recompensas', `"${r.nome}" pede um nível que não existe mais.`);
-    if (r.tipo === 'produto' && !r.produto_id) add('recompensas', `"${r.nome}" é produto mas não está ligada a um item do cardápio.`);
+    if (ehPremioDeProduto(r.tipo) && !r.produto_id) add('recompensas', `"${r.nome}" é produto mas não está ligada a um item do cardápio.`);
     if (r.tipo === 'frete_gratis') add('recompensas', `A recompensa "${r.nome}" é do tipo Entrega grátis, que o delivery ainda não aplica — troque o tipo ou exclua.`);
     if (r.tipo === 'desconto_percentual' && r.valor > 100) add('recompensas', `"${r.nome}" dá mais de 100% de desconto.`);
   }
@@ -424,10 +430,21 @@ export function textoDescontoProduto(valor: unknown): string {
   return p >= 100 ? 'grátis' : `com ${p}% de desconto`;
 }
 
+/** Como o item do prêmio sai: "de graça", "com 50% de desconto" ou "com R$ 10,00 de desconto". */
+export function comoSaiProduto(r: { tipo?: string; valor?: unknown }): string {
+  if (r.tipo === 'produto_valor') {
+    const v = Math.max(0, Number(r.valor) || 0);
+    return `com R$ ${v.toFixed(2).replace('.', ',')} de desconto`;
+  }
+  const p = pctProduto(r.valor);
+  return p >= 100 ? 'de graça' : `com ${p}% de desconto`;
+}
+
 /** Nome do prêmio como o cliente vê: "Burrito Classic com 50% de desconto" (grátis = só o nome). */
 export function rotuloPremio(r: { nome: string; tipo?: string; valor?: unknown }): string {
-  const p = pctProduto(r.valor);
-  return r.tipo === 'produto' && p < 100 ? `${r.nome} com ${p}% de desconto` : r.nome;
+  if (!ehPremioDeProduto(r.tipo)) return r.nome;
+  const como = comoSaiProduto(r);
+  return como === 'de graça' ? r.nome : `${r.nome} ${como}`;
 }
 
 /** Quanto cada reserva desconta do pedido, dado o carrinho. Prêmio de produto só
@@ -444,10 +461,14 @@ export function descontoDasReservas(
   for (const r of reservas) {
     let v = 0;
     const w = r.reward;
-    if (w.tipo === 'produto' && w.produto_id) {
+    if (ehPremioDeProduto(w.tipo) && w.produto_id) {
       const it = itens.find((i) => i.id === w.produto_id);
       const ja = usados.get(w.produto_id) ?? 0;
-      if (it && it.qtd > ja) { v = it.preco * pctProduto(w.valor) / 100; usados.set(w.produto_id, ja + 1); }
+      if (it && it.qtd > ja) {
+        // R$ no item nunca passa do preço dele (não vira desconto no resto do pedido).
+        v = w.tipo === 'produto_valor' ? Math.min(Math.max(0, Number(w.valor) || 0), it.preco) : it.preco * pctProduto(w.valor) / 100;
+        usados.set(w.produto_id, ja + 1);
+      }
     } else if (w.tipo === 'desconto_valor') {
       v = Number(w.valor) || 0;
     } else if (w.tipo === 'desconto_percentual') {

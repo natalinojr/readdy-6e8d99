@@ -22,7 +22,7 @@ import IdentificacaoKiosk from './components/IdentificacaoKiosk';
 import CpfKiosk from './components/CpfKiosk';
 import type { ConviteClube } from './components/ConviteClubeKiosk';
 import ClubeEntradaKiosk, { ClubePainelKiosk, PedidoGratisKiosk, type ClubeApi, type ClubeStatus } from './components/ClubeKiosk';
-import { descontoDasReservas, pctProduto, type ClubeResumo, type ClubeReserva } from '../../lib/fidelidade';
+import { comoSaiProduto, descontoDasReservas, ehPremioDeProduto, type ClubeResumo, type ClubeReserva } from '../../lib/fidelidade';
 import { consultarMembroClube } from '../../lib/conviteClubeKiosk';
 import FormaPagamentoKiosk from './components/FormaPagamentoKiosk';
 import KioskConfigModal from './components/KioskConfigModal';
@@ -373,9 +373,9 @@ function AutoatendimentoPageInner() {
       const reserva = res.data.reserva;
       setReservas((prev) => [...prev, reserva]);
       if (res.data.resumo) setClube(res.data.resumo);
-      if (reserva.reward.tipo === 'produto') {
+      if (ehPremioDeProduto(reserva.reward.tipo)) {
         const nome = adicionarProdutoGratis(reserva.reward.produto_id);
-        const comoSai = pctProduto(reserva.reward.valor) >= 100 ? 'de graça' : `com ${pctProduto(reserva.reward.valor)}% de desconto`;
+        const comoSai = comoSaiProduto(reserva.reward);
         return { ok: true, aviso: nome ? `${nome} entrou no seu pedido ${comoSai}! 🎉` : `Escolha ${reserva.reward.nome} no cardápio: ele sai ${comoSai}.` };
       }
       return { ok: true };

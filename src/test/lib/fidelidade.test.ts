@@ -148,3 +148,31 @@ describe('prêmio de produto com desconto parcial', () => {
     expect(rotuloPremio({ nome: 'R$ 10', tipo: 'desconto_valor', valor: 10 })).toBe('R$ 10');
   });
 });
+
+describe('prêmio de produto com desconto em R$ (produto_valor)', () => {
+  const itens = [{ id: 'burrito', preco: 38, qtd: 1 }, { id: 'coca', preco: 8, qtd: 1 }];
+  const reserva = (produto_id: string, valor: number) =>
+    ({ hold_id: 'a', fonte: 'pontos' as const, reward: { tipo: 'produto_valor' as const, nome: 'X', valor, produto_id } });
+
+  it('desconta o R$ só no item', () => {
+    expect(descontoDasReservas([reserva('burrito', 10)], itens, 46).total).toBe(10);
+  });
+
+  it('nunca passa do preço do item (não vaza para o resto do pedido)', () => {
+    expect(descontoDasReservas([reserva('coca', 10)], itens, 46).total).toBe(8);
+  });
+
+  it('sem o item no carrinho não desconta nada', () => {
+    expect(descontoDasReservas([reserva('nachos', 10)], itens, 46).total).toBe(0);
+  });
+
+  it('normalizarConfig mantém o tipo e o valor em R$', () => {
+    const c = normalizarConfig({ recompensas: [{ id: 'p', nome: 'P', tipo: 'produto_valor', valor: 12.5, produto_id: 'burrito', custo_pontos: 10 }] });
+    expect(c.recompensas[0].tipo).toBe('produto_valor');
+    expect(c.recompensas[0].valor).toBe(12.5);
+  });
+
+  it('rótulo mostra o R$', () => {
+    expect(rotuloPremio({ nome: 'Burrito', tipo: 'produto_valor', valor: 10 })).toBe('Burrito com R$ 10,00 de desconto');
+  });
+});
