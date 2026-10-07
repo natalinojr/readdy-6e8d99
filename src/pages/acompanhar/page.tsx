@@ -61,7 +61,7 @@ function situacao(p: PedidoLink, rastreio: Rastreio | null): { titulo: string; t
     case 'concluded': return { titulo: entrega ? 'Pedido entregue' : 'Pedido retirado', texto: 'Bom apetite! Obrigado por pedir com a gente.', icone: 'ri-emotion-happy-line' };
     case 'dispatched':
       return entrega
-        ? { titulo: 'Saiu para entrega', texto: rastreio?.eta_min ? `Chega em cerca de ${rastreio.eta_min} min.` : 'O motoboy já está a caminho.', icone: 'ri-e-bike-2-line' }
+        ? { titulo: 'Saiu para entrega', texto: rastreio?.chegando ? 'Deve estar chegando.' : rastreio?.eta_min ? `Chega em cerca de ${rastreio.eta_min} min.` : 'O motoboy já está a caminho.', icone: 'ri-e-bike-2-line' }
         : { titulo: 'Pronto para retirar', texto: 'Pode vir buscar.', icone: 'ri-shopping-bag-3-line' };
     case 'ready':
       return entrega
@@ -180,11 +180,11 @@ export default function AcompanharPage() {
                 <Suspense fallback={<div className="h-52 rounded-2xl bg-stone-100 animate-pulse" />}>
                   <RastreioMapa rastreio={rastreio!} />
                 </Suspense>
-                {rastreio!.distancia_km != null && (
-                  <p className="text-[12px] text-stone-500 mt-1.5 text-center">
-                    O motoboy está a {String(rastreio!.distancia_km).replace('.', ',')} km{rastreio!.eta_min ? ` · cerca de ${rastreio!.eta_min} min` : ''}
-                  </p>
-                )}
+                <p className="text-[12px] text-stone-500 mt-1.5 text-center">
+                  {rastreio!.motoboy
+                    ? `Localização do motoboy às ${hhmm(rastreio!.motoboy.atualizado_em) ?? ''}${rastreio!.distancia_km != null ? ` · a ${String(rastreio!.distancia_km).replace('.', ',')} km` : ''}`
+                    : 'A localização do motoboy aparece aqui quando o GPS do celular dele atualizar.'}
+                </p>
               </div>
             )}
             {p.tipo === 'DELIVERY' && !p.entrega_nossa && p.status === 'dispatched' && (

@@ -135,7 +135,8 @@ const COLS_RASTREIO = "status, out_for_delivery_at, motoboy_status, motoboy_driv
 // Rastreio do cliente: posição do motoboy SÓ deste pedido e SÓ enquanto ele está em rota (coletou,
 // não entregue/cancelado); posição > 15 min não sai. Previsão recalculada sem API externa: linha
 // reta × 1,3 (fator de ruas) na velocidade da rota calculada na criação do pedido (ORS), limitada a
-// 12–45 km/h. `destinoReserva` = casa do cliente quando o pedido não tem o pin (pedido do iFood).
+// 12–45 km/h (sem rota calculada = 25 km/h, que bateu com as entregas do iFood da Vila Leste em 10/2026).
+// `destinoReserva` = casa do cliente quando o pedido não tem o pin (pedido do iFood).
 // deno-lint-ignore no-explicit-any
 async function rastreioEmRota(admin: any, tenantId: string, o: any, destinoReserva: { lat: number; lng: number } | null = null) {
   const emRota = !!o && !!o.out_for_delivery_at && o.motoboy_status === "coletou" && !!o.motoboy_driver_id
@@ -145,10 +146,16 @@ async function rastreioEmRota(admin: any, tenantId: string, o: any, destinoReser
     .select("lat, lng, recorded_at").eq("driver_id", o.motoboy_driver_id).eq("tenant_id", tenantId).maybeSingle();
   const destLat = o.delivery_lat != null ? Number(o.delivery_lat) : destinoReserva?.lat ?? null;
   const destLng = o.delivery_lng != null ? Number(o.delivery_lng) : destinoReserva?.lng ?? null;
-  const fresca = !!pos && (Date.now() - new Date(pos.recorded_at as string).getTime()) <= 15 * 60000;
+  // Posição desta viagem = lida a partir de 10 min antes de sair. GPS parado (site com a tela apagada):
+  // a previsão desconta o tempo desde a última leitura — antes ficava presa no valor da hora da saída.
+  const lidaEm = pos ? new Date(pos.recorded_at as string).getTime() : 0;
+  const idadeMin = pos ? Math.max(0, (Date.now() - lidaEm) / 60000) : null;
+  const daViagem = !!pos && lidaEm >= new Date(o.out_for_delivery_at as string).getTime() - 10 * 60000;
+  const fresca = daViagem && idadeMin != null && idadeMin <= 15;
   let etaMin: number | null = null;
   let distKm: number | null = null;
-  if (fresca && destLat != null && destLng != null) {
+  let chegando = false;
+  if (daViagem && idadeMin != null && idadeMin <= 90 && destLat != null && destLng != null) {
     const rad = Math.PI / 180;
     const pLat = Number(pos.lat), pLng = Number(pos.lng);
     const dLat = (destLat - pLat) * rad, dLng = (destLng - pLng) * rad;
@@ -156,13 +163,17 @@ async function rastreioEmRota(admin: any, tenantId: string, o: any, destinoReser
     distKm = 2 * 6371 * Math.asin(Math.sqrt(a)) * 1.3;
     const rk = Number(o.delivery_distance_km ?? 0), rm = Number(o.delivery_route_min ?? 0);
     const kmh = rk > 0 && rm > 0 ? Math.min(45, Math.max(12, rk / (rm / 60))) : 25;
-    etaMin = distKm < 0.15 ? 1 : Math.ceil((distKm / kmh) * 60) + 1;
+    const restante = (distKm < 0.15 ? 0 : (distKm / kmh) * 60) - idadeMin;
+    chegando = restante <= 1;
+    etaMin = chegando ? null : Math.ceil(restante) + 1;
   }
   return {
     motoboy: fresca ? { lat: Number(pos.lat), lng: Number(pos.lng), atualizado_em: pos.recorded_at } : null,
     destino: destLat != null && destLng != null ? { lat: destLat, lng: destLng } : null,
-    distancia_km: distKm != null ? Math.round(distKm * 10) / 10 : null,
+    // Distância só com posição de até 3 min (senão "está a X km" seria de onde ele estava).
+    distancia_km: distKm != null && idadeMin != null && idadeMin <= 3 ? Math.round(distKm * 10) / 10 : null,
     eta_min: etaMin,
+    chegando,
   };
 }
 

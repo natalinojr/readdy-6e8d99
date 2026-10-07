@@ -359,6 +359,8 @@ export default function AcompanharPedido(props: Props) {
               <p className="text-[13px] font-bold text-stone-900">
                 chega em ~{rastreio.eta_min} min <span className="font-medium text-stone-500">({formatTime(new Date(Date.now() + rastreio.eta_min * 60000).toISOString())})</span>
               </p>
+            ) : rastreio.chegando ? (
+              <p className="text-[13px] font-bold text-stone-900">deve estar chegando</p>
             ) : null}
           </div>
           {rastreio.motoboy ? (

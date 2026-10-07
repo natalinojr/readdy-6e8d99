@@ -8,6 +8,8 @@ export interface Rastreio {
   destino: { lat: number; lng: number } | null;
   distancia_km: number | null;
   eta_min: number | null;
+  /** Pela previsão o motoboy já deve estar chegando (eta_min vem nulo). */
+  chegando?: boolean;
 }
 
 const motoIcon = L.divIcon({
