@@ -13,6 +13,7 @@ import IfoodPedidosModal from './components/IfoodPedidosModal';
 import IfoodLojaModal from './components/IfoodLojaModal';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import MapaEntregasGestor, { type PontoGestor } from './components/MapaEntregasGestor';
+import ChatIfoodWidget from '@/components/feature/ChatIfoodWidget';
 
 const FASE_CURTA: Record<ColunaId, string> = {
   preparo: 'Em preparo', pronto: 'Pronto', a_caminho: 'A caminho', coletado: 'Coletado', entregue: 'Entregue',
@@ -87,6 +88,7 @@ export default function GestorEntregasPage() {
 
   return (
     <div className="flex flex-col h-full">
+      <ChatIfoodWidget />
       {/* Cabeçalho */}
       <div className="px-4 md:px-6 py-3 flex-shrink-0 bg-white border-b border-zinc-100 space-y-3">
         {/* No celular os botões descem para a linha de baixo em vez de cobrir o título */}

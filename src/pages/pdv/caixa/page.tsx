@@ -37,6 +37,7 @@ import { useEstoqueAlertaPDV, type InsumoZerando } from '@/hooks/useEstoqueAlert
 import { useDeliveryState } from '@/hooks/useDeliveryState';
 import { useCaixaPing } from '@/hooks/useCaixaPing';
 import { useAvisoAcabouHoje } from '@/hooks/useAvisoAcabouHoje';
+import ChatIfoodWidget from '@/components/feature/ChatIfoodWidget';
 
 type ModalState = 'none' | 'opcoes' | 'destino' | 'pagamento' | 'sangria'
   | 'iniciar_sessao' | 'abertura_caixa' | 'fechar_sessao' | 'abrir_mesa';
@@ -1069,6 +1070,7 @@ export default function PDVCaixaPage() {
     <PDVProvider>
       <PDVCaixaInner />
       <AvisoImpressao />
+      <ChatIfoodWidget />
     </PDVProvider>
   );
 }

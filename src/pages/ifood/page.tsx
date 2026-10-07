@@ -16,7 +16,6 @@ import ResultadosAba from './components/ResultadosAba';
 import LojaAba from './components/LojaAba';
 import ConexaoAba from './components/ConexaoAba';
 import ImpressaoIfoodFolha from './components/ImpressaoIfoodFolha';
-import ChatIfoodWidget from '@/components/feature/ChatIfoodWidget';
 
 // Área iFood (2026-10-05, aprovada pelo dono: docs/prototipos/ifood-proposta.html). Um lugar só para os
 // pedidos, os itens e o custo, o dinheiro, os resultados e a loja no iFood. Antes isso estava espalhado
@@ -95,7 +94,6 @@ export default function IfoodPage() {
 
   return (
     <div className="flex flex-col h-full">
-      <ChatIfoodWidget tenantId={tenantId || undefined} />
       <IfoodCabecalho
         aba={abaEfetiva}
         onAba={(a) => irPara(a)}

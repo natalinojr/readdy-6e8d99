@@ -36,7 +36,6 @@ import { usePedidosEsquecidos } from './lib/usePedidosEsquecidos';
 import { baixarPedidosCsv } from './lib/exportar';
 import { useIfoodNoPedidos } from './lib/useIfoodNoPedidos';
 import { janelaIfoodPedidos } from './lib/ifoodExterno';
-import ChatIfoodWidget from '@/components/feature/ChatIfoodWidget';
 
 // Pedidos (layout novo aprovado em 2026-10-04 — docs/prototipos/pedidos-proposta.html):
 // frase do dia + "Precisa de você" com o botão que resolve, faixa de números, filtros com
@@ -534,7 +533,6 @@ export default function PedidosPage() {
 
   return (
     <div className="flex flex-col h-full">
-      {lojaTemIfood && <ChatIfoodWidget tenantId={user?.tenantId} />}
       <PedidosCabecalho
         aba={abaAtiva}
         onAba={setAba}

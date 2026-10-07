@@ -18,6 +18,7 @@ import { supabase } from '@/lib/supabase';
 import type { PagamentoPedido } from '@/types/pdv';
 import PedidoDetailModal from './components/PedidoDetailModal';
 import HistoricoDrawer from './components/HistoricoDrawer';
+import ChatIfoodWidget from '@/components/feature/ChatIfoodWidget';
 
 type Visualizacao = 'kanban' | 'lista' | 'mesas';
 type FiltroStatus = 'todos' | 'novo' | 'preparo' | 'pronto' | 'em_rota' | 'entregue' | 'cancelado';
@@ -866,6 +867,7 @@ export default function GestorPedidosPage() {
   return (
     <div className="flex flex-col h-full bg-zinc-50 overflow-hidden">
       <AvisoImpressao />
+      <ChatIfoodWidget />
       {/* Modais */}
       {obsModal && (
         <ObsGateModal

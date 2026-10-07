@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 
 // Chat do iFood dentro do ERPOS (2026-10-06): o "Widget" oficial do iFood (script em widgets.ifood.com.br,
 // abre um iframe de embeddables.ifood.com.br) traz Conversas com o cliente, avisos e acompanhamento do
 // pedido. A loja responde o cliente sem abrir o Gestor de Pedidos do iFood e cola ali o "Copiar link do
-// cliente". O ERPOS NÃO manda mensagem sozinho: o iFood não tem API de chat — quem escreve é a pessoa.
-// widgetId = criado no Portal do Desenvolvedor do iFood (menu Widgets › Registrar widget; lá também se
+// cliente". Fica só nas telas de operação (decisão do dono 06/10): Gestor de Pedidos, Gestor de
+// Entregas e PDV Caixa. O ERPOS NÃO manda mensagem sozinho: o iFood não tem API de chat — quem escreve é a pessoa.
+// widgetId (público, vai no HTML de qualquer jeito; VITE_IFOOD_WIDGET_ID troca) = criado no Portal do Desenvolvedor do iFood (menu Widgets › Registrar widget; lá também se
 // escolhem cor e posição do botão — usar o canto ESQUERDO, o direito é do balão do assistente).
 // merchantIds = UUIDs das lojas do iFood desta loja do ERPOS (fin_ifood_merchants, até 10). A própria loja
 // autoriza o widget uma vez dentro dele (código no Portal do Parceiro).
-export const IFOOD_WIDGET_ID = (import.meta.env.VITE_IFOOD_WIDGET_ID as string | undefined) ?? '';
+export const IFOOD_WIDGET_ID = (import.meta.env.VITE_IFOOD_WIDGET_ID as string | undefined) || 'a348fcdd-31f3-4ba0-bac6-173b5e12239a';
 const SCRIPT_URL = 'https://widgets.ifood.com.br/widget.js';
 
 type IfoodWidgetApi = {
@@ -38,7 +40,8 @@ function carregarScript(): Promise<IfoodWidgetApi> {
 }
 
 /** Botão flutuante do chat do iFood enquanto a tela estiver aberta (some ao sair dela). */
-export default function ChatIfoodWidget({ tenantId }: { tenantId: string | undefined }) {
+export default function ChatIfoodWidget() {
+  const tenantId = useAuth().user?.tenantId;
   const [merchants, setMerchants] = useState<string[] | null>(null);
 
   useEffect(() => {
