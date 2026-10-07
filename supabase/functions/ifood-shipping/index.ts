@@ -12,7 +12,7 @@
 //   save_config    { client_id, client_secret? }    admin/gerente — só app PRÓPRIO (teste); sem isso a loja usa
 //                                                   o app ERPOS PDV do sistema (secrets IFOOD_PDV_CLIENT_ID/SECRET)
 //   use_system_app                                  volta a loja para o app do sistema
-//   set_options    { homologation_mode?, shipping_enabled?, default_prep_min?, shipping_merchant_id?, order_*?, order_emit_nfce?, order_nfce_momento? }
+//   set_options    { homologation_mode?, shipping_enabled?, default_prep_min?, shipping_merchant_id?, order_*?, order_emit_nfce?, order_nfce_momento?, order_print_kitchen?, order_print_receipt? }
 //   request_user_code / confirm_authorization { authorization_code } / delete_config   admin/gerente
 //   refresh_merchants                                renova o acesso e relê as lojas de cada autorização   admin/gerente
 //   order_backfill { dias? }                        pedidos de antes de ligar (Vendas → GET /orders/{id}, ~15 dias)   admin/gerente
@@ -863,6 +863,8 @@ function safeConfig(cfg: any, auths: any[]) {
     order_auto_confirm: cfg.order_auto_confirm !== false,
     order_emit_nfce: cfg.order_emit_nfce === true,
     order_nfce_momento: cfg.order_nfce_momento === 'conclusao' ? 'conclusao' : 'saida',
+    order_print_kitchen: cfg.order_print_kitchen !== false,
+    order_print_receipt: cfg.order_print_receipt !== false,
     order_merchant_ids: cfg.order_merchant_ids ?? [],
   };
 }
@@ -1579,6 +1581,9 @@ Deno.serve(async (req) => {
       if (typeof body.order_auto_confirm === 'boolean') upd.order_auto_confirm = body.order_auto_confirm;
       if (typeof body.order_emit_nfce === 'boolean') upd.order_emit_nfce = body.order_emit_nfce;
       if (body.order_nfce_momento === 'saida' || body.order_nfce_momento === 'conclusao') upd.order_nfce_momento = body.order_nfce_momento;
+      // Impressão do pedido do iFood ao entrar na cozinha (lida pelo delivery-write › release_held_order).
+      if (typeof body.order_print_kitchen === 'boolean') upd.order_print_kitchen = body.order_print_kitchen;
+      if (typeof body.order_print_receipt === 'boolean') upd.order_print_receipt = body.order_print_receipt;
       let aviso: string | null = null;
       const pedidosLigados = (upd.order_enabled ?? cfg.order_enabled) === true;
       if (Array.isArray(body.order_merchant_ids) || (pedidosLigados && typeof body.order_enabled === 'boolean')) {

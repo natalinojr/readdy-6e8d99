@@ -404,6 +404,14 @@ export default function ConexaoAba({ tenantId, lojas, dados }: AbaProps) {
               <Chave titulo="Aceitar sozinho" texto="Sem ninguém tocar · recomendado. Desligado: alguém aperta “Aceitar” antes do prazo do iFood." ligado={cfg?.order_auto_confirm === true}
                 disabled={!podeEditar || !!busy} onChange={(v) => run('auto', 'set_options', { order_auto_confirm: v }, v ? 'Pedidos do iFood aceitos sozinhos.' : 'Pedidos do iFood esperam o Aceitar.')} />
             )}
+            {emFunil && (
+              <Chave titulo="Imprimir na cozinha" texto="Ticket da cozinha/bar quando o pedido do iFood entra. Desligado: aparece só na tela da cozinha." ligado={cfg?.order_print_kitchen !== false}
+                disabled={!podeEditar || !!busy} onChange={(v) => run('print-k', 'set_options', { order_print_kitchen: v }, v ? 'Pedidos do iFood imprimem na cozinha.' : 'Pedidos do iFood não imprimem mais na cozinha.')} />
+            )}
+            {emFunil && (
+              <Chave titulo="Imprimir comprovante" texto="Comprovante de entrega/retirada com cliente, endereço, total e forma de pagamento." ligado={cfg?.order_print_receipt !== false}
+                disabled={!podeEditar || !!busy} onChange={(v) => run('print-r', 'set_options', { order_print_receipt: v }, v ? 'Comprovante dos pedidos do iFood ligado.' : 'Comprovante dos pedidos do iFood desligado.')} />
+            )}
             {emFunil && typeof cfg?.order_emit_nfce === 'boolean' && (
               <Chave titulo="Emitir NFC-e" texto={cfg.order_nfce_momento === 'conclusao' ? 'A nota sai quando o iFood conclui o pedido e ele está pago.' : 'A nota sai quando o pedido fica pronto ou sai e está pago (recomendado).'} ligado={cfg.order_emit_nfce}
                 disabled={!podeEditar || !!busy} onChange={(v) => run('nfce', 'set_options', { order_emit_nfce: v }, v ? 'NFC-e dos pedidos do iFood ligada.' : 'NFC-e dos pedidos do iFood desligada.')} />

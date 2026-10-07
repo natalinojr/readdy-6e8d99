@@ -217,10 +217,14 @@ type DeliveryOutputCtx = {
   routeKm: number | null; routeTempoMax: number | null;
   serverDeliveryFee: number; serverSubtotal: number; voucherDiscount: number; vCode: string | null;
   serverTotal: number; payment_method: string | null; isDinheiro: boolean; cash_amount: number | null;
+  // Pedido do iFood: a loja escolhe se imprime (ifood_pdv_config.order_print_*). Sem o campo = imprime.
+  printKitchen?: boolean; printReceipt?: boolean;
 };
 // deno-lint-ignore no-explicit-any
 async function emitDeliveryOutputs(admin: any, ctx: DeliveryOutputCtx) {
   const { tenant_id, orderId, orderNumber, serverItems, customer_name, customer_address, customer_phone, cleanPhone, isRetirada, routeKm, routeTempoMax, serverDeliveryFee, serverSubtotal, voucherDiscount, vCode, serverTotal, payment_method, isDinheiro, cash_amount } = ctx;
+  const printKitchen = ctx.printKitchen !== false;
+  const printReceipt = ctx.printReceipt !== false;
       const dataHora = new Date().toLocaleString("pt-BR", {
         timeZone: "America/Sao_Paulo",
         day: "2-digit", month: "2-digit", year: "numeric",
@@ -286,7 +290,7 @@ async function emitDeliveryOutputs(admin: any, ctx: DeliveryOutputCtx) {
         } catch { /* sem nome: cai no rótulo genérico */ }
       }
 
-      for (const stationKey of allStationKeys) {
+      if (printKitchen) for (const stationKey of allStationKeys) {
         const kitchenItems = stationGroups.get(stationKey) ?? [];
         const barItems = barGroups.get(stationKey) ?? [];
         const hasBar = barItems.length > 0;
@@ -312,7 +316,7 @@ async function emitDeliveryOutputs(admin: any, ctx: DeliveryOutputCtx) {
         } catch { /* non-blocking */ }
       }
 
-      try {
+      if (printReceipt) try {
         const receiptItems: Array<Record<string, unknown>> = [];
         for (const item of serverItems) {
           const itemQty = Number(item.quantity ?? 1);
@@ -383,7 +387,7 @@ async function emitDeliveryOutputs(admin: any, ctx: DeliveryOutputCtx) {
 // deno-lint-ignore no-explicit-any
 async function releaseHeldOrder(admin: any, tenant_id: string, order_id: string, paymentLabel: string, newNotes: string | null, cashAmount: number | null = null): Promise<{ error?: string; code?: number; already?: boolean }> {
   const { data: o } = await admin.from("orders")
-    .select("id, number, status, is_draft, origin_type, destination_name, destination_phone, delivery_address, delivery_platform, delivery_fee, subtotal, discount_amount, total_amount, notes, delivery_distance_km, delivery_sla_min")
+    .select("id, number, status, is_draft, origin_type, destination_name, destination_phone, delivery_address, delivery_platform, delivery_fee, subtotal, discount_amount, total_amount, notes, delivery_distance_km, delivery_sla_min, ifood_order_id")
     .eq("id", order_id).eq("tenant_id", tenant_id).maybeSingle();
   if (!o) return { error: "Pedido não encontrado", code: 404 };
   if (o.origin_type !== "delivery") return { error: "Não é pedido de delivery", code: 400 };
@@ -414,7 +418,15 @@ async function releaseHeldOrder(admin: any, tenant_id: string, order_id: string,
   const customer_name = String(o.destination_name ?? "").split(/\s+[-–—]\s+/)[0].trim() || "Cliente";
   const notesTxt = String(newNotes ?? o.notes ?? "");
   const trocoMatch = cashAmount == null ? notesTxt.match(/Troco para\s*R\$\s*([\d.,]+)/i) : null;
+  // Pedido do iFood (funil): imprime cozinha/comprovante só se a loja deixou ligado na configuração do iFood.
+  let printKitchen = true, printReceipt = true;
+  if (o.ifood_order_id) {
+    const { data: ic } = await admin.from("ifood_pdv_config").select("order_print_kitchen, order_print_receipt").eq("tenant_id", tenant_id).maybeSingle();
+    printKitchen = ic?.order_print_kitchen !== false;
+    printReceipt = ic?.order_print_receipt !== false;
+  }
   await emitDeliveryOutputs(admin, {
+    printKitchen, printReceipt,
     tenant_id, orderId: o.id as string, orderNumber: o.number as string, serverItems,
     customer_name, customer_address: (o.delivery_address as string | null) ?? null, customer_phone: String(o.destination_phone ?? ""),
     cleanPhone: String(o.destination_phone ?? "").replace(/\D/g, ""), isRetirada,

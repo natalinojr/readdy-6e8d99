@@ -24,6 +24,8 @@ export interface IfoodShippingConfig {
   order_auto_confirm: boolean;
   order_emit_nfce: boolean; // emitir NFC-e dos pedidos do iFood (funil; exige o fiscal da loja ligado)
   order_nfce_momento?: 'saida' | 'conclusao'; // quando a nota sai: pronto/saiu (recomendado) ou conclusão no iFood
+  order_print_kitchen?: boolean; // funil: imprime o ticket da cozinha quando o pedido do iFood entra (padrão: sim)
+  order_print_receipt?: boolean; // funil: imprime o comprovante de entrega/retirada (padrão: sim)
   order_merchant_ids: string[];
 }
 

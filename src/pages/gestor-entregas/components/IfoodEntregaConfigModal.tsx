@@ -216,6 +216,21 @@ export default function IfoodEntregaConfigModal({ tenantId, onClose, onChanged }
                           </label>
                         )}
                         {cfg.order_mode === 'funnel' && (
+                          <div className="pl-5 space-y-1">
+                            <p className="text-[11px] font-semibold text-zinc-500">Imprimir quando o pedido do iFood entra na cozinha</p>
+                            <label className="flex items-center gap-2 text-xs text-zinc-600 cursor-pointer">
+                              <input type="checkbox" checked={cfg.order_print_kitchen !== false} disabled={!!busy}
+                                onChange={(e) => run('ord-print-k', 'set_options', { order_print_kitchen: e.target.checked }, e.target.checked ? 'Pedidos do iFood imprimem na cozinha.' : 'Pedidos do iFood não imprimem mais na cozinha (seguem no KDS).')} />
+                              Ticket da cozinha/bar (desligado: o pedido aparece só na tela da cozinha)
+                            </label>
+                            <label className="flex items-center gap-2 text-xs text-zinc-600 cursor-pointer">
+                              <input type="checkbox" checked={cfg.order_print_receipt !== false} disabled={!!busy}
+                                onChange={(e) => run('ord-print-r', 'set_options', { order_print_receipt: e.target.checked }, e.target.checked ? 'Comprovante dos pedidos do iFood ligado.' : 'Comprovante dos pedidos do iFood desligado.')} />
+                              Comprovante de entrega/retirada (cliente, endereço, total e forma de pagamento)
+                            </label>
+                          </div>
+                        )}
+                        {cfg.order_mode === 'funnel' && (
                           <label className="flex items-start gap-2 text-xs text-zinc-600 cursor-pointer pl-5">
                             <input type="checkbox" className="mt-0.5" checked={cfg.order_emit_nfce} disabled={!!busy}
                               onChange={(e) => run('ord-nfce', 'set_options', { order_emit_nfce: e.target.checked }, e.target.checked ? 'NFC-e dos pedidos do iFood ligada.' : 'NFC-e dos pedidos do iFood desligada.')} />

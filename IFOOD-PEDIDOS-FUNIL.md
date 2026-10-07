@@ -23,6 +23,7 @@ pronto, despachar, cancelar, disputa) na edge `ifood-shipping` (ver `IFOOD-MODUL
   `operate` (botões manuais na tela Pedidos iFood) continua só para a loja de teste/homologação.
 - `order_auto_confirm` (bool): confirma sozinho ao chegar; desligado → pedido espera "Aceitar" no Gestor de Pedidos.
 - `order_emit_nfce` (bool): emitir NFC-e dos pedidos do iFood (exige `fiscal_settings.enabled` da loja).
+- `order_print_kitchen` / `order_print_receipt` (bool, padrão ligado; 06/10): imprimir o ticket da cozinha/bar e o comprovante de entrega/retirada quando o pedido do iFood entra na cozinha. Lidos pelo `delivery-write › release_held_order` (pedido com `ifood_order_id`); tela iFood › Conexão e "Entregador iFood e avançado".
 - Só funciona em loja real depois do Order homologado no iFood (app em desenvolvimento não autoriza loja real).
 
 ## Fluxo
