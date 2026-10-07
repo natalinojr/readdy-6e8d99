@@ -42,8 +42,8 @@ interface Membro {
 
 const TIPOS_RECOMPENSA: { id: TipoRecompensa; label: string }[] = [
   { id: 'produto', label: 'Produto (grátis ou com desconto)' },
-  { id: 'desconto_valor', label: 'Desconto em R$' },
-  { id: 'desconto_percentual', label: 'Desconto em %' },
+  { id: 'desconto_valor', label: 'Desconto em R$ no pedido' },
+  { id: 'desconto_percentual', label: 'Desconto em % do pedido inteiro' },
   // 'frete_gratis' (Entrega grátis) não é oferecido: nenhuma tela aplica esse desconto ainda.
   // Config antiga que já tenha o tipo continua aparecendo no cartão, com aviso (ver recompensas).
 ];
@@ -114,6 +114,16 @@ function Campo({ label, dica, children }: { label: string; dica?: string; childr
       {dica && <span className="block text-[11px] text-zinc-400 mt-1 leading-snug">{dica}</span>}
     </label>
   );
+}
+
+/** Trocar o tipo do prêmio muda o sentido de "valor" (% do item, R$ ou % do pedido):
+ *  volta a um valor seguro do novo tipo em vez de herdar o número do tipo anterior. */
+function trocarTipoRecompensa(r: Recompensa, tipo: TipoRecompensa): Partial<Recompensa> {
+  if (tipo === r.tipo) return {};
+  if (tipo === 'produto') return { tipo, valor: 100 };
+  if (tipo === 'desconto_valor') return { tipo, valor: 10, custo_loja: 10, produto_id: null };
+  if (tipo === 'desconto_percentual') return { tipo, valor: 10, produto_id: null };
+  return { tipo, valor: 0, produto_id: null };
 }
 
 function Numero({ value, onChange, min = 0, step = 1, disabled, prefixo, sufixo }: {
@@ -654,7 +664,8 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
             {cfg.recompensas.map((r) => {
               const gastoEquivalente = cfg.pontos.pontos_por_real > 0 ? r.custo_pontos / cfg.pontos.pontos_por_real : 0;
               const devolve = gastoEquivalente > 0 ? (r.custo_loja / gastoEquivalente) * 100 : 0;
-              const produto = produtos.find((p) => p.id === r.produto_id);
+              // Só prêmio de produto tem item; tipo trocado não usa mais o item antigo.
+              const produto = r.tipo === 'produto' ? produtos.find((p) => p.id === r.produto_id) : undefined;
               return (
                 <div key={r.id} className={`border rounded-xl p-3 ${r.ativo ? 'border-zinc-200' : 'border-dashed border-zinc-200 opacity-60'}`}>
                   <div className="grid grid-cols-2 md:grid-cols-12 gap-2 items-end">
@@ -663,7 +674,7 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
                     </div>
                     <div className="md:col-span-2">
                       <Campo label="Tipo">
-                        <select value={r.tipo} disabled={ro} onChange={(e) => setRecompensa(r.id, { tipo: e.target.value as TipoRecompensa })} className={INPUT}>
+                        <select value={r.tipo} disabled={ro} onChange={(e) => setRecompensa(r.id, trocarTipoRecompensa(r, e.target.value as TipoRecompensa))} className={INPUT}>
                           {TIPOS_RECOMPENSA.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
                           {r.tipo === 'frete_gratis' && <option value="frete_gratis">Entrega grátis (não aplicada)</option>}
                         </select>
@@ -680,7 +691,7 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
                       ) : r.tipo === 'frete_gratis' ? (
                         <Campo label="Valor"><div className="text-xs text-zinc-400 py-2">Taxa de entrega do pedido</div></Campo>
                       ) : (
-                        <Campo label={r.tipo === 'desconto_valor' ? 'Desconto (R$)' : 'Desconto (%)'}>
+                        <Campo label={r.tipo === 'desconto_valor' ? 'Desconto (R$)' : 'Desconto (% do pedido)'}>
                           <Numero value={r.valor} disabled={ro} onChange={(v) => setRecompensa(r.id, { valor: v, ...(r.tipo === 'desconto_valor' ? { custo_loja: v } : {}) })} />
                         </Campo>
                       )}
@@ -724,6 +735,9 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
                       {produto && (pctProduto(r.valor) >= 100
                         ? <> · vale <b className="tabular-nums">{brl(produto.preco)}</b> no cardápio</>
                         : <> · desconta <b className="tabular-nums">{brl(produto.preco * pctProduto(r.valor) / 100)}</b> de {brl(produto.preco)}</>)}
+                      {r.tipo === 'desconto_percentual' && (
+                        <> · vale para o <b className={r.valor > 20 ? 'text-rose-600' : ''}>pedido inteiro</b> (num pedido de R$ 100 = {brl(r.valor)} de desconto)</>
+                      )}
                       {' '}· devolve <b className={`tabular-nums ${devolve > 8 ? 'text-rose-600' : 'text-emerald-600'}`}>{pct(devolve)}</b> em custo
                     </span>
                     <div className="flex items-center gap-2 ml-auto">
