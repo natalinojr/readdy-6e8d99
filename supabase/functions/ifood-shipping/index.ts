@@ -1340,9 +1340,13 @@ Deno.serve(async (req) => {
         const code = String(body.code ?? '').replace(/\s/g, '').slice(0, 12);
         if (!code) return errResp('Informe o código de entrega.');
         const r = await call(admin, c, 'POST', `/order/v1.0/orders/${o.ifood_order_id}/verifyDeliveryCode`, { code });
-        if (!r.ok) return errResp(apiError(r, 'Código de entrega'));
-        // Só vale com confirmação EXPLÍCITA do iFood (doc: { "valid": true }); resposta em outro formato = não confirmado.
-        const valid = r.data?.valid === true || r.data?.success === true;
+        // 422 ORDER_ALREADY_CONFIRMED = o código deste pedido já foi validado (ex.: 2ª tentativa depois de um aceite).
+        const jaConfirmado = !r.ok && r.status === 422 && /ORDER_ALREADY_CONFIRMED/.test(String(r.raw ?? '') + JSON.stringify(r.data ?? null));
+        if (!r.ok && !jaConfirmado) return errResp(apiError(r, 'Código de entrega'));
+        // Código certo: o iFood responde 2xx SEM corpo (teste real 06/10, pedido #3948 — validou e concluiu, e o
+        // ERPOS lia como recusado). Corpo presente só vale com valid/success explícitos.
+        const semCorpo = r.ok && (r.data == null || r.data === '');
+        const valid = jaConfirmado || semCorpo || r.data?.valid === true || r.data?.success === true;
         if (!valid) log('WARN', 'order_action', 'verify_code não confirmado', { order: o.ifood_order_id, resposta: r.data, tenantId });
         if (valid) await admin.from('ifood_orders').update({ delivery_code_ok: true, updated_at: new Date().toISOString() }).eq('id', o.id);
         log('INFO', 'order_action', 'verify_code', { order: o.ifood_order_id, valid, tenantId });

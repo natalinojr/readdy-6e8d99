@@ -369,6 +369,13 @@ export default function MotoboyPage() {
           </form>
         ) : (
           <div className="space-y-2">
+            {/* Lembrete do código do iFood desde o começo: o motoboy já chega à porta sabendo que vai pedir. */}
+            {order.ifood?.pede_codigo ? (
+              <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-2xl px-3 py-2.5">
+                <i className="ri-key-2-line text-red-500 text-lg flex-shrink-0" />
+                <p className="text-sm font-bold text-red-700">Na entrega, peça ao cliente o código do iFood</p>
+              </div>
+            ) : null}
             {proximo ? (
               <Botao signal={proximo.signal} label={proximo.label} icon={proximo.icon} cor={proximo.cor} />
             ) : null}
