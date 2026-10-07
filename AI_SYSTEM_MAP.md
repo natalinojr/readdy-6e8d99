@@ -3264,8 +3264,14 @@ Rota `/notas-servico` (`src/pages/nfse/`), módulo **sem loja**: acesso por **em
   `pode_usuarios`: `adicionar_membro`/`atualizar_membro`/`remover_membro`/`link_acesso`. Ninguém altera o próprio
   acesso, ninguém dá permissão que não tem, e o acesso do dono não é tirado/alterado por admin de CNPJ.
   Front: `Permissoes`/`PERMISSOES`/`permissoesDe` em `api.ts`; a página passa `pode` às abas.
-- **Convite sem e-mail do Supabase:** o **Site URL do Auth aponta para `erposv3.vercel.app` (deploy antigo, parado)** e
-  `/definir-senha` não está na lista de redirect. Por isso `convidar()` usa `generateLink({type:'invite'})` sem e-mail,
+- **Quem vê cada nota (2026-10-07, dono):** quem tem `pode_usuarios` vê todas; os demais só as que emitiram
+  (`nfse_notas.created_by`) e as compartilhadas nota por nota (`nfse_nota_acessos`, Edge `compartilhar_nota`, quadro
+  "Quem mais vê esta nota" no detalhe). RLS `fn_nfse_ve_nota`; `reconsultar`/`cancelar` checam o mesmo
+  (`exigirVerNota`). Migração `20261007200000_nfse_notas_visibilidade.sql`. Não existe "ver todas" separado de
+  administrar usuários (decisão do dono).
+- **Convite sem e-mail do Supabase:** o projeto **não tem SMTP próprio** (o padrão do Supabase manda 2 e-mails/hora e
+  só para a equipe). Até 2026-10-07 o Site URL do Auth apontava para `erposv3.vercel.app` (deploy antigo); trocado para
+  `https://erpos.vercel.app` (+ `https://erpos.vercel.app/**` nos redirects) em 10-07. Por isso `convidar()` usa `generateLink({type:'invite'})` sem e-mail,
   marca `convite_nfse: true` no metadata e devolve `https://erpos.vercel.app/definir-senha?token_hash=…&type=invite`;
   o admin manda por WhatsApp/e-mail (botões na tela). `/definir-senha` faz `verifyOtp` com o token (uma vez só,
   ignorando sessão já aberta no navegador) e `updateUser({password})`. `link_acesso` refaz o link (type=recovery).

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { avisar, confirmar } from '@/pages/contratacao/dialog';
 import {
-  type Empresa, type ErroSefin, type Nota, type Permissoes, type Servico, type StatusNota, type Tomador,
+  type Empresa, type ErroSefin, type Membro, type Nota, type Permissoes, type Servico, type StatusNota, type Tomador,
   STATUS_CLASS, STATUS_LABEL, baixarTexto, linkWhatsNota, nomeArquivoNota, fmtBRL, fmtChave, fmtData, fmtDataHora, fmtDoc, inputCls, labelCls, nfseCall, soDigitos,
 } from '../api';
 import { Modal, TomadorModal } from './CadastrosTab';
@@ -245,10 +245,22 @@ function NotaDetalhe({ notaId, empresa, pode, onClose, onMudou }: { notaId: stri
 
   // Telefone do tomador para o WhatsApp abrir direto na conversa dele (sem telefone, escolhe o contato).
   const [foneTomador, setFoneTomador] = useState<string | null>(null);
+  // Quem emitiu e, para quem administra usuários, com quem mais a nota está compartilhada.
+  const [membros, setMembros] = useState<Membro[]>([]);
+  const [compartilhada, setCompartilhada] = useState<Set<string>>(new Set());
+  const [compartilhadaSalva, setCompartilhadaSalva] = useState<Set<string>>(new Set());
 
   const carregar = async () => {
     const { data } = await supabase.from('nfse_notas').select('*').eq('id', notaId).maybeSingle();
     setNota(data as Nota | null);
+    const [{ data: ms }, { data: acs }] = await Promise.all([
+      supabase.rpc('fn_nfse_membros', { p_empresa: empresa.id }),
+      pode.usuarios ? supabase.from('nfse_nota_acessos').select('user_id').eq('nota_id', notaId) : Promise.resolve({ data: [] }),
+    ]);
+    setMembros((ms ?? []) as Membro[]);
+    const ids = new Set(((acs ?? []) as { user_id: string }[]).map((a) => a.user_id));
+    setCompartilhada(ids);
+    setCompartilhadaSalva(new Set(ids));
     const tomadorId = (data as Nota | null)?.tomador_id;
     if (tomadorId) {
       const { data: t } = await supabase.from('nfse_tomadores').select('fone').eq('id', tomadorId).maybeSingle();
@@ -278,6 +290,18 @@ function NotaDetalhe({ notaId, empresa, pode, onClose, onMudou }: { notaId: stri
     await carregar();
     onMudou();
   };
+
+  const salvarCompartilhamento = async () => {
+    setBusy('compartilhar');
+    const r = await nfseCall('compartilhar_nota', { nota_id: nota.id, user_ids: [...compartilhada] });
+    setBusy(null);
+    if (!r.success) { avisar(r.error ?? 'Não foi possível salvar.'); return; }
+    setCompartilhadaSalva(new Set(compartilhada));
+  };
+  const emissor = membros.find((m) => m.user_id === nota.created_by);
+  // Quem administra usuários já vê tudo; quem emitiu já vê a dela.
+  const paraCompartilhar = membros.filter((m) => !m.pode_usuarios && m.user_id !== nota.created_by);
+  const mudouCompartilhamento = compartilhada.size !== compartilhadaSalva.size || [...compartilhada].some((id) => !compartilhadaSalva.has(id));
 
   const d = (rotulo: string, valor: React.ReactNode) => (
     <div><p className="text-[11px] text-zinc-400">{rotulo}</p><p className="text-sm text-zinc-800 break-words">{valor || '—'}</p></div>
@@ -321,7 +345,7 @@ function NotaDetalhe({ notaId, empresa, pode, onClose, onMudou }: { notaId: stri
         {(nota.status === 'rejeitada' || nota.status === 'erro') && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3"><ListaErros erros={nota.erros} /></div>
         )}
-        {(nota.status === 'erro' || nota.status === 'processando') && (
+        {(nota.status === 'erro' || nota.status === 'processando') && pode.emitir && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
             Não recebemos a resposta final. Consulte de novo: se a Sefin gerou a nota, ela aparece aqui como autorizada.
             <button onClick={reconsultar} disabled={busy !== null} className="block mt-2 px-3 h-8 rounded-lg bg-amber-500 text-white font-bold cursor-pointer disabled:opacity-50">
@@ -335,12 +359,39 @@ function NotaDetalhe({ notaId, empresa, pode, onClose, onMudou }: { notaId: stri
           {d('Valor', fmtBRL(nota.valor_servico))}
           {d('Competência', fmtData(nota.competencia))}
           {d('Emitida em', fmtDataHora(nota.dh_processamento ?? nota.dh_emissao))}
+          {d('Emitida por', emissor ? (emissor.nome ?? emissor.email) : nota.created_by ? 'Pessoa que saiu da empresa' : null)}
           {d('Código do serviço', nota.c_trib_nac)}
           {d('ISS', `${nota.aliquota_iss != null ? `${nota.aliquota_iss}%` : 'não informado'}${nota.iss_retido ? ' · retido' : ''}`)}
         </div>
         {d('Descrição', <span className="whitespace-pre-wrap">{nota.descricao}</span>)}
         {nota.chave_acesso && d('Chave de acesso', <span className="font-mono text-xs">{fmtChave(nota.chave_acesso)}</span>)}
         {nota.status === 'cancelada' && d('Cancelamento', `${fmtDataHora(nota.cancelada_em)} — ${nota.cancel_motivo ?? ''}`)}
+
+        {pode.usuarios && paraCompartilhar.length > 0 && (
+          <div className="rounded-xl border border-zinc-200 p-3">
+            <p className="text-sm font-bold text-zinc-800">Quem mais vê esta nota</p>
+            <p className="text-[11px] text-zinc-400 mb-2">Quem administra usuários vê todas; quem emitiu vê a dela. Marque quem mais pode ver.</p>
+            <div className="space-y-1">
+              {paraCompartilhar.map((m) => (
+                <label key={m.user_id} className="flex items-center gap-2 text-sm text-zinc-700 cursor-pointer">
+                  <input type="checkbox" className="accent-sky-600" checked={compartilhada.has(m.user_id)}
+                    onChange={(e) => setCompartilhada((atual) => {
+                      const novo = new Set(atual);
+                      if (e.target.checked) novo.add(m.user_id); else novo.delete(m.user_id);
+                      return novo;
+                    })} />
+                  {m.nome ?? m.email}
+                </label>
+              ))}
+            </div>
+            {mudouCompartilhamento && (
+              <button onClick={salvarCompartilhamento} disabled={busy !== null}
+                className="mt-2 px-3 h-8 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold cursor-pointer disabled:opacity-50">
+                {busy === 'compartilhar' ? 'Salvando…' : 'Salvar'}
+              </button>
+            )}
+          </div>
+        )}
 
         {nota.status === 'autorizada' && pode.cancelar && (
           cancelando ? (
@@ -393,6 +444,9 @@ export default function NotasTab({ empresa, notas, tomadores, servicos, pode, me
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           Cadastre o certificado A1 na aba <b>Empresa</b> para poder emitir.
         </div>
+      )}
+      {!pode.usuarios && (
+        <p className="text-xs text-zinc-400">Aqui aparecem as notas que você emitiu e as que foram compartilhadas com você.</p>
       )}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="bg-white rounded-2xl border border-zinc-200 p-4">

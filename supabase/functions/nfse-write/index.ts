@@ -21,6 +21,8 @@
 //   atualizar_membro   { empresa_id, user_id, permissoes }        usuarios — ninguém altera a si mesmo
 //   remover_membro     { empresa_id, user_id }                    usuarios
 //   link_acesso        { empresa_id, user_id }                    usuarios — novo link para quem ainda não entrou
+//   compartilhar_nota  { nota_id, user_ids }                      usuarios — quem mais vê a nota (substitui a lista)
+// Notas: quem tem 'usuarios' vê todas; os demais só as que emitiram e as compartilhadas (fn_nfse_ve_nota).
 //
 // Por que o relay: a Sefin exige mTLS e derruba o Deno/rustls. A assinatura XMLDSig e a conexão
 // com o certificado rodam no Vercel (nfse-relay/api/sefin.js); aqui ficam regras e banco.
@@ -259,6 +261,13 @@ Deno.serve(async (req: Request) => {
     const { data: emp, error } = await admin.from('nfse_empresas').select('*').eq('id', empresaId).single();
     if (error || !emp) throw new HttpErr('Empresa não encontrada', 404);
     return emp as any;
+  };
+
+  // Depois de exigirMembro: a nota é visível para o chamador? (mesma regra do RLS fn_nfse_ve_nota)
+  const exigirVerNota = async (nota: { id: string; created_by: string | null }) => {
+    if (minhasPermissoes.usuarios || nota.created_by === user.id) return;
+    const { data } = await admin.from('nfse_nota_acessos').select('nota_id').eq('nota_id', nota.id).eq('user_id', user.id).maybeSingle();
+    if (!data) throw new HttpErr('Esta nota não está liberada para você', 403);
   };
 
   // Sem empresa_id: vale se o usuário participa de exatamente uma empresa.
@@ -548,6 +557,7 @@ Deno.serve(async (req: Request) => {
       const { data: nota } = await admin.from('nfse_notas').select('*').eq('id', body.nota_id).maybeSingle();
       if (!nota) return fail('Nota não encontrada', 404);
       const emp = await exigirMembro(nota.empresa_id, 'emitir');
+      await exigirVerNota(nota);
       const cert = await certDaEmpresa(admin, emp.id);
       let chave = nota.chave_acesso as string | null;
       if (!chave) {
@@ -578,6 +588,7 @@ Deno.serve(async (req: Request) => {
       const { data: nota } = await admin.from('nfse_notas').select('*').eq('id', body.nota_id).maybeSingle();
       if (!nota) return fail('Nota não encontrada', 404);
       const emp = await exigirMembro(nota.empresa_id, 'cancelar');
+      await exigirVerNota(nota);
       if (nota.status !== 'autorizada' || !nota.chave_acesso) return fail('Só é possível cancelar nota autorizada');
       const codigo = String(body.codigo ?? '');
       if (!['1', '2', '9'].includes(codigo)) return fail('Escolha o motivo do cancelamento');
@@ -663,6 +674,26 @@ Deno.serve(async (req: Request) => {
       const link = await linkPrimeiroAcesso(admin, conta.email);
       if (!link) return fail('Não foi possível gerar o link', 500);
       return json({ success: true, link });
+    }
+
+    if (action === 'compartilhar_nota') {
+      const { data: nota } = await admin.from('nfse_notas').select('id, empresa_id, created_by').eq('id', body.nota_id).maybeSingle();
+      if (!nota) return fail('Nota não encontrada', 404);
+      const emp = await exigirMembro(nota.empresa_id, 'usuarios');
+      const ids = [...new Set((Array.isArray(body.user_ids) ? body.user_ids : []).map(String))]
+        .filter((id) => id !== nota.created_by);
+      if (ids.length) {
+        const { data: membros } = await admin.from('nfse_empresa_membros').select('user_id').eq('empresa_id', emp.id).in('user_id', ids);
+        if ((membros ?? []).length !== ids.length) return fail('Só dá para compartilhar com quem participa desta empresa');
+      }
+      const { error: dErr } = await admin.from('nfse_nota_acessos').delete().eq('nota_id', nota.id);
+      if (dErr) return fail(dErr.message, 500);
+      if (ids.length) {
+        const { error: iErr } = await admin.from('nfse_nota_acessos').insert(ids.map((uid) => ({ nota_id: nota.id, user_id: uid, liberado_por: user.id })));
+        if (iErr) return fail(iErr.message, 500);
+      }
+      log('INFO', action, 'nota compartilhada', { nota_id: nota.id, por: user.id, com: ids.length });
+      return json({ success: true });
     }
 
     return fail(`Ação desconhecida: ${action}`);
