@@ -138,7 +138,7 @@ const COLS_RASTREIO = "status, out_for_delivery_at, motoboy_status, motoboy_driv
 // 12–45 km/h (sem rota calculada = 25 km/h, que bateu com as entregas do iFood da Vila Leste em 10/2026).
 // `destinoReserva` = casa do cliente quando o pedido não tem o pin (pedido do iFood).
 // deno-lint-ignore no-explicit-any
-async function rastreioEmRota(admin: any, tenantId: string, o: any, destinoReserva: { lat: number; lng: number } | null = null) {
+async function rastreioEmRota(admin: any, tenantId: string, o: any, destinoReserva: { lat: number; lng: number } | null = null, rotaReserva: { km: number; min: number } | null = null) {
   const emRota = !!o && !!o.out_for_delivery_at && o.motoboy_status === "coletou" && !!o.motoboy_driver_id
     && o.status !== "delivered" && o.status !== "cancelled" && o.delivery_platform !== "retirada";
   if (!emRota) return null;
@@ -161,7 +161,8 @@ async function rastreioEmRota(admin: any, tenantId: string, o: any, destinoReser
     const dLat = (destLat - pLat) * rad, dLng = (destLng - pLng) * rad;
     const a = Math.sin(dLat / 2) ** 2 + Math.cos(pLat * rad) * Math.cos(destLat * rad) * Math.sin(dLng / 2) ** 2;
     distKm = 2 * 6371 * Math.asin(Math.sqrt(a)) * 1.3;
-    const rk = Number(o.delivery_distance_km ?? 0), rm = Number(o.delivery_route_min ?? 0);
+    let rk = Number(o.delivery_distance_km ?? 0), rm = Number(o.delivery_route_min ?? 0);
+    if (!(rk > 0 && rm > 0) && rotaReserva) { rk = rotaReserva.km; rm = rotaReserva.min; }
     const kmh = rk > 0 && rm > 0 ? Math.min(45, Math.max(12, rk / (rm / 60))) : 25;
     const restante = (distKm < 0.15 ? 0 : (distKm / kmh) * 60) - idadeMin;
     chegando = restante <= 1;
@@ -175,6 +176,31 @@ async function rastreioEmRota(admin: any, tenantId: string, o: any, destinoReser
     eta_min: etaMin,
     chegando,
   };
+}
+
+// Rota de carro (OpenRouteService) entre dois pontos: { km, min } ou null. Usada uma vez por pedido
+// do iFood (pedido_link) para a velocidade da previsão — sem ela a conta é 25 km/h, bem acima do Maps.
+async function rotaOrs(de: { lat: number; lng: number }, para: { lat: number; lng: number }): Promise<{ km: number; min: number } | null> {
+  const apiKey = Deno.env.get("ORS_API_KEY");
+  if (!apiKey) return null;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+    const res = await fetch("https://api.openrouteservice.org/v2/directions/driving-car", {
+      method: "POST",
+      headers: { "Authorization": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ coordinates: [[de.lng, de.lat], [para.lng, para.lat]], radiuses: [-1, -1], instructions: false, units: "m" }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const j = await res.json();
+    const sm = j?.routes?.[0]?.summary;
+    const km = Number(sm?.distance ?? 0) / 1000, min = Number(sm?.duration ?? 0) / 60;
+    return km > 0 && min > 0 ? { km: Math.round(km * 100) / 100, min: Math.round(min * 10) / 10 } : null;
+  } catch {
+    return null;
+  }
 }
 
 serve(async (req) => {
@@ -361,7 +387,7 @@ serve(async (req) => {
       const codigo = String(body.codigo ?? "").trim().toLowerCase();
       if (!/^[0-9a-f]{16}$/.test(codigo)) return json({ ok: false, error: "nao_encontrado" }, 200);
       const { data: io } = await admin.from("ifood_orders")
-        .select("tenant_id, display_id, status, order_type, delivered_by, ordered_at, timeline, address, customer_name, order_id")
+        .select("id, tenant_id, display_id, status, order_type, delivered_by, ordered_at, timeline, address, customer_name, order_id, rota_km, rota_min")
         .eq("link_codigo", codigo).maybeSingle();
       if (!io) return json({ ok: false, error: "nao_encontrado" }, 200);
       const [{ data: t }, { data: o }] = await Promise.all([
@@ -375,6 +401,17 @@ serve(async (req) => {
       const cLat = Number(coord?.latitude), cLng = Number(coord?.longitude);
       const destIfood = Number.isFinite(cLat) && Number.isFinite(cLng) && (cLat !== 0 || cLng !== 0) ? { lat: cLat, lng: cLng } : null;
       const nossa = io.order_type === "DELIVERY" && io.delivered_by === "MERCHANT";
+      // Rota de verdade, uma vez por pedido: da 1ª posição do motoboy já em rota até a casa.
+      let rota = Number(io.rota_min) > 0 && Number(io.rota_km) > 0 ? { km: Number(io.rota_km), min: Number(io.rota_min) } : null;
+      const semPinNoPedido = !(o && o.delivery_lat != null && Number(o.delivery_route_min) > 0);
+      if (nossa && !rota && io.rota_min == null && semPinNoPedido && destIfood && o?.out_for_delivery_at && o?.motoboy_status === "coletou" && o?.motoboy_driver_id) {
+        const { data: p0 } = await admin.from("delivery_driver_positions")
+          .select("lat, lng, recorded_at").eq("driver_id", o.motoboy_driver_id).eq("tenant_id", io.tenant_id).maybeSingle();
+        if (p0 && new Date(p0.recorded_at as string).getTime() >= new Date(o.out_for_delivery_at as string).getTime() - 10 * 60000) {
+          rota = await rotaOrs({ lat: Number(p0.lat), lng: Number(p0.lng) }, destIfood);
+          await admin.from("ifood_orders").update({ rota_km: rota?.km ?? 0, rota_min: rota?.min ?? 0 }).eq("id", io.id).is("rota_min", null);
+        }
+      }
       const tl = (io.timeline ?? {}) as Record<string, string>;
       const quando = (...ks: string[]) => ks.map((k) => tl[k]).find(Boolean) ?? null;
       return json({
@@ -391,7 +428,7 @@ serve(async (req) => {
           saiu: quando("DISPATCHED", "COLLECTED") ?? (o?.out_for_delivery_at ?? null),
           entregue: quando("CONCLUDED", "DELIVERY_DROP_CODE_VALIDATION_SUCCESS"),
         },
-        rastreio: nossa ? await rastreioEmRota(admin, io.tenant_id, o, destIfood) : null,
+        rastreio: nossa ? await rastreioEmRota(admin, io.tenant_id, o, destIfood, rota) : null,
         loja: t ? { ...t } : null,
       });
     }
