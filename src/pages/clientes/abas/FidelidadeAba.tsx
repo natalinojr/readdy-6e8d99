@@ -308,7 +308,7 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
   // item = custo da ficha − o que o cliente ainda paga (nunca abaixo de zero: se ele paga
   // mais que a ficha, a loja só deixa de ganhar parte do lucro); R$ no pedido = o próprio
   // valor; % do pedido = % do pedido médio. Sem ficha / sem pedidos: null (vale o digitado).
-  const custoCalculado = useCallback((r: Recompensa): { valor: number | null; explica: string } => {
+  const custoCalculado = useCallback((r: Recompensa): { valor: number | null; explica: string; lucro?: number } => {
     if (ehPremioDeProduto(r.tipo)) {
       const p = produtos.find((x) => x.id === r.produto_id);
       if (!p) return { valor: null, explica: 'Escolha o item para calcular.' };
@@ -318,7 +318,13 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
       const paga = Math.max(0, p.preco - descontoNoItem(r, p.preco));
       const v = Math.max(0, Math.round((cf - paga) * 100) / 100);
       if (paga <= 0) return { valor: v, explica: `Sai de graça: custa a ficha do item (${brl(cf)}).` };
-      if (v === 0) return { valor: 0, explica: `O cliente paga ${brl(paga)}, mais que a ficha (${brl(cf)}): a loja não tem custo, só ganha menos.` };
+      if (v === 0) {
+        // Pagou mais que a ficha: sem custo, e ainda sobra lucro bruto (o que ele paga − a ficha).
+        const lucro = Math.max(0, Math.round((paga - cf) * 100) / 100);
+        return { valor: 0, lucro, explica: lucro > 0
+          ? `O cliente paga ${brl(paga)} e a ficha custa ${brl(cf)}: a loja não tem custo e ainda sobram ${brl(lucro)} de lucro bruto.`
+          : `O cliente paga ${brl(paga)}, o mesmo que a ficha: a loja empata.` };
+      }
       return { valor: v, explica: `Ficha ${brl(cf)} − o cliente paga ${brl(paga)}.` };
     }
     if (r.tipo === 'desconto_valor') return { valor: Math.max(0, r.valor), explica: 'Desconto em dinheiro: custa o valor inteiro.' };
@@ -833,6 +839,7 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
                         {custo.valor !== null ? (
                           <div className="px-2.5 py-1.5 text-sm rounded-lg bg-zinc-50 border border-zinc-200 tabular-nums font-semibold text-zinc-800">
                             {brl(custo.valor)} <span className="font-normal text-xs text-zinc-400">· calculado</span>
+                            {(custo.lucro ?? 0) > 0 && <span className="font-semibold text-xs text-emerald-700"> · lucro bruto {brl(custo.lucro ?? 0)}</span>}
                           </div>
                         ) : (
                           <Numero value={r.custo_loja} step={0.5} disabled={ro} prefixo="R$" onChange={(v) => setRecompensa(r.id, { custo_loja: v })} />
@@ -846,7 +853,7 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
                     <span>🎁 <b>{oQue}</b></span>
                     <span>🧾 Para ganhar: gastar <b className="tabular-nums">{brl(gasto)}</b>{ticket90 > 0 && gasto > 0 ? <> (≈ {inteiro(Math.max(1, gasto / ticket90))} pedidos)</> : null}</span>
                     <span>💚 Cliente recebe <b className="tabular-nums">{recebe !== null && gasto > 0 ? pct((recebe / gasto) * 100) : '—'}</b> do que gastou (valor de cardápio)</span>
-                    <span>🏷️ Custo real: <b className={`tabular-nums ${gasto > 0 && (custoReal / gasto) * 100 > 8 ? 'text-rose-600' : 'text-emerald-700'}`}>{gasto > 0 ? pct((custoReal / gasto) * 100) : '—'}</b> do que ele gastou</span>
+                    <span>🏷️ Custo real: <b className={`tabular-nums ${gasto > 0 && (custoReal / gasto) * 100 > 8 ? 'text-rose-600' : 'text-emerald-700'}`}>{gasto > 0 ? pct((custoReal / gasto) * 100) : '—'}</b> do que ele gastou{(custo.lucro ?? 0) > 0 && <> · <b className="text-emerald-700">sobra {brl(custo.lucro ?? 0)}</b> de lucro bruto no item</>}</span>
                   </div>
                 </div>
               );
