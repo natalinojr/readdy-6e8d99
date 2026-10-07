@@ -79,7 +79,8 @@ export default function GestorEntregasPage() {
   // "Montar saída": prontos esperando motoboy (sem entregador e sem fase)
   const prontosSemMoto = orders.filter((o) => o.status === 'ready' && !o.driver_id && !o.motoboy_status).length;
 
-  const pontosMapa: PontoGestor[] = baseFiltrada.map((o) => ({
+  // Mapa: entregue sai na hora (o motoboy marcou "entreguei"); segue só na coluna Entregue do quadro.
+  const pontosMapa: PontoGestor[] = baseFiltrada.filter((o) => o.status !== 'delivered' && o.motoboy_status !== 'entregou').map((o) => ({
     id: o.id, number: o.number, cliente: o.cliente, endereco: o.endereco,
     lat: o.lat, lng: o.lng, atrasado: estaAtrasado(o), motoboy_status: o.motoboy_status, driver_nome: o.driver_nome, driver_id: o.driver_id,
   }));
