@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { avisar, confirmar } from '@/pages/contratacao/dialog';
 import {
   type Empresa, type ErroSefin, type Nota, type Servico, type StatusNota, type Tomador,
-  STATUS_CLASS, STATUS_LABEL, baixarTexto, nomeArquivoNota, fmtBRL, fmtChave, fmtData, fmtDataHora, fmtDoc, inputCls, labelCls, nfseCall, soDigitos,
+  STATUS_CLASS, STATUS_LABEL, baixarTexto, linkWhatsNota, nomeArquivoNota, fmtBRL, fmtChave, fmtData, fmtDataHora, fmtDoc, inputCls, labelCls, nfseCall, soDigitos,
 } from '../api';
 import { Modal, TomadorModal } from './CadastrosTab';
 import { abrirDanfse } from './danfse';
@@ -243,9 +243,17 @@ function NotaDetalhe({ notaId, empresa, souAdmin, onClose, onMudou }: { notaId: 
   const [codigo, setCodigo] = useState('1');
   const [motivo, setMotivo] = useState('');
 
+  // Telefone do tomador para o WhatsApp abrir direto na conversa dele (sem telefone, escolhe o contato).
+  const [foneTomador, setFoneTomador] = useState<string | null>(null);
+
   const carregar = async () => {
     const { data } = await supabase.from('nfse_notas').select('*').eq('id', notaId).maybeSingle();
     setNota(data as Nota | null);
+    const tomadorId = (data as Nota | null)?.tomador_id;
+    if (tomadorId) {
+      const { data: t } = await supabase.from('nfse_tomadores').select('fone').eq('id', tomadorId).maybeSingle();
+      setFoneTomador((t as { fone: string | null } | null)?.fone ?? null);
+    }
   };
   useEffect(() => { carregar(); }, [notaId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -278,6 +286,17 @@ function NotaDetalhe({ notaId, empresa, souAdmin, onClose, onMudou }: { notaId: 
   return (
     <Modal titulo={nota.numero_nfse ? `NFS-e nº ${nota.numero_nfse}` : `DPS nº ${nota.numero_dps}`} onClose={onClose}
       rodape={<>
+        {nota.status === 'autorizada' && nota.chave_acesso && (
+          <a href={linkWhatsNota({
+              numero: nota.numero_nfse, chave: nota.chave_acesso, valor: nota.valor_servico, competencia: nota.competencia,
+              empresa: empresa.nome_fantasia || empresa.razao_social, tomador: nota.tomador?.nome, fone: foneTomador,
+            })}
+            target="_blank" rel="noopener noreferrer"
+            title={foneTomador ? 'Abre a conversa com o telefone do tomador' : 'Sem telefone no cadastro do tomador: o WhatsApp pede o contato'}
+            className="px-3 h-10 rounded-xl bg-green-600 hover:bg-green-500 text-white text-xs font-bold cursor-pointer inline-flex items-center gap-1">
+            <i className="ri-whatsapp-line text-sm" />WhatsApp
+          </a>
+        )}
         {nota.xml_nfse && (
           <button onClick={() => baixarTexto(`${nomeArquivoNota(empresa, nota)}.xml`, nota.xml_nfse!)}
             className="px-3 h-10 rounded-xl border border-zinc-200 text-xs font-bold text-zinc-700 hover:bg-zinc-50 cursor-pointer">XML</button>
