@@ -65,21 +65,29 @@ const primeiroNome = (n?: string) => (n ?? '').trim().split(/\s+/)[0] || 'Client
 const nomeCurto = (n: string) => { const i = n.indexOf(' - '); return i >= 0 ? n.slice(i + 3).trim() || n : n; };
 const semResposta = (r: Review) => (r.status ? r.status === 'NOT_REPLIED' : !(r.replies ?? []).some((x) => x.from === 'MERCHANT'));
 const nota = (v: number) => v.toFixed(1).replace('.', ',');
+/** Fim da pausa: só a hora se termina no mesmo dia do início, senão dia + hora. */
+const dataHoraFim = (p: Pausa) => (diaBR(p.start) === diaBR(p.end) ? horaBR(p.end) : dataHoraBR(p.end));
 
+/** Pausa valendo agora (já começou e não acabou). */
 function pausaAtiva(d: DadosLoja): Pausa | null {
   const agora = Date.now();
-  const vivas = d.pausas.filter((p) => new Date(utc(p.end)).getTime() > agora);
-  return vivas.find((p) => new Date(utc(p.start)).getTime() <= agora) ?? vivas[0] ?? null;
+  return d.pausas.find((p) => new Date(utc(p.start)).getTime() <= agora && new Date(utc(p.end)).getTime() > agora) ?? null;
 }
+/** Pausas marcadas para depois (ainda não começaram), da mais próxima para a mais longe. */
+function pausasMarcadas(d: DadosLoja): Pausa[] {
+  const agora = Date.now();
+  return d.pausas.filter((p) => new Date(utc(p.start)).getTime() > agora)
+    .sort((a, b) => new Date(utc(a.start)).getTime() - new Date(utc(b.start)).getTime());
+}
+/** "2026-10-10" + "14:00" no horário de Brasília (sem horário de verão desde 2019) → ISO. */
+const isoBR = (dia: string, hora: string) => new Date(`${dia}T${hora}:00-03:00`).toISOString();
+const hojeBR = () => new Date().toLocaleDateString('en-CA', { timeZone: TZ });
 
 type Tom = 'ok' | 'pausa' | 'fechada' | 'alerta' | 'sem';
 function situacao(d: DadosLoja): { tom: Tom; rotulo: string; detalhe: string } {
   if (!d.lojaOk) return { tom: 'sem', rotulo: 'situação indisponível', detalhe: 'O iFood ainda não liberou essa informação.' };
   const p = pausaAtiva(d);
-  if (p) {
-    const ja = new Date(utc(p.start)).getTime() <= Date.now();
-    return { tom: 'pausa', rotulo: ja ? 'em pausa' : 'pausa marcada', detalhe: `${ja ? `até ${horaBR(p.end)}` : `${dataHoraBR(p.start)} até ${horaBR(p.end)}`}${p.description ? ` · "${p.description}"` : ''}` };
-  }
+  if (p) return { tom: 'pausa', rotulo: 'em pausa', detalhe: `até ${dataHoraFim(p)}${p.description ? ` · "${p.description}"` : ''}` };
   const st = d.status.find((s) => s.operation === 'DELIVERY') ?? d.status[0];
   if (!st) return { tom: 'sem', rotulo: 'situação indisponível', detalhe: 'O iFood não informou a situação agora.' };
   const avisos = (st.validations ?? []).filter((v) => v.state && v.state !== 'OK').map((v) => v.message?.title ?? v.code ?? '').filter(Boolean);
@@ -171,6 +179,11 @@ export default function LojaAba({ tenantId, loja, lojas, acesso }: AbaProps) {
   const [pausando, setPausando] = useState<string | null>(null);
   const [pausaMin, setPausaMin] = useState(30);
   const [pausaMotivo, setPausaMotivo] = useState('');
+  // Pausa marcada (2026-10-06): dia + início + fim no horário de Brasília; fim menor que o início = termina no dia seguinte.
+  const [pausaQuando, setPausaQuando] = useState<'agora' | 'marcar'>('agora');
+  const [pausaDia, setPausaDia] = useState('');
+  const [pausaIni, setPausaIni] = useState('');
+  const [pausaFim, setPausaFim] = useState('');
   const [editHor, setEditHor] = useState<{ id: string; turnos: Turno[] } | null>(null);
 
   const [de, setDe] = useState('');
@@ -214,26 +227,44 @@ export default function LojaAba({ tenantId, loja, lojas, acesso }: AbaProps) {
   const pausar = async () => {
     if (!pausando) return;
     const id = pausando;
+    const marcar = pausaQuando === 'marcar';
+    let periodo: { start: string; end: string } | null = null;
+    if (marcar) {
+      if (!pausaDia || !pausaIni || !pausaFim) { setMsg({ ok: false, t: 'Escolha o dia, o início e o fim da pausa.' }); return; }
+      const start = isoBR(pausaDia, pausaIni);
+      const fimDia = pausaFim > pausaIni ? pausaDia : new Date(new Date(`${pausaDia}T12:00:00-03:00`).getTime() + 86_400_000).toLocaleDateString('en-CA', { timeZone: TZ });
+      const end = isoBR(fimDia, pausaFim);
+      if (new Date(start).getTime() <= Date.now()) { setMsg({ ok: false, t: 'Esse horário já passou. Para pausar agora, escolha "Agora".' }); return; }
+      periodo = { start, end };
+    }
     setBusy('pausa'); setMsg(null);
-    const r = await ifoodShipping<{ interruption?: Pausa }>('merchant_pause_create', tenantId, { merchant_id: id, minutes: pausaMin, description: pausaMotivo.trim() });
+    const r = await ifoodShipping<{ interruption?: Pausa }>('merchant_pause_create', tenantId,
+      { merchant_id: id, description: pausaMotivo.trim(), ...(periodo ?? { minutes: pausaMin }) });
     setBusy('');
     if (!r.success) { setMsg({ ok: false, t: r.error ?? 'Não deu para pausar.' }); return; }
     // O GET de pausas do iFood demora a refletir: usa o que o próprio iFood devolveu, sem recarregar.
     const nova = r.interruption;
     if (nova?.id) mudar(id, (d) => ({ ...d, pausas: [...d.pausas.filter((x) => x.id !== nova.id), nova] }));
-    setMsg({ ok: true, t: `Loja pausada por ${pausaMin < 60 ? `${pausaMin} min` : `${pausaMin / 60} h`} no iFood.` });
+    setMsg({ ok: true, t: periodo
+      ? `Pausa marcada no iFood: ${diaBR(periodo.start)}, ${horaBR(periodo.start)} até ${diaBR(periodo.start) === diaBR(periodo.end) ? horaBR(periodo.end) : dataHoraBR(periodo.end)}.`
+      : `Loja pausada por ${pausaMin < 60 ? `${pausaMin} min` : `${pausaMin / 60} h`} no iFood.` });
     setPausando(null); setPausaMotivo('');
   };
 
-  const tirarPausa = async (d: DadosLoja) => {
-    const ativa = pausaAtiva(d);
-    if (!ativa) return;
-    setBusy('del' + d.id); setMsg(null);
-    const r = await ifoodShipping('merchant_pause_delete', tenantId, { merchant_id: d.id, interruption_id: ativa.id });
+  const tirarPausa = async (d: DadosLoja, pausa: Pausa | null = pausaAtiva(d)) => {
+    if (!pausa) return;
+    const marcada = new Date(utc(pausa.start)).getTime() > Date.now();
+    setBusy('del' + pausa.id); setMsg(null);
+    const r = await ifoodShipping('merchant_pause_delete', tenantId, { merchant_id: d.id, interruption_id: pausa.id });
     setBusy('');
     if (!r.success) { setMsg({ ok: false, t: r.error ?? 'Não deu para tirar a pausa.' }); return; }
-    mudar(d.id, (x) => ({ ...x, pausas: x.pausas.filter((p) => p.id !== ativa.id) }));
-    setMsg({ ok: true, t: 'Pausa removida. A loja volta a receber pedidos.' });
+    mudar(d.id, (x) => ({ ...x, pausas: x.pausas.filter((p) => p.id !== pausa.id) }));
+    setMsg({ ok: true, t: marcada ? 'Pausa marcada cancelada.' : 'Pausa removida. A loja volta a receber pedidos.' });
+  };
+
+  const abrirPausa = (id: string) => {
+    setPausando(id); setPausaMin(30); setPausaMotivo(''); setPausaQuando('agora');
+    setPausaDia(hojeBR()); setPausaIni(''); setPausaFim('');
   };
 
   const salvarHorario = async () => {
@@ -393,6 +424,7 @@ export default function LojaAba({ tenantId, loja, lojas, acesso }: AbaProps) {
           {visiveis.map((d) => {
             const s = situacao(d);
             const ativa = pausaAtiva(d);
+            const marcadas = d.lojaOk ? pausasMarcadas(d) : [];
             return (
               <div key={d.id} className="space-y-2">
                 <div className="bg-white border border-zinc-200 rounded-2xl px-4 py-3 flex items-center gap-3">
@@ -402,9 +434,25 @@ export default function LojaAba({ tenantId, loja, lojas, acesso }: AbaProps) {
                     {s.detalhe && <p className="text-xs text-zinc-500 leading-snug mt-0.5">{s.detalhe}</p>}
                   </div>
                   {podeEditar && d.lojaOk && (ativa
-                    ? <button disabled={!!busy} onClick={() => tirarPausa(d)} className={btn('p', 'sm')}>{busy === 'del' + d.id ? '…' : 'Tirar pausa'}</button>
-                    : <button disabled={!!busy} onClick={() => { setPausando(d.id); setPausaMin(30); setPausaMotivo(''); }} className={btn('out', 'sm')}>Pausar</button>)}
+                    ? <button disabled={!!busy} onClick={() => tirarPausa(d)} className={btn('p', 'sm')}>{busy === 'del' + ativa.id ? '…' : 'Tirar pausa'}</button>
+                    : <button disabled={!!busy} onClick={() => abrirPausa(d.id)} className={btn('out', 'sm')}>Pausar</button>)}
                 </div>
+
+                {marcadas.length > 0 && (
+                  <div className="bg-white border border-zinc-200 rounded-2xl px-4 py-3 space-y-2">
+                    <p className="text-xs font-bold text-zinc-500">Pausas marcadas{visiveis.length > 1 ? ` · ${nomeCurto(d.nome)}` : ''}</p>
+                    {marcadas.map((p) => (
+                      <div key={p.id} className="flex items-center gap-3">
+                        <i className="ri-calendar-schedule-line text-base text-zinc-400" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[13px] font-bold text-zinc-800">{diaBR(p.start)}, {horaBR(p.start)} até {dataHoraFim(p)}</p>
+                          {p.description && <p className="text-xs text-zinc-500 truncate">{p.description}</p>}
+                        </div>
+                        {podeEditar && <button disabled={!!busy} onClick={() => tirarPausa(d, p)} className={btn('ghost', 'sm')}>{busy === 'del' + p.id ? '…' : 'Cancelar'}</button>}
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 {d.lojaOk && (
                   <Cartao>
@@ -478,9 +526,35 @@ export default function LojaAba({ tenantId, loja, lojas, acesso }: AbaProps) {
         subtitulo="Enquanto estiver em pausa a loja não recebe pedidos no iFood." onFechar={() => setPausando(null)}
         rodape={<>
           <button className={btn('out')} onClick={() => setPausando(null)}>Cancelar</button>
-          <button className={btn('p') + ' flex-1'} disabled={!!busy} onClick={pausar}>{busy === 'pausa' ? 'Pausando…' : 'Pausar loja'}</button>
+          <button className={btn('p') + ' flex-1'} disabled={!!busy} onClick={pausar}>{busy === 'pausa' ? 'Salvando…' : pausaQuando === 'marcar' ? 'Marcar pausa' : 'Pausar loja'}</button>
         </>}>
         <div className="space-y-3 pb-2">
+          <div>
+            <p className="text-xs font-bold text-zinc-500 mb-1.5">Quando?</p>
+            <div className="flex gap-1.5">
+              {([['agora', 'Agora'], ['marcar', 'Marcar dia e hora']] as const).map(([v, l]) => (
+                <button key={v} type="button" onClick={() => setPausaQuando(v)}
+                  className={`h-9 px-3 rounded-full border text-[13px] font-bold cursor-pointer ${pausaQuando === v ? 'bg-zinc-900 border-zinc-900 text-white' : 'bg-white border-zinc-200 text-zinc-700'}`}>{l}</button>
+              ))}
+            </div>
+          </div>
+          {pausaQuando === 'marcar' ? (
+          <div className="grid grid-cols-2 gap-2">
+            <label className="col-span-2">
+              <span className="block text-xs font-bold text-zinc-500 mb-1.5">Dia</span>
+              <input type="date" value={pausaDia} min={hojeBR()} onChange={(e) => setPausaDia(e.target.value)} className={inp + ' w-full'} />
+            </label>
+            <label>
+              <span className="block text-xs font-bold text-zinc-500 mb-1.5">Começa</span>
+              <input type="time" value={pausaIni} onChange={(e) => setPausaIni(e.target.value)} className={inp + ' w-full'} />
+            </label>
+            <label>
+              <span className="block text-xs font-bold text-zinc-500 mb-1.5">Termina</span>
+              <input type="time" value={pausaFim} onChange={(e) => setPausaFim(e.target.value)} className={inp + ' w-full'} />
+            </label>
+            {pausaIni && pausaFim && pausaFim <= pausaIni && <p className="col-span-2 text-xs text-zinc-500">Termina no dia seguinte.</p>}
+          </div>
+          ) : (
           <div>
             <p className="text-xs font-bold text-zinc-500 mb-1.5">Por quanto tempo?</p>
             <div className="flex flex-wrap gap-1.5">
@@ -492,6 +566,7 @@ export default function LojaAba({ tenantId, loja, lojas, acesso }: AbaProps) {
               ))}
             </div>
           </div>
+          )}
           <div>
             <p className="text-xs font-bold text-zinc-500 mb-1.5">Motivo</p>
             <input value={pausaMotivo} onChange={(e) => setPausaMotivo(e.target.value)} maxLength={255} placeholder="Ex.: cozinha cheia" className={inp + ' w-full'} />

@@ -1402,15 +1402,28 @@ Deno.serve(async (req) => {
       const c = await merchantCtx();
       const base = `/merchant/v1.0/merchants/${c.merchantId}`;
       if (action === 'merchant_pause_create') {
-        const min = Math.round(Number(body.minutes));
-        if (!Number.isFinite(min) || min < 1 || min > 7 * 24 * 60) return errResp('Duração da pausa entre 1 minuto e 7 dias.');
+        // Pausa agora (minutes) ou pausa marcada (start/end em ISO com fuso, 2026-10-06).
         const description = cut(body.description, 255) || 'Pausa pela loja';
-        const start = new Date(Date.now() + 5_000);
-        const end = new Date(start.getTime() + min * 60_000);
+        let start: Date, end: Date, min: number;
+        if (body.start != null || body.end != null) {
+          start = new Date(String(body.start ?? ''));
+          end = new Date(String(body.end ?? ''));
+          if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return errResp('Início e fim da pausa inválidos.');
+          if (start.getTime() < Date.now() - 60_000) return errResp('O início da pausa já passou.');
+          if (start.getTime() > Date.now() + 90 * 86_400_000) return errResp('Marque a pausa para no máximo 90 dias à frente.');
+          if (start.getTime() < Date.now() + 5_000) start = new Date(Date.now() + 5_000);
+          min = Math.round((end.getTime() - start.getTime()) / 60_000);
+          if (min < 1 || min > 7 * 24 * 60) return errResp('Duração da pausa entre 1 minuto e 7 dias.');
+        } else {
+          min = Math.round(Number(body.minutes));
+          if (!Number.isFinite(min) || min < 1 || min > 7 * 24 * 60) return errResp('Duração da pausa entre 1 minuto e 7 dias.');
+          start = new Date(Date.now() + 5_000);
+          end = new Date(start.getTime() + min * 60_000);
+        }
         const r = await call(admin, c, 'POST', `${base}/interruptions`, { description, start: start.toISOString(), end: end.toISOString() });
         if (r.status === 409) return errResp('Já existe uma pausa nesse horário — remova a atual antes.');
         if (!r.ok) return errResp(apiError(r, 'Criar pausa'));
-        log('INFO', 'merchant', 'pausa criada', { merchant: c.merchantId, min, tenantId });
+        log('INFO', 'merchant', 'pausa criada', { merchant: c.merchantId, min, start: start.toISOString(), tenantId });
         return json({ success: true, interruption: r.data });
       }
       if (action === 'merchant_pause_delete') {
