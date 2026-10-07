@@ -1,6 +1,7 @@
 import type { EntregaPedido } from '../hooks/useGestorEntregas';
 import { SHIPPING_ATIVOS, SHIPPING_LABEL, type IfoodShippingOrder } from '@/lib/ifoodShipping';
 import { fmtMoeda, fmtTelefone, waNumero, horaCurta, proximaFase, prazoInfo, temProblema } from '../utils';
+import BotaoLinkCliente from '@/components/ifood/BotaoLinkCliente';
 
 interface Props {
   pedido: EntregaPedido;
@@ -146,6 +147,13 @@ export default function EntregaCard({ pedido: o, now, busy, onAbrir, onAvancar, 
               </span>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Pedido do iFood: copia "Acompanhe seu pedido: <link>" para o chat do iFood */}
+      {o.ifood_order_id && !entregue && (
+        <div className="flex" onClick={stop}>
+          <BotaoLinkCliente ifoodOrderId={o.ifood_order_id} compacto />
         </div>
       )}
 

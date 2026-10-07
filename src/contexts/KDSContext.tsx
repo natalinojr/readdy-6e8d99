@@ -158,6 +158,7 @@ interface DBOrder {
   delivery_fee?: number | null;
   /** Delivery platform */
   delivery_platform?: string | null;
+  ifood_order_id?: string | null;
   /** Order notes */
   notes?: string | null;
   /** BUG-09: Timestamp when delivery order was marked as "Em Rota" */
@@ -590,6 +591,7 @@ function dbOrderToKDS(o: DBOrder, stationMap: StationMap): KDSPedido {
     deliveryFee: o.delivery_fee ?? undefined,
     deliveryPlatform: o.delivery_platform ?? undefined,
     notes: o.notes ?? undefined,
+    ifoodOrderId: o.ifood_order_id ?? undefined,
     // Order edit lock fields — propagated via Realtime to all PDVs/KDS/Gestor
     isEditing: !!(o.is_editing),
     editingByUserId: o.editing_by_user_id ?? null,

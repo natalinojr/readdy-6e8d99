@@ -171,4 +171,6 @@ export interface KDSPedido {
   deliveryPlatform?: string;
   /** Order notes */
   notes?: string;
+  /** Pedido que veio do iFood (orders.ifood_order_id): botão do link do cliente */
+  ifoodOrderId?: string;
 }

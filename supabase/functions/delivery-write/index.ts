@@ -1059,7 +1059,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         // ENTREGUES recentes (coluna final) e so entrega PROPRIA (exclui iFood/retirada).
         // Campos extras: delivery_sla_min, motoboy_timeline, out_for_delivery_at.
         const { data: orders } = await admin.from("orders")
-          .select("id, number, destination_name, destination_phone, delivery_address, delivery_platform, total_amount, delivery_fee, status, is_paid, notes, motoboy_status, motoboy_note, motoboy_problems, delivery_notes, motoboy_driver_id, motoboy_updated_at, out_for_delivery_at, delivery_sla_min, motoboy_timeline, delivery_lat, delivery_lng, created_at, updated_at")
+          .select("id, number, destination_name, destination_phone, delivery_address, delivery_platform, total_amount, delivery_fee, status, is_paid, notes, motoboy_status, motoboy_note, motoboy_problems, delivery_notes, motoboy_driver_id, motoboy_updated_at, out_for_delivery_at, delivery_sla_min, motoboy_timeline, delivery_lat, delivery_lng, created_at, updated_at, ifood_order_id")
           .eq("tenant_id", tenant_id).eq("origin_type", "delivery").in("status", ["new", "preparing", "ready", "delivered"])
           .order("created_at", { ascending: true });
         const RECENTE_MS = 3 * 60 * 60 * 1000; // entregues nas ultimas 3h ficam na coluna "Entregue"
@@ -1133,6 +1133,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           lng: o.delivery_lng != null ? Number(o.delivery_lng) : null,
           preparo_at: preparoAt[o.id as string] != null ? new Date(preparoAt[o.id as string]).toISOString() : null,
           pronto_previsto_at: prontoPrevisto(o),
+          // Pedido do iFood com entrega nossa: botão "Copiar link do cliente" no card
+          ifood_order_id: (o.ifood_order_id as string | null) ?? null,
         })) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 
