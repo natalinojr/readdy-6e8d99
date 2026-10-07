@@ -274,6 +274,13 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-10-07 — Hoje: "em que pé está" cada conta e cartão de conta paga some
+- **Pedido do dono:** nos cartões da Hoje, saber se a mercadoria chegou, se a conta veio da nota, do extrato ou de outro jeito; cartão sem sentido, pagamento repetido e boleto já pago continuando ali.
+- **Selos por conta:** `src/lib/situacaoConta.ts` (montagem pura, testes em `src/test/lib/situacaoConta.test.ts`) + `LinhaSituacao.tsx`. Mostra de onde veio (NF nº / compra sem nota / extrato / e-mail / conta fixa / à mão) · mercadoria (`fin_purchases.delivery_confirmed_at|delivery_registered_at` ou `delivery_confirmed` da conta) · boleto · pagamento (último `fin_inter_payments` não substituído, ou pago/vencida). Aparece no cartão (1 conta) e atrás de "Em que pé está cada conta (N)" quando há várias; `ContasAtrasadasInline` ganhou `comSituacao`.
+- **Achar a conta sem bill_id:** boleto por e-mail → `fin_mail_messages.bill_id` ou mesmo valor+vencimento na loja (só com 1 candidata); pedido do grupo → valor lido do texto + palavra do fornecedor, ±20 dias (só com 1 candidata; não some sozinho, ganha "Já foi pago — tirar daqui"); "Chegou a mercadoria?" → contas da compra.
+- **Conta paga some na hora:** `useSituacaoHoje` + `semOJaPago` tiram o cartão de boleto_faltando/fixa_chegou/pagamento_pendente/boleto_email cuja conta está paga/cancelada (pagamento_pendente com Pix ainda no Inter fica — lembra de recusar) e as contas pagas de dentro dos cartões agrupados. No banco: trigger `trg_pendencia_conta_resolvida` (migração `20261007200000`) fecha boleto_faltando/fixa_chegou e o boleto_email casado quando a conta vira paid/cancelled.
+- **Pedido do grupo não preparado:** o botão diz "Responder no chat" (antes "Pagar", que confundia); o texto inteiro abre em "Ler tudo".
+
 ### 2026-10-06 — Cardápio: layout novo, "Acabou hoje", lote e publicação automática
 - **Tela:** `/cardapio` em 5 grupos (Itens: Itens · Categorias · Combos / Vender mais: Destaques / Idiomas: Traduções /
   Estoque: Opções × Estoque / Mais: Obs. globais); ⋯ = Atualizar as telas agora, Exportar/Importar, Mudar a ordem dos

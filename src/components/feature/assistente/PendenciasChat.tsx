@@ -25,6 +25,8 @@ import { LigarSangria, ProcurarNota, ResumoCompra } from '@/components/feature/a
 import BoletoEmailDecisao from '@/pages/financeiro/components/BoletoEmailDecisao';
 import DreClassificacaoSelect, { precisaClassificarDRE, useDreEscolha } from '@/pages/financeiro/components/DreClassificacaoSelect';
 import { lerValorBR } from '@/lib/formatters';
+import LinhaSituacao from '@/components/feature/assistente/LinhaSituacao';
+import { lerSituacoes, type SituacaoConta } from '@/lib/situacaoConta';
 import AvisoAntesDePagar, { avisosDaMensagem, PRECISA_CONFIRMAR, type AvisoPagar } from '@/components/feature/pagamentos/AvisoAntesDePagar';
 
 type Call = <T>(action: string, extra?: Record<string, unknown>) => Promise<T>;
@@ -933,10 +935,12 @@ interface ContaAtrasada {
 // soHoje (2026-10-02): mesma lista para a pendência "Vence hoje" — só as que vencem hoje.
 // folha (2026-10-05): competência 'YYYY-MM' → as contas da folha ainda em aberto, vencidas ou não. A conta
 // da folha fica FORA das listas de atrasadas/vence hoje (o cartão "Folha a pagar" já mostra).
-export function ContasAtrasadasInline({ tenantId, soHoje = false, folha, onPagarConta, onAbrir, onMudou }: {
+export function ContasAtrasadasInline({ tenantId, soHoje = false, folha, comSituacao = false, onPagarConta, onAbrir, onMudou }: {
   tenantId: string;
   soHoje?: boolean;
   folha?: string;
+  /** Mostra em que pé está cada conta (nota, mercadoria, boleto, pagamento) — tela Hoje, 2026-10-07. */
+  comSituacao?: boolean;
   onPagarConta?: (billId: string) => Promise<void>;
   onAbrir: (billId: string) => void;
   onMudou: () => void;
@@ -948,6 +952,7 @@ export function ContasAtrasadasInline({ tenantId, soHoje = false, folha, onPagar
   const [errosConta, setErrosConta] = useState<Record<string, string>>({});
   // Folha: contas cujo funcionário tem chave Pix ligada no RH → "Pagar Pix" (o servidor usa essa chave)
   const [comChave, setComChave] = useState<Set<string>>(new Set());
+  const [situacoes, setSituacoes] = useState<Map<string, SituacaoConta>>(new Map());
   const hoje = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Sao_Paulo' });
   const carregar = useCallback(() => {
     const base = supabase.from('fin_accounts_payable').select('id, description, supplier, amount, paid_amount, due_date, dre_category_id, reference_type, reference_id, boleto_digitavel, boleto_pix_copia')
@@ -976,8 +981,10 @@ export function ContasAtrasadasInline({ tenantId, soHoje = false, folha, onPagar
           setComChave(new Set(lista.filter((c) => c.reference_id && ok.has(c.reference_id)).map((c) => c.id)));
         }
         setContas(lista);
+        // Sem a situação a lista continua útil: um erro aqui só deixa os selos de fora.
+        if (comSituacao && lista.length) lerSituacoes(lista.map((c) => c.id), hoje).then(setSituacoes).catch(() => {});
       });
-  }, [tenantId, hoje, soHoje, folha]);
+  }, [tenantId, hoje, soHoje, folha, comSituacao]);
   useEffect(() => { carregar(); }, [carregar]);
 
   const pagar = async (c: ContaAtrasada) => {
@@ -1009,6 +1016,7 @@ export function ContasAtrasadasInline({ tenantId, soHoje = false, folha, onPagar
                   : soHoje
                   ? <p className="text-[11px] text-amber-700 font-semibold mt-0.5">vence hoje</p>
                   : <p className="text-[11px] text-red-600 mt-0.5">venceu {data(c.due_date)} · {dias} dia{dias > 1 ? 's' : ''}</p>}
+                {situacoes.get(c.id) && <LinhaSituacao s={situacoes.get(c.id) as SituacaoConta} />}
               </div>
               <span className="text-[13px] font-bold text-zinc-900 tabular-nums whitespace-nowrap">{brl(saldo)}</span>
             </div>

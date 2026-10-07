@@ -10,6 +10,8 @@ import { chamarAssistente } from '@/lib/assistenteApp';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
 import BoletoPorFoto from '@/components/feature/assistente/BoletoPorFoto';
 import { BaixaDaConta, ContasAtrasadasInline, ContasDreInline } from '@/components/feature/assistente/PendenciasChat';
+import LinhaSituacao from '@/components/feature/assistente/LinhaSituacao';
+import type { SituacaoConta } from '@/lib/situacaoConta';
 import type { ItemHoje, PendHoje, Porcao } from './organizar';
 import { diasEntre } from './organizar';
 
@@ -65,15 +67,21 @@ export interface CartaoProps {
   marcar: (id: string, acao: 'vista' | 'descartada' | 'resolvida', motivo?: string) => Promise<void>;
   onMudou: () => void;
   compacto?: boolean;
+  /** Em que pé está cada conta do cartão (useSituacaoHoje). */
+  situacoes?: SituacaoConta[];
+  /** Pedido do grupo sem conta ligada: a conta do mesmo valor e fornecedor (pode já estar paga). */
+  provavel?: SituacaoConta;
 }
 
-export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLoja, abrir, marcar, onMudou, compacto }: CartaoProps) {
+export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLoja, abrir, marcar, onMudou, compacto, situacoes, provavel }: CartaoProps) {
   const p = item.principal;
   const cfg = kindConfig(item.kind);
   const [aberto, setAberto] = useState<string | null>(null);
   const [motivo, setMotivo] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [lerTudo, setLerTudo] = useState(false);
+  const [verContas, setVerContas] = useState(false);
   // "N contas atrasadas": a data das contas juntadas não é a mais antiga de todas (a agregada não diz) — só o selo.
   const prazo = item.tipo === 'contas_vencidas' && p.kind === 'conta_atrasada' ? { texto: 'atrasadas', tom: 'red' as const } : rotuloPrazo(item.prazo, hoje);
   // Caixa da semana: o "prazo" é o dia em que o dinheiro deixa de cobrir ("falta sábado"), não um vencimento.
@@ -130,9 +138,21 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
       <i className="ri-check-double-line" /> {aberto === 'baixa' ? 'Fechar' : 'Já paguei — dar baixa'}
     </button>);
     add('nao', <button onClick={naoVouFazer} className={LINK}>Não era boleto</button>);
+  } else if (p.kind === 'pagamento_grupo' && provavel?.paga) {
+    // A conta do pedido já foi paga (conciliação, app do banco…): o cartão só precisa sair daqui.
+    add('pago', <button disabled={ocupado} onClick={() => rodar(() => marcar(p.id, 'resolvida', `já pago: ${provavel.fornecedor} (conta ${provavel.id})`))} className={PRINCIPAL}>
+      <i className="ri-check-double-line" /> Já foi pago — tirar daqui
+    </button>);
+    if (dono) add('chat', <button onClick={() => pedirAoChat({ tipo: 'pagar_pendencia', pendencia: { id: p.id, tenantId: p.tenantId, kind: p.kind, titulo: p.titulo } })} className={SECUNDARIO}>
+      <i className="ri-chat-1-line" /> Não é esse — ver no chat
+    </button>);
   } else if (p.kind === 'pagamento_grupo' || p.kind === 'pagamento_pendente') {
+    // Pedido do grupo que o assistente NÃO preparou (faltou categoria, chave…): o botão leva ao chat para
+    // responder o que falta — chamar de "Pagar" confundia (2026-10-07). Preparado: aí sim é Pagar com PIN.
+    const pix = p.payload?.pagamentos;
+    const semPix = p.kind === 'pagamento_grupo' && !(Array.isArray(pix) && pix.length > 0);
     if (dono) add('pagar', <button onClick={() => pedirAoChat({ tipo: 'pagar_pendencia', pendencia: { id: p.id, tenantId: p.tenantId, kind: p.kind, titulo: p.titulo } })} className={PRINCIPAL}>
-      <i className="ri-lock-2-line" /> Pagar
+      {semPix ? <><i className="ri-chat-1-line" /> Responder no chat</> : <><i className="ri-lock-2-line" /> Pagar</>}
     </button>);
     else if (p.rota) add('abrir', <button onClick={() => abrir(t, p.rota as string)} className={PRINCIPAL}><i className="ri-arrow-right-up-line" /> Abrir</button>);
   } else if (p.kind === 'pedido_pagamento' || p.kind === 'pedido_pagamento_pagar') {
@@ -224,7 +244,12 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
     ? (item.pedidoHaDias >= 3 ? `Boleto pedido há ${item.pedidoHaDias} dias e ainda não chegou.` : `Boleto pedido ${item.pedidoHaDias === 0 ? 'hoje' : item.pedidoHaDias === 1 ? 'ontem' : `há ${item.pedidoHaDias} dias`} — esperando o fornecedor.`)
     : item.tipo === 'contas_vencidas' && item.juntas.length
       ? `${item.juntas.length} ${item.juntas.length === 1 ? 'delas está' : 'delas estão'} sem boleto no sistema. Se já pagou, é só dar baixa.`
-      : item.detalhe;
+      : p.kind === 'pagamento_grupo' && /^Não consegui preparar sozinho:\s*/.test(item.detalhe ?? '')
+        ? `O assistente não conseguiu preparar o Pix sozinho e precisa de uma resposta sua. ${(item.detalhe ?? '').replace(/^Não consegui preparar sozinho:\s*/, '')}`
+        : item.detalhe;
+  const longo = (porQue?.length ?? 0) > 150;
+  // Uma conta: os selos direto no cartão. Várias (parcelas da compra, contas do fornecedor): atrás de um toque.
+  const contas = item.tipo === 'contas_vencidas' ? [] : situacoes ?? [];
   const borda = item.bloco !== 'agora' ? 'border-zinc-200' : prazo?.tom === 'red' || item.urgente ? 'border-red-200 border-l-4 border-l-red-500' : 'border-amber-200 border-l-4 border-l-amber-400';
 
   return (
@@ -243,7 +268,29 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
             <p className="text-[15px] font-bold text-zinc-900 leading-snug">{item.tipo === 'pendencia' && p.kind === 'boleto_faltando' ? semPrefixo(item.titulo).replace(/\s+—\s+R\$.*$/, '') : item.titulo.replace(/\s+—\s+R\$\s*[\d.,]+(\s+\S+)?$/, '')}</p>
             {item.valor != null && item.valor > 0 && <span className="text-[15px] font-bold text-zinc-900 tabular-nums whitespace-nowrap">{brl(item.valor)}</span>}
           </div>
-          {porQue && <p className="text-[13px] text-zinc-500 leading-snug mt-0.5 line-clamp-3">{porQue}</p>}
+          {porQue && <p className={`text-[13px] text-zinc-500 leading-snug mt-0.5 whitespace-pre-line ${lerTudo ? '' : 'line-clamp-3'}`}>{porQue}</p>}
+          {longo && (
+            <button onClick={() => setLerTudo((v) => !v)} className="mt-0.5 text-[12px] font-semibold text-amber-700 hover:text-amber-800 cursor-pointer">
+              {lerTudo ? 'Mostrar menos' : 'Ler tudo'}
+            </button>
+          )}
+          {provavel && (
+            <div className={`mt-2 rounded-xl border px-3 py-2 ${provavel.paga ? 'bg-emerald-50 border-emerald-100' : 'bg-zinc-50 border-zinc-200'}`}>
+              <p className={`text-[12px] font-semibold ${provavel.paga ? 'text-emerald-800' : 'text-zinc-600'}`}>
+                {provavel.paga ? <><i className="ri-check-double-line" /> Parece que já foi pago — achei a conta do mesmo valor e fornecedor:</> : 'Achei a conta deste pedido:'}
+              </p>
+              <LinhaSituacao s={provavel} comNome />
+            </div>
+          )}
+          {contas.length === 1 && <LinhaSituacao s={contas[0]} />}
+          {contas.length > 1 && (
+            <>
+              <button onClick={() => setVerContas((v) => !v)} className="mt-1.5 text-[12px] font-semibold text-amber-700 hover:text-amber-800 cursor-pointer">
+                <i className={verContas ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} /> {verContas ? 'Fechar' : `Em que pé está cada conta (${contas.length})`}
+              </button>
+              {verContas && <div className="mt-1 space-y-1.5">{contas.map((s) => <LinhaSituacao key={s.id} s={s} comNome />)}</div>}
+            </>
+          )}
           {item.porcao && <LinhaPorcao porcao={item.porcao} hoje={hoje} urgente={item.bloco === 'agora'} />}
         </div>
       </div>
@@ -270,7 +317,7 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
       {/* ── O que abre dentro do cartão ── */}
       {aberto === 'contas' && (
         <div className="sm:pl-12">
-          <ContasAtrasadasInline tenantId={t} soHoje={p.kind === 'conta_vence_hoje'}
+          <ContasAtrasadasInline tenantId={t} soHoje={p.kind === 'conta_vence_hoje'} comSituacao={financeiro}
             onPagarConta={dono ? async (billId) => { pedirAoChat({ tipo: 'pagar_conta', billId }); } : undefined}
             onAbrir={(billId) => abrir(t, `/financeiro?tab=contas-vencidas&foco=${encodeURIComponent(billId)}`)}
             onMudou={onMudou} />
@@ -278,7 +325,7 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
       )}
       {aberto === 'folha' && typeof p.payload?.competencia === 'string' && (
         <div className="sm:pl-12">
-          <ContasAtrasadasInline tenantId={t} folha={p.payload.competencia}
+          <ContasAtrasadasInline tenantId={t} folha={p.payload.competencia} comSituacao={financeiro}
             onPagarConta={dono ? async (billId) => { pedirAoChat({ tipo: 'pagar_conta', billId }); } : undefined}
             onAbrir={(billId) => abrir(t, `/financeiro?tab=pagar&foco=${encodeURIComponent(billId)}`)}
             onMudou={onMudou} />
