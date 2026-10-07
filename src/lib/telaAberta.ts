@@ -3,7 +3,7 @@
 
 /** Prefixos públicos / de terminal de cliente: nunca registram (sem login, ou aparelho que não é de uma pessoa). */
 const PREFIXOS_FORA = [
-  '/delivery', '/mesa-qr', '/mesa/', '/pedido/', '/totem', '/autoatendimento', '/senhas', '/r/', '/voucher', '/clube',
+  '/delivery', '/mesa-qr', '/mesa/', '/pedido/', '/totem', '/autoatendimento', '/senhas', '/r/', '/voucher', '/clube', '/p/',
   '/login', '/relatorio/', '/motoboy', '/entregas/', '/app-entregas', '/privacidade', '/invite', '/onboarding',
   '/selecionar-loja', '/supabase-debug', '/dev/',
 ];

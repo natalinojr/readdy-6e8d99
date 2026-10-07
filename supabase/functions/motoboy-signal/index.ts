@@ -92,6 +92,43 @@ async function pedidosComIfoodAtivo(admin: any, orderIds: string[]): Promise<Set
   return new Set(((data ?? []) as { order_id: string }[]).map((r) => r.order_id));
 }
 
+// Colunas de orders que o rastreio do cliente usa (track_order e pedido_link).
+const COLS_RASTREIO = "status, out_for_delivery_at, motoboy_status, motoboy_driver_id, delivery_platform, delivery_lat, delivery_lng, delivery_distance_km, delivery_route_min";
+
+// Rastreio do cliente: posição do motoboy SÓ deste pedido e SÓ enquanto ele está em rota (coletou,
+// não entregue/cancelado); posição > 15 min não sai. Previsão recalculada sem API externa: linha
+// reta × 1,3 (fator de ruas) na velocidade da rota calculada na criação do pedido (ORS), limitada a
+// 12–45 km/h. `destinoReserva` = casa do cliente quando o pedido não tem o pin (pedido do iFood).
+// deno-lint-ignore no-explicit-any
+async function rastreioEmRota(admin: any, tenantId: string, o: any, destinoReserva: { lat: number; lng: number } | null = null) {
+  const emRota = !!o && !!o.out_for_delivery_at && o.motoboy_status === "coletou" && !!o.motoboy_driver_id
+    && o.status !== "delivered" && o.status !== "cancelled" && o.delivery_platform !== "retirada";
+  if (!emRota) return null;
+  const { data: pos } = await admin.from("delivery_driver_positions")
+    .select("lat, lng, recorded_at").eq("driver_id", o.motoboy_driver_id).eq("tenant_id", tenantId).maybeSingle();
+  const destLat = o.delivery_lat != null ? Number(o.delivery_lat) : destinoReserva?.lat ?? null;
+  const destLng = o.delivery_lng != null ? Number(o.delivery_lng) : destinoReserva?.lng ?? null;
+  const fresca = !!pos && (Date.now() - new Date(pos.recorded_at as string).getTime()) <= 15 * 60000;
+  let etaMin: number | null = null;
+  let distKm: number | null = null;
+  if (fresca && destLat != null && destLng != null) {
+    const rad = Math.PI / 180;
+    const pLat = Number(pos.lat), pLng = Number(pos.lng);
+    const dLat = (destLat - pLat) * rad, dLng = (destLng - pLng) * rad;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(pLat * rad) * Math.cos(destLat * rad) * Math.sin(dLng / 2) ** 2;
+    distKm = 2 * 6371 * Math.asin(Math.sqrt(a)) * 1.3;
+    const rk = Number(o.delivery_distance_km ?? 0), rm = Number(o.delivery_route_min ?? 0);
+    const kmh = rk > 0 && rm > 0 ? Math.min(45, Math.max(12, rk / (rm / 60))) : 25;
+    etaMin = distKm < 0.15 ? 1 : Math.ceil((distKm / kmh) * 60) + 1;
+  }
+  return {
+    motoboy: fresca ? { lat: Number(pos.lat), lng: Number(pos.lng), atualizado_em: pos.recorded_at } : null,
+    destino: destLat != null && destLng != null ? { lat: destLat, lng: destLng } : null,
+    distancia_km: distKm != null ? Math.round(distKm * 10) / 10 : null,
+    eta_min: etaMin,
+  };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders });
   try {
@@ -257,45 +294,57 @@ serve(async (req) => {
     }
 
     // ── Rastreio do cliente (tela "Acompanhar pedido"): mesma chave do get_order_status
-    // (tenant_id + número do pedido). Devolve a posição do motoboy SÓ deste pedido e SÓ
-    // enquanto ele está em rota (coletou, não entregue/cancelado); posição > 15 min não sai.
-    // Previsão recalculada sem API externa: linha reta × 1,3 (fator de ruas) na velocidade
-    // da rota calculada na criação do pedido (ORS), limitada a 12–45 km/h.
+    // (tenant_id + número do pedido). Regras em rastreioEmRota.
     if (body.action === "track_order") {
       const tenantId = String(body.tenant_id ?? "").trim();
       const number = String(body.order_number ?? "").trim();
       if (!tenantId || !number) return json({ error: "params" }, 200);
       const { data: o } = await admin.from("orders")
-        .select("status, out_for_delivery_at, motoboy_status, motoboy_driver_id, delivery_platform, delivery_lat, delivery_lng, delivery_distance_km, delivery_route_min")
+        .select(COLS_RASTREIO)
         .eq("tenant_id", tenantId).eq("number", number).maybeSingle();
-      const emRota = !!o && !!o.out_for_delivery_at && o.motoboy_status === "coletou" && !!o.motoboy_driver_id
-        && o.status !== "delivered" && o.status !== "cancelled" && o.delivery_platform !== "retirada";
-      if (!emRota) return json({ ok: true, rastreio: null });
-      const { data: pos } = await admin.from("delivery_driver_positions")
-        .select("lat, lng, recorded_at").eq("driver_id", o.motoboy_driver_id).eq("tenant_id", tenantId).maybeSingle();
-      const destLat = o.delivery_lat != null ? Number(o.delivery_lat) : null;
-      const destLng = o.delivery_lng != null ? Number(o.delivery_lng) : null;
-      const fresca = !!pos && (Date.now() - new Date(pos.recorded_at as string).getTime()) <= 15 * 60000;
-      let etaMin: number | null = null;
-      let distKm: number | null = null;
-      if (fresca && destLat != null && destLng != null) {
-        const rad = Math.PI / 180;
-        const pLat = Number(pos.lat), pLng = Number(pos.lng);
-        const dLat = (destLat - pLat) * rad, dLng = (destLng - pLng) * rad;
-        const a = Math.sin(dLat / 2) ** 2 + Math.cos(pLat * rad) * Math.cos(destLat * rad) * Math.sin(dLng / 2) ** 2;
-        distKm = 2 * 6371 * Math.asin(Math.sqrt(a)) * 1.3;
-        const rk = Number(o.delivery_distance_km ?? 0), rm = Number(o.delivery_route_min ?? 0);
-        const kmh = rk > 0 && rm > 0 ? Math.min(45, Math.max(12, rk / (rm / 60))) : 25;
-        etaMin = distKm < 0.15 ? 1 : Math.ceil((distKm / kmh) * 60) + 1;
-      }
+      return json({ ok: true, rastreio: await rastreioEmRota(admin, tenantId, o) });
+    }
+
+    // ── Link que a loja cola no chat do iFood (/p/<código>): situação do pedido do iFood,
+    // motoboy no mapa (só entrega nossa, pedido no funil e motoboy em rota — mesma regra do
+    // track_order) e a loja (nome, logo, capa, slug) para o convite ao delivery próprio e ao clube.
+    // O código é aleatório (fn_ifood_link_cliente); nada do cliente sai além do 1º nome.
+    if (body.action === "pedido_link") {
+      const codigo = String(body.codigo ?? "").trim().toLowerCase();
+      if (!/^[0-9a-f]{16}$/.test(codigo)) return json({ ok: false, error: "nao_encontrado" }, 200);
+      const { data: io } = await admin.from("ifood_orders")
+        .select("tenant_id, display_id, status, order_type, delivered_by, ordered_at, timeline, address, customer_name, order_id")
+        .eq("link_codigo", codigo).maybeSingle();
+      if (!io) return json({ ok: false, error: "nao_encontrado" }, 200);
+      const [{ data: t }, { data: o }] = await Promise.all([
+        admin.from("tenants").select("name, slug, logo_url, cover_url, brand_color, cover_position, cover_images, cover_videos").eq("id", io.tenant_id).maybeSingle(),
+        io.order_id
+          ? admin.from("orders").select(COLS_RASTREIO).eq("id", io.order_id).eq("tenant_id", io.tenant_id).maybeSingle()
+          : Promise.resolve({ data: null }),
+      ]);
+      const coord = (io.address as { coordinates?: { latitude?: number; longitude?: number } } | null)?.coordinates;
+      // (0, 0) = sem localização (pedido de teste do iFood vem assim).
+      const cLat = Number(coord?.latitude), cLng = Number(coord?.longitude);
+      const destIfood = Number.isFinite(cLat) && Number.isFinite(cLng) && (cLat !== 0 || cLng !== 0) ? { lat: cLat, lng: cLng } : null;
+      const nossa = io.order_type === "DELIVERY" && io.delivered_by === "MERCHANT";
+      const tl = (io.timeline ?? {}) as Record<string, string>;
+      const quando = (...ks: string[]) => ks.map((k) => tl[k]).find(Boolean) ?? null;
       return json({
         ok: true,
-        rastreio: {
-          motoboy: fresca ? { lat: Number(pos.lat), lng: Number(pos.lng), atualizado_em: pos.recorded_at } : null,
-          destino: destLat != null && destLng != null ? { lat: destLat, lng: destLng } : null,
-          distancia_km: distKm != null ? Math.round(distKm * 10) / 10 : null,
-          eta_min: etaMin,
+        pedido: {
+          numero: io.display_id ?? null,
+          status: io.status,
+          tipo: io.order_type ?? "DELIVERY",
+          entrega_nossa: nossa,
+          primeiro_nome: String(io.customer_name ?? "").trim().split(/\s+/)[0] || null,
+          chegou: quando("PLACED") ?? io.ordered_at ?? null,
+          aceito: quando("CONFIRMED"),
+          pronto: quando("READY_TO_PICKUP", "SEPARATION_ENDED"),
+          saiu: quando("DISPATCHED", "COLLECTED") ?? (o?.out_for_delivery_at ?? null),
+          entregue: quando("CONCLUDED", "DELIVERY_DROP_CODE_VALIDATION_SUCCESS"),
         },
+        rastreio: nossa ? await rastreioEmRota(admin, io.tenant_id, o, destIfood) : null,
+        loja: t ? { ...t } : null,
       });
     }
 

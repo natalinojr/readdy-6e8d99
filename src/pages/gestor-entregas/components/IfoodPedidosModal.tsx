@@ -3,6 +3,7 @@ import { useVoltarFecha } from '@/lib/voltarAndroid';
 import { ifoodShipping, fetchIfoodOrders, IFOOD_ORDER_LABEL, ifoodTipoPedido, ifoodPodeDespachar, type IfoodOrder } from '@/lib/ifoodShipping';
 import { fmtMoeda } from '../utils';
 import IfoodVinculosModal from './IfoodVinculosModal';
+import BotaoLinkCliente from '@/components/ifood/BotaoLinkCliente';
 
 interface Props {
   tenantId: string;
@@ -167,6 +168,7 @@ export default function IfoodPedidosModal({ tenantId, operar, funil = false, onC
                     )}
 
                     <div className="flex flex-wrap gap-1.5">
+                      {p.status !== 'cancelled' && <BotaoLinkCliente ifoodOrderId={p.ifood_order_id} compacto />}
                       <button disabled={!!busy} onClick={() => reler(p)} className="px-2.5 py-1.5 rounded-lg border border-zinc-200 text-zinc-600 font-semibold disabled:opacity-50">
                         <i className={'ri-refresh-line' + (busy === p.id + 'refresh' ? ' animate-spin' : '')} /> Reler do iFood
                       </button>

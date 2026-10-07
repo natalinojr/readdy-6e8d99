@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import ExplicaLucro from './ExplicaLucro';
 import ValorNotaIfood from './ValorNotaIfood';
+import BotaoLinkCliente from '@/components/ifood/BotaoLinkCliente';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -453,6 +454,7 @@ export default function DetalhePedidoIfood({ p, lojas, acesso, tenantId, modo, o
 
       {o && (
         <div className="mt-4 pt-3 border-t border-zinc-100 flex flex-wrap gap-2">
+          {!p.cancelado && <BotaoLinkCliente ifoodOrderId={p.id} />}
           <Botao on={reler} busy={busy === 'refresh'}><i className="ri-refresh-line" /> Reler do iFood</Botao>
           {o.pedidoErpos && <Botao on={() => navigate('/pedidos')}><i className="ri-external-link-line" /> Abrir em Pedidos</Botao>}
           {!semAcesso && !encerrado && funil && extras.rascunho && <Botao tom="ok" on={() => acao('accept')} busy={busy === 'accept'}>Aceitar (vai para a cozinha)</Botao>}

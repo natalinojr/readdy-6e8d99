@@ -15,7 +15,7 @@ describe('rotaParaTelemetria', () => {
   });
   it('rotas públicas e de cliente nunca contam', () => {
     for (const r of ['/', '/login', '/delivery', '/mesa-qr/abc/def', '/mesa/3', '/pedido/abc', '/totem/xyz', '/autoatendimento',
-      '/senhas/abc', '/r/abc', '/r/nome/abc', '/voucher/abc', '/clube/loja', '/vila-delivery', '/motoboy/9', '/relatorio/abc']) {
+      '/senhas/abc', '/r/abc', '/r/nome/abc', '/voucher/abc', '/clube/loja', '/p/0123456789abcdef', '/vila-delivery', '/motoboy/9', '/relatorio/abc']) {
       expect(rotaParaTelemetria(r)).toBeNull();
     }
   });

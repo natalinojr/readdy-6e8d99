@@ -70,6 +70,7 @@ const MesaQRPage = lazy(() => import('../pages/mesa-qr/page'));
 const JogosDemoPage = lazy(() => import('../components/jogos/JogosDemo'));
 const VoucherLinkPage = lazy(() => import('../pages/voucher-link/page'));
 const RelatorioPublicoPage = lazy(() => import('../pages/relatorio-publico/page'));
+const AcompanharPage = lazy(() => import('../pages/acompanhar/page'));
 const DeliveryPage = lazy(() => import('../pages/delivery/page'));
 const MotoboyPage = lazy(() => import('../pages/motoboy/page'));
 const MotoboyListaPage = lazy(() => import('../pages/motoboy-lista/page'));
@@ -100,6 +101,8 @@ const routes: RouteObject[] = [
   { path: '/app-entregas', element: <PullToRefresh><MobileKeyboardAssist /><AppEntregasPage /></PullToRefresh> },
   // Clube de fidelidade do cliente (pública; o tablet abre logado por QR)
   { path: '/clube/:storeSlug', element: <ClubePage /> },
+  // Pedido do iFood: link que a loja cola no chat do iFood (acompanhar + delivery próprio + clube).
+  { path: '/p/:codigo', element: <AcompanharPage /> },
   { path: '/autoatendimento', element: <AutoatendimentoPage /> },
   { path: '/totem/:token', element: <TotemPage /> },
   // Painel de senhas na TV (pública, por token próprio; só mostra números de senha)
