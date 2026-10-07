@@ -65,6 +65,8 @@ export interface EntregaPedido {
   /** "Montar saída": início do preparo e previsão de ficar pronto (só pedido ainda na cozinha) */
   preparo_at?: string | null;
   pronto_previsto_at?: string | null;
+  /** Pedido do iFood (entrega nossa): botão do link do cliente */
+  ifood_order_id?: string | null;
 }
 
 /** Tempo de cozinha do delivery da loja usado na previsão (histórico de 30 dias ou padrão) */

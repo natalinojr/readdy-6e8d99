@@ -215,6 +215,8 @@ export type PedidoStatus =
 
 export interface PedidoRecente {
   deliveryPlatform?: string | null;
+  /** Pedido que veio do iFood (orders.ifood_order_id): botão do link do cliente */
+  ifoodOrderId?: string | null;
   deliveryFee?: number | null;
   id: string;
   numero: number;

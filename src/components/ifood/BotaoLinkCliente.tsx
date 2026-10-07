@@ -5,7 +5,8 @@ import { copiarLinkCliente } from '@/lib/ifoodLinkCliente';
 // Copia "Acompanhe seu pedido: <link>" para colar no chat do iFood. Se o navegador não deixar copiar,
 // mostra o texto para selecionar à mão.
 
-export default function BotaoLinkCliente({ ifoodOrderId, compacto }: { ifoodOrderId: string; compacto?: boolean }) {
+// `icone`: só o ícone (card fechado do Caixa, ao lado da impressora); erro de cópia abre o texto num prompt.
+export default function BotaoLinkCliente({ ifoodOrderId, compacto, icone }: { ifoodOrderId: string; compacto?: boolean; icone?: boolean }) {
   const [estado, setEstado] = useState<'livre' | 'busy' | 'copiado'>('livre');
   const [erro, setErro] = useState<{ t: string; texto?: string } | null>(null);
 
@@ -21,8 +22,23 @@ export default function BotaoLinkCliente({ ifoodOrderId, compacto }: { ifoodOrde
     const r = await copiarLinkCliente(ifoodOrderId);
     if (r.ok) { setEstado('copiado'); return; }
     setEstado('livre');
+    if (icone) {
+      try { if (r.texto) window.prompt('Copie e cole no chat do iFood:', r.texto); else window.alert(r.erro); } catch { /* navegador sem prompt */ }
+      return;
+    }
     setErro({ t: r.erro, texto: r.texto });
   };
+
+  if (icone) {
+    return (
+      <button type="button" disabled={estado === 'busy'} onClick={(e) => { e.stopPropagation(); void copiar(); }}
+        title={estado === 'copiado' ? 'Copiado — cole no chat do iFood' : 'Copiar link do cliente (Acompanhe seu pedido)'}
+        aria-label="Copiar link do cliente"
+        className={`w-6 h-6 flex items-center justify-center border rounded-lg cursor-pointer transition-colors disabled:opacity-50 ${estado === 'copiado' ? 'text-emerald-600 border-emerald-300 bg-emerald-50' : 'text-zinc-400 hover:text-red-600 hover:bg-red-50 border-zinc-200 hover:border-red-300'}`}>
+        <i className={`${estado === 'copiado' ? 'ri-check-line' : estado === 'busy' ? 'ri-loader-4-line animate-spin' : 'ri-links-line'} text-xs`} />
+      </button>
+    );
+  }
 
   const base = compacto
     ? 'px-2.5 py-1.5 rounded-lg text-xs font-semibold'

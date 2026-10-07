@@ -9,6 +9,7 @@ import { useImpressoras, PRINTER_KEY_GESTOR_PEDIDOS } from '@/contexts/Impressor
 import { useSystemSettings } from '@/hooks/useSystemSettings';
 import { useMotoboyStatus } from '@/hooks/useMotoboyStatus';
 import { lerNotasIfood } from '@/lib/ifoodNotas';
+import BotaoLinkCliente from '@/components/ifood/BotaoLinkCliente';
 
 const MOTOBOY_SINAL_LABEL: Record<string, string> = {
   a_caminho_loja: 'Motoboy a caminho da loja',
@@ -944,6 +945,13 @@ function GestorCard({
               );
             })}
           </div>
+
+          {/* Pedido do iFood: copia "Acompanhe seu pedido: <link>" para o chat do iFood */}
+          {pedido.ifoodOrderId && !isCancelled && (
+            <div className="flex flex-wrap gap-1.5" onClick={(e) => e.stopPropagation()}>
+              <BotaoLinkCliente ifoodOrderId={pedido.ifoodOrderId} compacto />
+            </div>
+          )}
 
           {/* Ação principal */}
           {!isCancelled && (

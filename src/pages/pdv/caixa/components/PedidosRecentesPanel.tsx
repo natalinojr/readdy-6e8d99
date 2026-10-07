@@ -15,6 +15,7 @@ import { precosEfetivos } from '@/lib/precoItemPedido';
 import PagamentoRapidoModal from '@/components/feature/PagamentoRapidoModal';
 import EditarItemCaixaModal from './EditarItemCaixaModal';
 import PedidosTabletAguardando from './PedidosTabletAguardando';
+import BotaoLinkCliente from '@/components/ifood/BotaoLinkCliente';
 
 // ── Hook: cronômetro live ────────────────────────────────────────────────────
 
@@ -581,6 +582,7 @@ function kdsToRecente(p: KDSPedido): PedidoRecenteComParticipant {
     kdsStatus: p.status,
     total: p.totalAmount ?? 0,
     deliveryFee: p.deliveryFee ?? 0,
+    ifoodOrderId: p.ifoodOrderId ?? null,
     criadoEm: hora,
     minutosAtras,
     itensProntos,
@@ -1649,6 +1651,7 @@ function PedidoCard({ pedido, onEntregarRemote, onEditarItem, onRecarregar }: Pe
             )}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
+            {pedido.ifoodOrderId && !isCancelado && <BotaoLinkCliente ifoodOrderId={pedido.ifoodOrderId} icone />}
             <button
               onClick={(e) => { e.stopPropagation(); setImprimindo(true); }}
               title="Imprimir pedido"
@@ -1828,6 +1831,11 @@ function PedidoCard({ pedido, onEntregarRemote, onEditarItem, onRecarregar }: Pe
                   className="w-7 h-7 flex items-center justify-center text-zinc-500 hover:text-amber-700 border border-zinc-200 hover:border-amber-300 hover:bg-amber-50 rounded-lg cursor-pointer transition-colors">
                   <i className="ri-printer-line text-sm" />
                 </button>
+                {pedido.ifoodOrderId && !isCancelado && (
+                  <span className="contents" onClick={(e) => e.stopPropagation()}>
+                    <BotaoLinkCliente ifoodOrderId={pedido.ifoodOrderId} compacto />
+                  </span>
+                )}
                 {!isCancelado && isPago && !estornado && hasPermissao('pdv_estornar_pagamento') && (
                   <button onClick={() => setShowEstorno(true)} title="Estornar"
                     className="w-7 h-7 flex items-center justify-center text-red-400 hover:text-red-700 border border-red-200 hover:border-red-400 hover:bg-red-50 rounded-lg cursor-pointer transition-colors">
