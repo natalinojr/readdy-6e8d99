@@ -75,7 +75,7 @@ function lerXml(xml: string | null) {
   };
 }
 
-export function abrirDanfse(nota: Nota, empresa: Empresa) {
+export function htmlDanfse(nota: Nota, empresa: Empresa) {
   const x = lerXml(nota.xml_nfse);
   const g = (grupo: string | null, nome: string, fallback: unknown = null): string | null => {
     const v = x?.(grupo, nome);
@@ -285,11 +285,46 @@ export function abrirDanfse(nota: Nota, empresa: Empresa) {
   </div>
 </div>
 </body></html>`;
+  return html;
+}
 
+export function abrirDanfse(nota: Nota, empresa: Empresa) {
+  const html = htmlDanfse(nota, empresa);
   const w = window.open('', '_blank');
   if (!w) return false;
   w.document.open();
   w.document.write(html);
   w.document.close();
   return true;
+}
+
+// PDF de verdade da DANFSe (dono, 2026-10-07: mandar o PDF no WhatsApp, não um link). O mesmo HTML
+// do "Imprimir" é desenhado numa página A4 escondida (iframe, para o CSS da nota não vazar no app),
+// vira imagem e entra num PDF A4 (jsPDF). A imagem é o desenho do próprio navegador (html-to-image,
+// via SVG): o html2canvas desenhava o texto mais baixo e cortava a última linha das caixas.
+// As duas bibliotecas só carregam aqui.
+const A4_PX = 794; // 210 mm a 96 dpi
+export async function pdfDanfse(nota: Nota, empresa: Empresa): Promise<File> {
+  const [{ toCanvas }, { jsPDF }] = await Promise.all([import('html-to-image'), import('jspdf')]);
+  const frame = document.createElement('iframe');
+  frame.setAttribute('aria-hidden', 'true');
+  frame.style.cssText = `position:fixed;left:-10000px;top:0;width:${A4_PX}px;height:1123px;border:0`;
+  document.body.appendChild(frame);
+  try {
+    const doc = frame.contentDocument!;
+    doc.open();
+    // Mesmo resultado da impressão: sem o botão e com a margem do papel.
+    doc.write(htmlDanfse(nota, empresa).replace('</style>',
+      '.noprint{display:none} body{padding:10mm 8mm 8mm} .doc{min-height:0;height:278mm}</style>'));
+    doc.close();
+    await doc.fonts?.ready;
+    const canvas = await toCanvas(doc.body, { pixelRatio: 2, backgroundColor: '#ffffff', width: A4_PX, skipFonts: true });
+    const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait', compress: true });
+    const altura = Math.min(297, (canvas.height * 210) / canvas.width);
+    pdf.addImage(canvas.toDataURL('image/jpeg', 0.92), 'JPEG', 0, 0, 210, altura);
+    pdf.setProperties({ title: nomeArquivoNota(empresa, nota) });
+    return new File([pdf.output('blob')], `${nomeArquivoNota(empresa, nota)}.pdf`, { type: 'application/pdf' });
+  } finally {
+    frame.remove();
+  }
 }

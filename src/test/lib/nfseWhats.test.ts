@@ -1,29 +1,62 @@
-import { describe, expect, it } from 'vitest';
-import { linkWhatsNota } from '@/pages/nfse/api';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { enviarPdfWhatsApp, textoNota } from '@/pages/nfse/components/enviarNota';
 
-const base = { numero: '37', chave: '41069022123456789000100000000000003725091234567890', valor: 1800.5, competencia: '2026-10-07', empresa: 'IDEAR', tomador: 'Construtora X' };
+// A geração do PDF (html2canvas + jsPDF) precisa de navegador de verdade: testada na tela.
+vi.mock('@/pages/nfse/components/danfse', () => ({ pdfDanfse: vi.fn() }));
 
-describe('linkWhatsNota', () => {
-  it('com telefone do tomador abre a conversa dele (55 + DDD)', () => {
-    const url = linkWhatsNota({ ...base, fone: '(41) 99812-4471' });
-    expect(url.startsWith('https://wa.me/5541998124471?text=')).toBe(true);
+const pdf = () => new File(['%PDF-1.3'], 'NFSe 40.pdf', { type: 'application/pdf' });
+const nav = navigator as unknown as { share?: unknown; canShare?: unknown };
+
+afterEach(() => {
+  delete nav.share;
+  delete nav.canShare;
+  delete (window as unknown as { Capacitor?: unknown }).Capacitor;
+  vi.restoreAllMocks();
+});
+
+describe('textoNota', () => {
+  it('traz número, empresa, valor e competência', () => {
+    const t = textoNota({ numero: '40', valor: 12500, competencia: '2026-10-07', empresa: 'IDEAR' });
+    expect(t).toContain('nº 40 de IDEAR');
+    expect(t).toMatch(/R\$\s12\.500,00/);
+    expect(t).toContain('07/10/2026');
+  });
+});
+
+describe('enviarPdfWhatsApp', () => {
+  it('com Compartilhar de arquivo, entrega o PDF ao sistema (a pessoa escolhe app e contato)', async () => {
+    const share = vi.fn().mockResolvedValue(undefined);
+    Object.assign(nav, { canShare: () => true, share });
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const f = pdf();
+    expect(await enviarPdfWhatsApp(f, 'Nota 40')).toBe('compartilhado');
+    expect(share).toHaveBeenCalledWith({ files: [f], text: 'Nota 40' });
+    expect(open).not.toHaveBeenCalled();
   });
 
-  it('telefone já com 55 não duplica', () => {
-    expect(linkWhatsNota({ ...base, fone: '+55 41 99812-4471' }).startsWith('https://wa.me/5541998124471?')).toBe(true);
+  it('fechar o Compartilhar não é erro', async () => {
+    Object.assign(nav, { canShare: () => true, share: vi.fn().mockRejectedValue(Object.assign(new Error('x'), { name: 'AbortError' })) });
+    expect(await enviarPdfWhatsApp(pdf(), 'Nota 40')).toBe('cancelado');
   });
 
-  it('sem telefone (ou inválido) deixa o WhatsApp pedir o contato', () => {
-    expect(linkWhatsNota({ ...base, fone: null }).startsWith('https://api.whatsapp.com/send?text=')).toBe(true);
-    expect(linkWhatsNota({ ...base, fone: '1234' }).startsWith('https://api.whatsapp.com/send?text=')).toBe(true);
+  it('sem Compartilhar: baixa o PDF e abre o WhatsApp sem número (escolhe o contato)', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    URL.revokeObjectURL = vi.fn();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    expect(await enviarPdfWhatsApp(pdf(), 'Nota 40')).toBe('baixado');
+    expect(click).toHaveBeenCalled();
+    const url = String(open.mock.calls[0][0]);
+    expect(url.startsWith('https://api.whatsapp.com/send?text=')).toBe(true);
+    expect(url).not.toMatch(/phone=|wa\.me\/\d/);
   });
 
-  it('mensagem traz número, valor, competência e o link da consulta pública', () => {
-    const texto = decodeURIComponent(linkWhatsNota({ ...base, fone: null }).split('text=')[1]);
-    expect(texto).toContain('Olá, Construtora X!');
-    expect(texto).toContain('nº 37 de IDEAR');
-    expect(texto).toMatch(/R\$\s1\.800,50/);
-    expect(texto).toContain('07/10/2026');
-    expect(texto).toContain(`https://www.nfse.gov.br/ConsultaPublica/?tpc=1&chave=${base.chave}`);
+  it('app Android com o plugin Share: grava no cache e compartilha o arquivo', async () => {
+    const writeFile = vi.fn().mockResolvedValue({ uri: 'file:///cache/NFSe 40.pdf' });
+    const share = vi.fn().mockResolvedValue(undefined);
+    (window as unknown as { Capacitor: unknown }).Capacitor = { Plugins: { Filesystem: { writeFile }, Share: { share } } };
+    expect(await enviarPdfWhatsApp(pdf(), 'Nota 40')).toBe('compartilhado');
+    expect(writeFile).toHaveBeenCalledWith(expect.objectContaining({ path: 'NFSe 40.pdf', directory: 'CACHE' }));
+    expect(share).toHaveBeenCalledWith({ title: 'Nota 40', files: ['file:///cache/NFSe 40.pdf'] });
   });
 });

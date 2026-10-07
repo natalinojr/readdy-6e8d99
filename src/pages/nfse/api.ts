@@ -191,32 +191,6 @@ export const fmtDataHora = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
 export const fmtChave = (c: string | null | undefined) => (c ? c.replace(/(\d{5})(?=\d)/g, '$1 ') : '—');
 
-// ─── Enviar pelo WhatsApp (dono, 2026-10-07) ────────────────────────────────
-// A mensagem leva o link da consulta pública do portal nacional (o cliente vê e baixa a DANFSe lá;
-// é o mesmo link do QR da DANFSe). Com o telefone do tomador abre a conversa dele; sem, o WhatsApp
-// pede o contato. api.whatsapp.com no caso sem número: o redirecionamento do wa.me estraga acentos
-// no WhatsApp Web/Desktop.
-export const linkConsultaNfse = (chave: string) => `https://www.nfse.gov.br/ConsultaPublica/?tpc=1&chave=${chave}`;
-
-export function linkWhatsNota(n: {
-  numero: string | null; chave: string; valor: number; competencia: string;
-  empresa: string; tomador?: string | null; fone?: string | null;
-}) {
-  const saudacao = n.tomador?.trim() ? `, ${n.tomador.trim()}` : '';
-  const texto = [
-    `Olá${saudacao}! Segue a nota fiscal de serviço${n.numero ? ` nº ${n.numero}` : ''} de ${n.empresa}.`,
-    `Valor: ${fmtBRL(n.valor)} · Competência: ${fmtData(n.competencia)}`,
-    '',
-    `Ver e baixar a nota: ${linkConsultaNfse(n.chave)}`,
-    `Chave de acesso: ${n.chave}`,
-  ].join('\n');
-  const d = soDigitos(n.fone);
-  const numero = d.length === 10 || d.length === 11 ? `55${d}` : (d.length === 12 || d.length === 13) && d.startsWith('55') ? d : '';
-  return numero
-    ? `https://wa.me/${numero}?text=${encodeURIComponent(texto)}`
-    : `https://api.whatsapp.com/send?text=${encodeURIComponent(texto)}`;
-}
-
 export function cnpjValido(c: string) {
   if (!/^\d{14}$/.test(c) || /^(\d)\1+$/.test(c)) return false;
   const calc = (base: string) => {

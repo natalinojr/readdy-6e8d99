@@ -4,7 +4,8 @@
 // → confirmação (com/sem dados bancários) → emitir. Nada vai para o histórico do assistente.
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { nfseCall, fmtDoc, soDigitos, cnpjValido, cpfValido, linkWhatsNota } from '@/pages/nfse/api';
+import { type Empresa, type Nota, EMPRESA_COLS, nfseCall, fmtDoc, soDigitos, cnpjValido, cpfValido } from '@/pages/nfse/api';
+import { useEnviarNota } from '@/pages/nfse/components/enviarNota';
 
 interface ServicoCtx { id: string; nome: string; codigo: string; valor_padrao: number | null }
 interface TomadorCtx { id: string; nome: string; documento: string }
@@ -41,8 +42,9 @@ export default function AcaoEmitirNfse({ onFechar, onAbrirNotas }: { onFechar: (
   const [entrada, setEntrada] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const [resultado, setResultado] = useState<{ ok: boolean; notaId?: string; status?: string } | null>(null);
-  // Link do WhatsApp montado logo após a autorização: o window.open tem que sair direto do toque.
-  const [linkWhats, setLinkWhats] = useState<string | null>(null);
+  // Nota autorizada + empresa completas: o PDF para o WhatsApp é preparado logo após a autorização.
+  const [notaPdf, setNotaPdf] = useState<{ nota: Nota; empresa: Empresa } | null>(null);
+  const whats = useEnviarNota(notaPdf?.nota ?? null, notaPdf?.empresa ?? null);
   const fimRef = useRef<HTMLDivElement>(null);
 
   const bot = (texto: string) => setBaloes((b) => [...b, { de: 'bot', texto }]);
@@ -174,7 +176,7 @@ export default function AcaoEmitirNfse({ onFechar, onAbrirNotas }: { onFechar: (
     if (r.success && r.status === 'autorizada') {
       bot(`✅ NFS-e nº ${r.numero_nfse} autorizada · ${brl(Number(r.valor ?? valor))} · ${tomador!.nome}`);
       setResultado({ ok: true, notaId: r.nota_id });
-      if (r.nota_id) montarWhats(r.nota_id, r.numero_nfse ?? null, Number(r.valor ?? valor), e.nome);
+      if (r.nota_id) carregarNotaPdf(r.nota_id, e.id);
     } else if ((r as { rede?: boolean }).rede || r.status === 'erro') {
       bot('⚠️ Sem resposta da Sefin Nacional. NÃO emita de novo: abra Notas de Serviço e use "Consultar de novo" na nota.');
       setResultado({ ok: false, notaId: r.nota_id, status: 'erro' });
@@ -186,17 +188,13 @@ export default function AcaoEmitirNfse({ onFechar, onAbrirNotas }: { onFechar: (
     setPasso('fim');
   };
 
-  // Enviar pelo WhatsApp (dono, 2026-10-07): chave da nota + telefone do tomador, se tiver.
-  const montarWhats = async (notaId: string, numero: string | null, v: number, nomeEmpresa: string) => {
-    const { data: n } = await supabase.from('nfse_notas').select('chave_acesso, tomador_id').eq('id', notaId).maybeSingle();
-    const nota = n as { chave_acesso: string | null; tomador_id: string | null } | null;
-    if (!nota?.chave_acesso) return;
-    let fone: string | null = null;
-    if (nota.tomador_id) {
-      const { data: t } = await supabase.from('nfse_tomadores').select('fone').eq('id', nota.tomador_id).maybeSingle();
-      fone = (t as { fone: string | null } | null)?.fone ?? null;
-    }
-    setLinkWhats(linkWhatsNota({ numero, chave: nota.chave_acesso, valor: v, competencia, empresa: nomeEmpresa, tomador: tomador?.nome, fone }));
+  // Enviar pelo WhatsApp (dono, 2026-10-07): vai o PDF da nota e a pessoa escolhe o contato na hora.
+  const carregarNotaPdf = async (notaId: string, empresaId: string) => {
+    const [{ data: n }, { data: emp }] = await Promise.all([
+      supabase.from('nfse_notas').select('*').eq('id', notaId).maybeSingle(),
+      supabase.from('nfse_empresas').select(EMPRESA_COLS).eq('id', empresaId).maybeSingle(),
+    ]);
+    if (n && emp) setNotaPdf({ nota: n as Nota, empresa: emp as unknown as Empresa });
   };
 
   // ── render ──
@@ -315,11 +313,12 @@ export default function AcaoEmitirNfse({ onFechar, onAbrirNotas }: { onFechar: (
         {(passo === 'fim' || passo === 'sem_empresa') && (
           <>
             {resultado && <button className={btn} onClick={onAbrirNotas}>{resultado.ok ? 'Abrir a nota (PDF)' : 'Abrir Notas de Serviço'}</button>}
-            {resultado?.ok && linkWhats && (
-              <a href={linkWhats} target="_blank" rel="noopener noreferrer"
-                className="flex items-center gap-1.5 w-full text-left px-3 py-2 rounded-xl border border-green-200 bg-green-50 text-sm text-green-700 font-semibold hover:bg-green-100 cursor-pointer">
-                <i className="ri-whatsapp-line text-base" />Enviar por WhatsApp
-              </a>
+            {resultado?.ok && notaPdf && whats.ativo && (
+              <button disabled={whats.estado !== 'pronto'} onClick={async () => { const aviso = await whats.enviar(); if (aviso) bot(aviso); }}
+                className="flex items-center gap-1.5 w-full text-left px-3 py-2 rounded-xl border border-green-200 bg-green-50 text-sm text-green-700 font-semibold hover:bg-green-100 disabled:opacity-60 disabled:cursor-wait cursor-pointer">
+                <i className={`${whats.estado === 'preparando' ? 'ri-loader-4-line animate-spin' : 'ri-whatsapp-line'} text-base`} />
+                {whats.estado === 'preparando' ? 'Preparando o PDF…' : whats.estado === 'erro' ? 'PDF indisponível (abra a nota)' : 'Enviar PDF por WhatsApp'}
+              </button>
             )}
             <button className="block w-full text-left px-3 py-2 rounded-xl border border-zinc-200 bg-white text-sm text-zinc-600 font-semibold hover:bg-zinc-50 cursor-pointer" onClick={onFechar}>Fechar</button>
           </>
