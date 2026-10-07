@@ -277,7 +277,7 @@ Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme
 ### 2026-10-07 — Hoje: "em que pé está" cada conta e cartão de conta paga some
 - **Pedido do dono:** nos cartões da Hoje, saber se a mercadoria chegou, se a conta veio da nota, do extrato ou de outro jeito; cartão sem sentido, pagamento repetido e boleto já pago continuando ali.
 - **Selos por conta:** `src/lib/situacaoConta.ts` (montagem pura, testes em `src/test/lib/situacaoConta.test.ts`) + `LinhaSituacao.tsx`. Mostra de onde veio (NF nº / compra sem nota / extrato / e-mail / conta fixa / à mão) · mercadoria (`fin_purchases.delivery_confirmed_at|delivery_registered_at` ou `delivery_confirmed` da conta) · boleto · pagamento (último `fin_inter_payments` não substituído, ou pago/vencida). Aparece no cartão (1 conta) e atrás de "Em que pé está cada conta (N)" quando há várias; `ContasAtrasadasInline` ganhou `comSituacao`.
-- **Achar a conta sem bill_id:** boleto por e-mail → `fin_mail_messages.bill_id` ou mesmo valor+vencimento na loja (só com 1 candidata); pedido do grupo → valor lido do texto + palavra do fornecedor, ±20 dias (só com 1 candidata; não some sozinho, ganha "Já foi pago — tirar daqui"); "Chegou a mercadoria?" → contas da compra.
+- **Achar a conta sem bill_id:** boleto por e-mail → `fin_mail_messages.bill_id` ou mesmo valor+vencimento na loja (só com 1 candidata); pedido do grupo → primeiro pelo **CNPJ escrito no pedido** = CNPJ do fornecedor da conta (compra → `fin_suppliers.cnpj`) + mesmo valor, ±20 dias, 1 candidata: conta paga = cartão some e o trigger `trg_pedido_grupo_conta_paga` (`fn_fechar_pedido_grupo_da_conta`) fecha no banco (07/10); sem CNPJ, valor + palavra do fornecedor (1 candidata; não some sozinho, ganha "Já foi pago — tirar daqui"); "Chegou a mercadoria?" → contas da compra.
 - **Conta paga some na hora:** `useSituacaoHoje` + `semOJaPago` tiram o cartão de boleto_faltando/fixa_chegou/pagamento_pendente/boleto_email cuja conta está paga/cancelada (pagamento_pendente com Pix ainda no Inter fica — lembra de recusar) e as contas pagas de dentro dos cartões agrupados. No banco: trigger `trg_pendencia_conta_resolvida` (migração `20261007200000`) fecha boleto_faltando/fixa_chegou e o boleto_email casado quando a conta vira paid/cancelled.
 - **Pedido do grupo não preparado:** o botão diz "Responder no chat" (antes "Pagar", que confundia); o texto inteiro abre em "Ler tudo".
 
@@ -3264,8 +3264,14 @@ Rota `/notas-servico` (`src/pages/nfse/`), módulo **sem loja**: acesso por **em
   `pode_usuarios`: `adicionar_membro`/`atualizar_membro`/`remover_membro`/`link_acesso`. Ninguém altera o próprio
   acesso, ninguém dá permissão que não tem, e o acesso do dono não é tirado/alterado por admin de CNPJ.
   Front: `Permissoes`/`PERMISSOES`/`permissoesDe` em `api.ts`; a página passa `pode` às abas.
-- **Convite sem e-mail do Supabase:** o **Site URL do Auth aponta para `erposv3.vercel.app` (deploy antigo, parado)** e
-  `/definir-senha` não está na lista de redirect. Por isso `convidar()` usa `generateLink({type:'invite'})` sem e-mail,
+- **Quem vê cada nota (2026-10-07, dono):** quem tem `pode_usuarios` vê todas; os demais só as que emitiram
+  (`nfse_notas.created_by`) e as compartilhadas nota por nota (`nfse_nota_acessos`, Edge `compartilhar_nota`, quadro
+  "Quem mais vê esta nota" no detalhe). RLS `fn_nfse_ve_nota`; `reconsultar`/`cancelar` checam o mesmo
+  (`exigirVerNota`). Migração `20261007200000_nfse_notas_visibilidade.sql`. Não existe "ver todas" separado de
+  administrar usuários (decisão do dono).
+- **Convite sem e-mail do Supabase:** o projeto **não tem SMTP próprio** (o padrão do Supabase manda 2 e-mails/hora e
+  só para a equipe). Até 2026-10-07 o Site URL do Auth apontava para `erposv3.vercel.app` (deploy antigo); trocado para
+  `https://erpos.vercel.app` (+ `https://erpos.vercel.app/**` nos redirects) em 10-07. Por isso `convidar()` usa `generateLink({type:'invite'})` sem e-mail,
   marca `convite_nfse: true` no metadata e devolve `https://erpos.vercel.app/definir-senha?token_hash=…&type=invite`;
   o admin manda por WhatsApp/e-mail (botões na tela). `/definir-senha` faz `verifyOtp` com o token (uma vez só,
   ignorando sessão já aberta no navegador) e `updateUser({password})`. `link_acesso` refaz o link (type=recovery).

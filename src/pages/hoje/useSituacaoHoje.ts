@@ -19,12 +19,15 @@ export interface SituacaoHoje {
   porCartao: Map<string, SituacaoConta[]>;
   /** pedido do grupo que parece já pago (achado por valor + fornecedor, não pelo id) */
   provavel: Map<string, SituacaoConta>;
+  /** pedido do grupo cuja conta (achada pelo CNPJ escrito no pedido) já foi paga: o cartão sai */
+  grupoPago: Set<string>;
 }
 
 /** Tira o que já foi pago: cartão inteiro (conta da pendência paga) ou contas juntadas dentro dele. */
-export function semOJaPago(itens: ItemHoje[], porCartao: Map<string, SituacaoConta[]>): ItemHoje[] {
+export function semOJaPago(itens: ItemHoje[], porCartao: Map<string, SituacaoConta[]>, grupoPago: Set<string> = new Set()): ItemHoje[] {
   const out: ItemHoje[] = [];
   for (const i of itens) {
+    if (grupoPago.has(i.chave)) continue;
     const sits = porCartao.get(i.chave);
     if (!sits?.length) { out.push(i); continue; }
     const porId = new Map(sits.map((s) => [s.id, s]));
@@ -50,6 +53,7 @@ export function semOJaPago(itens: ItemHoje[], porCartao: Map<string, SituacaoCon
 export function useSituacaoHoje(itens: ItemHoje[] | null, hoje: string, ligado: boolean): SituacaoHoje {
   const [porCartao, setPorCartao] = useState<Map<string, SituacaoConta[]>>(new Map());
   const [provavel, setProvavel] = useState<Map<string, SituacaoConta>>(new Map());
+  const [grupoPago, setGrupoPago] = useState<Set<string>>(new Set());
   const quando = useRef(0);
   const assinatura = useMemo(() => (itens ?? []).map((i) => `${i.chave}:${i.juntas.length}`).join('|'), [itens]);
   const ultima = useRef('');
@@ -73,12 +77,19 @@ export function useSituacaoHoje(itens: ItemHoje[] | null, hoje: string, ligado: 
       const extras: Array<Promise<void>> = [];
       const achados = new Map<string, SituacaoConta[]>();
       const provaveis = new Map<string, SituacaoConta>();
+      const pagos = new Set<string>();
       for (const i of itens) {
         const p = i.principal;
         if (p.kind === 'boleto_email' && typeof p.payload?.mail_id === 'string') {
           extras.push(acharContaDoEmail(p.tenantId, p.payload.mail_id, hoje).then((s) => { if (s) achados.set(i.chave, [s]); }).catch(() => {}));
         } else if (p.kind === 'pagamento_grupo' && !billDe(p)) {
-          extras.push(acharContaDoPedido(p.tenantId, `${p.titulo}\n${p.detalhe ?? ''}`, p.criadaEm, hoje).then((s) => { if (s) provaveis.set(i.chave, s); }).catch(() => {}));
+          extras.push(acharContaDoPedido(p.tenantId, `${p.titulo}\n${p.detalhe ?? ''}`, p.criadaEm, hoje).then((r) => {
+            if (!r) return;
+            // Pelo CNPJ: conta paga = cartão sem razão de existir (o trigger também fecha no banco);
+            // Pix ainda no Inter fica (lembra de recusar). Só pelo nome: "Já foi pago — tirar daqui".
+            if (r.porCnpj && r.situacao.paga && !r.situacao.noInter) pagos.add(i.chave);
+            else provaveis.set(i.chave, r.situacao);
+          }).catch(() => {}));
         } else if (p.kind === 'mercadoria_chegou' && p.payload?.tipo === 'compra' && typeof p.payload?.id === 'string') {
           extras.push(lerSituacoesDaCompra(p.tenantId, p.payload.id, hoje).then((ss) => { if (ss.length) achados.set(i.chave, ss); }).catch(() => {}));
         }
@@ -96,8 +107,9 @@ export function useSituacaoHoje(itens: ItemHoje[] | null, hoje: string, ligado: 
       for (const [chave, ss] of achados) novo.set(chave, ss);
       setPorCartao(novo);
       setProvavel(provaveis);
+      setGrupoPago(pagos);
     })();
   }, [assinatura, itens, hoje, ligado]);
 
-  return { porCartao, provavel };
+  return { porCartao, provavel, grupoPago };
 }

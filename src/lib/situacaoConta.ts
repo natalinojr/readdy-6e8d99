@@ -174,8 +174,48 @@ export function contaProvavel<T extends { supplier: string | null; description: 
   return ok.length === 1 ? ok[0] : null;
 }
 
-/** Pedido de pagamento do grupo (sem conta ligada): procura a conta do mesmo valor e fornecedor perto da data. */
-export async function acharContaDoPedido(tenantId: string, texto: string, criadaEm: string, hoje: string): Promise<SituacaoConta | null> {
+/** CNPJs escritos no texto (com ou sem pontuação), só os 14 dígitos. */
+export function cnpjsDoTexto(t: string | null | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const m of (t ?? '').matchAll(/(?<!\d)(\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2})(?!\d)/g)) out.add(m[1].replace(/\D/g, ''));
+  return out;
+}
+
+/**
+ * A conta do pedido pelo CNPJ: mesmo valor e o CNPJ do fornecedor da conta (compra → fornecedor) escrito
+ * no pedido. Só devolve quando há UMA candidata. É a ligação forte: com ela o cartão some sozinho quando
+ * a conta está paga (2026-10-07, dono: "não tem por que esse card estar na Hoje").
+ */
+export function contaPeloCnpj<T extends { id: string; amount: number | string }>(contas: T[], valor: number, cnpjs: Set<string>, cnpjDaConta: Map<string, string>): T | null {
+  if (!cnpjs.size) return null;
+  const ok = contas.filter((c) => Math.abs(n(c.amount) - valor) < 0.01 && cnpjs.has(cnpjDaConta.get(c.id) ?? ''));
+  return ok.length === 1 ? ok[0] : null;
+}
+
+/** CNPJ do fornecedor de cada conta que veio de compra (fin_purchases.supplier_id → fin_suppliers.cnpj). */
+async function cnpjDasContas(contas: ContaBruta[]): Promise<Map<string, string>> {
+  const compraDe = new Map(contas.filter((c) => c.reference_type === 'purchase' && c.reference_id).map((c) => [c.id, c.reference_id as string]));
+  if (!compraDe.size) return new Map();
+  const { data: compras } = await supabase.from('fin_purchases').select('id, supplier_id').in('id', [...new Set(compraDe.values())]);
+  const fornDe = new Map(((compras ?? []) as Array<{ id: string; supplier_id: string | null }>).filter((c) => c.supplier_id).map((c) => [c.id, c.supplier_id as string]));
+  if (!fornDe.size) return new Map();
+  const { data: forns } = await supabase.from('fin_suppliers').select('id, cnpj').in('id', [...new Set(fornDe.values())]);
+  const cnpjDe = new Map(((forns ?? []) as Array<{ id: string; cnpj: string | null }>).map((f) => [f.id, (f.cnpj ?? '').replace(/\D/g, '')]));
+  const out = new Map<string, string>();
+  for (const [conta, compra] of compraDe) {
+    const cnpj = cnpjDe.get(fornDe.get(compra) ?? '');
+    if (cnpj && cnpj.length === 14) out.set(conta, cnpj);
+  }
+  return out;
+}
+
+export interface ContaDoPedido { situacao: SituacaoConta; porCnpj: boolean }
+
+/**
+ * Pedido de pagamento do grupo (sem conta ligada): procura a conta do mesmo valor perto da data.
+ * `porCnpj` = achada pelo CNPJ do pedido (forte); senão, pelo nome do fornecedor no texto (fraca).
+ */
+export async function acharContaDoPedido(tenantId: string, texto: string, criadaEm: string, hoje: string): Promise<ContaDoPedido | null> {
   const valor = valorDoTexto(texto);
   if (!valor) return null;
   const d = new Date(criadaEm);
@@ -184,9 +224,13 @@ export async function acharContaDoPedido(tenantId: string, texto: string, criada
   const { data, error } = await supabase.from('fin_accounts_payable').select(COLS_CONTA)
     .eq('tenant_id', tenantId).gte('amount', valor - 0.01).lte('amount', valor + 0.01).gte('due_date', de).lte('due_date', ate).limit(20);
   if (error || !data?.length) return null;
-  const c = contaProvavel(data as ContaBruta[], valor, texto);
+  const contas = data as ContaBruta[];
+  const cnpjs = cnpjsDoTexto(texto);
+  const forte = cnpjs.size ? contaPeloCnpj(contas, valor, cnpjs, await cnpjDasContas(contas).catch(() => new Map<string, string>())) : null;
+  const c = forte ?? contaProvavel(contas, valor, texto);
   if (!c) return null;
-  return (await completar([c], hoje)).get(c.id) ?? null;
+  const situacao = (await completar([c], hoje)).get(c.id);
+  return situacao ? { situacao, porCnpj: !!forte } : null;
 }
 
 /** Boleto por e-mail: a conta que ele virou (bill_id) ou a do mesmo valor e vencimento na loja. */

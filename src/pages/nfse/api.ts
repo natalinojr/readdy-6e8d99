@@ -102,11 +102,13 @@ export interface Nota {
   cancelada_em: string | null;
   cancel_codigo: string | null;
   cancel_motivo: string | null;
+  created_by: string | null;
   created_at: string;
 }
-export const NOTA_COLS_LISTA = 'id, empresa_id, ambiente, status, serie, numero_dps, id_dps, competencia, dh_emissao, tomador_id, tomador, servico_id, c_trib_nac, c_trib_mun, c_nbs, descricao, cod_municipio_prestacao, valor_servico, desconto_incondicionado, aliquota_iss, iss_retido, info_complementar, chave_acesso, numero_nfse, dh_processamento, alertas, erros, cancelada_em, cancel_codigo, cancel_motivo, created_at';
+export const NOTA_COLS_LISTA = 'id, empresa_id, ambiente, status, serie, numero_dps, id_dps, competencia, dh_emissao, tomador_id, tomador, servico_id, c_trib_nac, c_trib_mun, c_nbs, descricao, cod_municipio_prestacao, valor_servico, desconto_incondicionado, aliquota_iss, iss_retido, info_complementar, chave_acesso, numero_nfse, dh_processamento, alertas, erros, cancelada_em, cancel_codigo, cancel_motivo, created_by, created_at';
 
-// O que cada pessoa pode fazer numa empresa (nfse_empresa_membros.pode_*). Ver as notas vale para todo membro.
+// O que cada pessoa pode fazer numa empresa (nfse_empresa_membros.pode_*). Notas: quem administra usuários vê
+// todas; os demais veem as que emitiram e as compartilhadas com eles (nfse_nota_acessos).
 export type Permissao = 'emitir' | 'cancelar' | 'tomadores' | 'servicos' | 'empresa' | 'usuarios';
 export type Permissoes = Record<Permissao, boolean>;
 export const PERMISSOES: { id: Permissao; label: string; desc: string }[] = [
@@ -115,7 +117,7 @@ export const PERMISSOES: { id: Permissao; label: string; desc: string }[] = [
   { id: 'tomadores', label: 'Tomadores', desc: 'Cadastra, edita e exclui tomadores' },
   { id: 'servicos', label: 'Serviços', desc: 'Cadastra, edita e exclui serviços' },
   { id: 'empresa', label: 'Empresa e certificado', desc: 'Dados da empresa, certificado A1, ambiente e numeração' },
-  { id: 'usuarios', label: 'Administrar usuários', desc: 'Convida pessoas, muda o que cada uma faz e tira o acesso' },
+  { id: 'usuarios', label: 'Administrar usuários', desc: 'Convida pessoas, muda o que cada uma faz, tira o acesso e vê todas as notas' },
 ];
 export const SEM_PERMISSAO: Permissoes = { emitir: false, cancelar: false, tomadores: false, servicos: false, empresa: false, usuarios: false };
 export const PRESET_ADMIN: Permissoes = { emitir: true, cancelar: true, tomadores: true, servicos: true, empresa: true, usuarios: true };

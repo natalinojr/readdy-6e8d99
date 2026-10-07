@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { contaProvavel, montarSituacao, ultimoPixPorConta, valorDoTexto, type ContaBruta } from '@/lib/situacaoConta';
+import { cnpjsDoTexto, contaPeloCnpj, contaProvavel, montarSituacao, ultimoPixPorConta, valorDoTexto, type ContaBruta } from '@/lib/situacaoConta';
 import { semOJaPago } from '@/pages/hoje/useSituacaoHoje';
 import type { ItemHoje, PendHoje } from '@/pages/hoje/organizar';
 
@@ -73,6 +73,24 @@ describe('achar a conta do pedido do grupo', () => {
   });
 });
 
+describe('pedido do grupo pelo CNPJ', () => {
+  const texto = 'É um Pix de R$ 1.140,00 para Costa e Montenegro, com a chave no CNPJ 09.585.491/0002-35.';
+  it('lê o CNPJ com ou sem pontuação', () => {
+    expect([...cnpjsDoTexto(texto)]).toEqual(['09585491000235']);
+    expect([...cnpjsDoTexto('chave 09585491000235')]).toEqual(['09585491000235']);
+    expect(cnpjsDoTexto('telefone 41999998888 e R$ 10,00').size).toBe(0);
+  });
+  it('acha a conta só quando valor e CNPJ do fornecedor batem, com uma candidata', () => {
+    const a = { id: 'a', amount: 1140 };
+    const b = { id: 'b', amount: 1140 };
+    const cnpjs = cnpjsDoTexto(texto);
+    expect(contaPeloCnpj([a, b], 1140, cnpjs, new Map([['a', '09585491000235'], ['b', '11111111000111']]))).toBe(a);
+    expect(contaPeloCnpj([a, b], 1140, cnpjs, new Map([['a', '09585491000235'], ['b', '09585491000235']]))).toBeNull();
+    expect(contaPeloCnpj([a], 1139, cnpjs, new Map([['a', '09585491000235']]))).toBeNull();
+    expect(contaPeloCnpj([a], 1140, new Set(), new Map([['a', '09585491000235']]))).toBeNull();
+  });
+});
+
 describe('semOJaPago', () => {
   const pend = (x: Partial<PendHoje>): PendHoje => ({
     id: 'p', tenantId: 't1', loja: 'L', kind: 'boleto_faltando', ref: null, titulo: 'x', detalhe: null, rota: null,
@@ -95,6 +113,11 @@ describe('semOJaPago', () => {
     expect(semOJaPago([g], new Map([['g', [paga]]]))).toHaveLength(1);
     const p = item(pend({ id: 'pp', kind: 'pagamento_pendente' }));
     expect(semOJaPago([p], new Map([['pp', [{ ...paga, noInter: true }]]]))).toHaveLength(1);
+  });
+  it('tira o pedido do grupo cuja conta (pelo CNPJ) já foi paga', () => {
+    const g = item(pend({ id: 'g', kind: 'pagamento_grupo', payload: {} }));
+    expect(semOJaPago([g], new Map(), new Set(['g']))).toEqual([]);
+    expect(semOJaPago([g], new Map(), new Set())).toEqual([g]);
   });
   it('tira só as contas pagas de dentro do cartão do fornecedor', () => {
     const j1 = pend({ id: 'j1', payload: { bill_id: 'b1', valor: 10 } });

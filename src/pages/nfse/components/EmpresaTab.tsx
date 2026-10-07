@@ -370,7 +370,7 @@ function EscolherPermissoes({ valor, onChange }: { valor: Permissoes; onChange: 
           </label>
         ))}
       </div>
-      <p className="text-[11px] text-zinc-400 mt-2">Ver as notas da empresa vale para todos.</p>
+      <p className="text-[11px] text-zinc-400 mt-2">Quem administra usuários vê todas as notas. Os demais veem as que emitiram e as que forem compartilhadas com eles (no detalhe da nota).</p>
     </div>
   );
 }
@@ -459,7 +459,7 @@ function Membros({ empresa, podeAdministrar }: { empresa: Empresa; podeAdministr
   };
 
   return (
-    <Secao titulo="Quem acessa esta empresa" desc="Cada pessoa vê as notas desta empresa e faz só o que estiver marcado para ela.">
+    <Secao titulo="Quem acessa esta empresa" desc="Cada pessoa faz só o que estiver marcado para ela.">
       <div className="divide-y divide-zinc-100 border border-zinc-100 rounded-xl">
         {membros.map((m) => {
           const p = permissoesDe(m);
@@ -478,7 +478,7 @@ function Membros({ empresa, podeAdministrar }: { empresa: Empresa; podeAdministr
                     : PERMISSOES.filter((x) => p[x.id]).map((x) => (
                       <span key={x.id} className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-zinc-100 text-zinc-600">{x.label}</span>
                     ))}
-                  {!admin && !PERMISSOES.some((x) => p[x.id]) && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-zinc-100 text-zinc-500">Só vê as notas</span>}
+                  {!admin && !PERMISSOES.some((x) => p[x.id]) && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-zinc-100 text-zinc-500">Só vê notas compartilhadas</span>}
                 </div>
               </div>
               {podeAdministrar && !m.eu && (
