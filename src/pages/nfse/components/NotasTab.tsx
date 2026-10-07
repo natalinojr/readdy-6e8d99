@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { avisar, confirmar } from '@/pages/contratacao/dialog';
 import {
-  type Empresa, type ErroSefin, type Nota, type Servico, type StatusNota, type Tomador,
+  type Empresa, type ErroSefin, type Nota, type Permissoes, type Servico, type StatusNota, type Tomador,
   STATUS_CLASS, STATUS_LABEL, baixarTexto, linkWhatsNota, nomeArquivoNota, fmtBRL, fmtChave, fmtData, fmtDataHora, fmtDoc, inputCls, labelCls, nfseCall, soDigitos,
 } from '../api';
 import { Modal, TomadorModal } from './CadastrosTab';
@@ -236,7 +236,7 @@ function EmitirModal({ empresa, tomadores, servicos, onClose, onEmitida, onTomad
 }
 
 // ─── Detalhe ─────────────────────────────────────────────────────────────────
-function NotaDetalhe({ notaId, empresa, souAdmin, onClose, onMudou }: { notaId: string; empresa: Empresa; souAdmin: boolean; onClose: () => void; onMudou: () => void }) {
+function NotaDetalhe({ notaId, empresa, pode, onClose, onMudou }: { notaId: string; empresa: Empresa; pode: Permissoes; onClose: () => void; onMudou: () => void }) {
   const [nota, setNota] = useState<Nota | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [cancelando, setCancelando] = useState(false);
@@ -342,7 +342,7 @@ function NotaDetalhe({ notaId, empresa, souAdmin, onClose, onMudou }: { notaId: 
         {nota.chave_acesso && d('Chave de acesso', <span className="font-mono text-xs">{fmtChave(nota.chave_acesso)}</span>)}
         {nota.status === 'cancelada' && d('Cancelamento', `${fmtDataHora(nota.cancelada_em)} — ${nota.cancel_motivo ?? ''}`)}
 
-        {nota.status === 'autorizada' && souAdmin && (
+        {nota.status === 'autorizada' && pode.cancelar && (
           cancelando ? (
             <div className="rounded-xl border border-zinc-200 p-3 space-y-2">
               <label className={labelCls}>Motivo</label>
@@ -369,8 +369,8 @@ function NotaDetalhe({ notaId, empresa, souAdmin, onClose, onMudou }: { notaId: 
 }
 
 // ─── Lista ───────────────────────────────────────────────────────────────────
-export default function NotasTab({ empresa, notas, tomadores, servicos, souAdmin, mes, onMes, onChange, onTomadores }: {
-  empresa: Empresa; notas: Nota[]; tomadores: Tomador[]; servicos: Servico[]; souAdmin: boolean;
+export default function NotasTab({ empresa, notas, tomadores, servicos, pode, mes, onMes, onChange, onTomadores }: {
+  empresa: Empresa; notas: Nota[]; tomadores: Tomador[]; servicos: Servico[]; pode: Permissoes;
   mes: string; onMes: (m: string) => void; onChange: () => void; onTomadores: () => void;
 }) {
   const [emitindo, setEmitindo] = useState(false);
@@ -406,10 +406,10 @@ export default function NotasTab({ empresa, notas, tomadores, servicos, souAdmin
           <p className="text-xs text-zinc-500">rejeitadas ou sem resposta</p>
         </div>
         <div className="col-span-2 flex items-end justify-end">
-          <button onClick={() => setEmitindo(true)} disabled={semCert}
+          {pode.emitir && <button onClick={() => setEmitindo(true)} disabled={semCert}
             className={`w-full md:w-auto px-5 h-12 rounded-xl text-white text-sm font-bold cursor-pointer disabled:opacity-40 ${empresa.ambiente === 1 ? 'bg-emerald-600 hover:bg-emerald-500' : 'bg-sky-600 hover:bg-sky-500'}`}>
             <i className="ri-file-add-line mr-1" />Emitir nota
-          </button>
+          </button>}
         </div>
       </div>
 
@@ -448,7 +448,7 @@ export default function NotasTab({ empresa, notas, tomadores, servicos, souAdmin
         <EmitirModal empresa={empresa} tomadores={tomadores} servicos={servicos} onClose={() => { setEmitindo(false); onChange(); }} onTomadorNovo={onTomadores}
           onEmitida={(id) => { setEmitindo(false); onChange(); setDetalhe(id); }} />
       )}
-      {detalhe && <NotaDetalhe notaId={detalhe} empresa={empresa} souAdmin={souAdmin} onClose={() => setDetalhe(null)} onMudou={onChange} />}
+      {detalhe && <NotaDetalhe notaId={detalhe} empresa={empresa} pode={pode} onClose={() => setDetalhe(null)} onMudou={onChange} />}
     </div>
   );
 }

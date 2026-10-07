@@ -13,6 +13,12 @@ import { installErrorReporter } from './lib/errorReporter'
 // Instalado ANTES dos handlers abaixo, que fazem preventDefault em casos tratados.
 installErrorReporter()
 
+// Convite / link de acesso do Supabase (#…type=invite|recovery) que caiu fora de /definir-senha (ex.: redirect
+// não liberado volta para a raiz): leva para lá com o hash, senão a pessoa entra logada e sem senha.
+if (/[#&]type=(invite|recovery)(&|$)/.test(window.location.hash) && window.location.pathname !== '/definir-senha') {
+  window.history.replaceState(null, '', '/definir-senha' + window.location.hash)
+}
+
 // Campos numéricos: seleciona ao focar e tira o zero grudado na frente ("014")
 installNumberInputFix()
 

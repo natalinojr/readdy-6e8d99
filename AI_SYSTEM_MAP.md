@@ -3246,11 +3246,29 @@ explícito é respeitado.
 
 ### Módulo Notas de Serviço — NFS-e pela API do Emissor Nacional (2026-09-16)
 
-Rota `/notas-servico` (`src/pages/nfse/`), módulo **sem loja**: acesso por pessoa (`user_module_access.module = 'nfse'`,
-Admin Master › Módulos) e por empresa emitente (`nfse_empresa_membros`, papel admin/emissor). Nada a ver com PDV/NFC-e.
+Rota `/notas-servico` (`src/pages/nfse/`), módulo **sem loja**: acesso por **empresa emitente (CNPJ)** em
+`nfse_empresa_membros`. Nada a ver com PDV/NFC-e. (Desde 2026-10-07 ser membro já libera o módulo; o `user_module_access
+'nfse'` do Admin Master ficou opcional.)
+
+- **Permissões por pessoa (2026-10-07, pedido do dono):** colunas `pode_emitir`, `pode_cancelar`, `pode_tomadores`,
+  `pode_servicos`, `pode_empresa`, `pode_usuarios` (`papel` só por compatibilidade). Ver as notas vale para todo membro.
+  Regras na Edge (`exigirMembro(empresa, acao)`) e no RLS (`fn_nfse_pode`): tomador novo = `tomadores` ou `emitir`;
+  editar/excluir tomador = `tomadores`; serviço = `servicos`. **Só o dono cria CNPJ** (`criar_empresa`). Quem tem
+  `pode_usuarios`: `adicionar_membro`/`atualizar_membro`/`remover_membro`/`link_acesso`. Ninguém altera o próprio
+  acesso, ninguém dá permissão que não tem, e o acesso do dono não é tirado/alterado por admin de CNPJ.
+  Front: `Permissoes`/`PERMISSOES`/`permissoesDe` em `api.ts`; a página passa `pode` às abas.
+- **Convite sem e-mail do Supabase:** o **Site URL do Auth aponta para `erposv3.vercel.app` (deploy antigo, parado)** e
+  `/definir-senha` não está na lista de redirect. Por isso `convidar()` usa `generateLink({type:'invite'})` sem e-mail,
+  marca `convite_nfse: true` no metadata e devolve `https://erpos.vercel.app/definir-senha?token_hash=…&type=invite`;
+  o admin manda por WhatsApp/e-mail (botões na tela). `/definir-senha` faz `verifyOtp` com o token (uma vez só,
+  ignorando sessão já aberta no navegador) e `updateUser({password})`. `link_acesso` refaz o link (type=recovery).
+- **Segurança do link:** só sai para conta **com a marca `convite_nfse` e sem senha** (`fn_nfse_conta_auth`, só
+  service_role). Nunca para conta existente: seria entregar a conta de outra pessoa ao admin do CNPJ.
+  O assistente tem `adicionar/atualizar/remover_membro|link_acesso` no `EDGE_ACTION_BLOCK` do `assistente-brain`.
 
 - **Tabelas:** `nfse_empresas`, `nfse_empresa_membros`, `nfse_tomadores`, `nfse_servicos`, `nfse_notas` (migração
-  `20260916220000_nfse_modulo.sql`). Tomadores/serviços gravados direto pelo front (RLS `fn_nfse_membro`); empresa,
+  `20260916220000_nfse_modulo.sql`, permissões em `20261007120000_nfse_permissoes_por_pessoa.sql`). Tomadores/serviços
+  gravados direto pelo front (RLS `fn_nfse_membro`/`fn_nfse_pode`); empresa,
   membros e notas só pela Edge. `nfse_empresas` não libera `select *` (ids do Vault): usar `EMPRESA_COLS`.
 - **Certificado A1:** `.pfx` + senha no **Vault** (`fn_nfse_cert_set/get`, só service_role). Numeração da DPS por
   ambiente em `fn_nfse_reservar_dps` (atômica; número queimado em rejeição é permitido).

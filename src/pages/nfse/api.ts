@@ -106,7 +106,28 @@ export interface Nota {
 }
 export const NOTA_COLS_LISTA = 'id, empresa_id, ambiente, status, serie, numero_dps, id_dps, competencia, dh_emissao, tomador_id, tomador, servico_id, c_trib_nac, c_trib_mun, c_nbs, descricao, cod_municipio_prestacao, valor_servico, desconto_incondicionado, aliquota_iss, iss_retido, info_complementar, chave_acesso, numero_nfse, dh_processamento, alertas, erros, cancelada_em, cancel_codigo, cancel_motivo, created_at';
 
-export interface Membro { user_id: string; papel: 'admin' | 'emissor'; nome: string | null; email: string | null; tem_modulo: boolean; eu: boolean }
+// O que cada pessoa pode fazer numa empresa (nfse_empresa_membros.pode_*). Ver as notas vale para todo membro.
+export type Permissao = 'emitir' | 'cancelar' | 'tomadores' | 'servicos' | 'empresa' | 'usuarios';
+export type Permissoes = Record<Permissao, boolean>;
+export const PERMISSOES: { id: Permissao; label: string; desc: string }[] = [
+  { id: 'emitir', label: 'Emitir notas', desc: 'Emite e reconsulta notas; pode cadastrar o tomador na hora' },
+  { id: 'cancelar', label: 'Cancelar notas', desc: 'Cancela nota já autorizada' },
+  { id: 'tomadores', label: 'Tomadores', desc: 'Cadastra, edita e exclui tomadores' },
+  { id: 'servicos', label: 'Serviços', desc: 'Cadastra, edita e exclui serviços' },
+  { id: 'empresa', label: 'Empresa e certificado', desc: 'Dados da empresa, certificado A1, ambiente e numeração' },
+  { id: 'usuarios', label: 'Administrar usuários', desc: 'Convida pessoas, muda o que cada uma faz e tira o acesso' },
+];
+export const SEM_PERMISSAO: Permissoes = { emitir: false, cancelar: false, tomadores: false, servicos: false, empresa: false, usuarios: false };
+export const PRESET_ADMIN: Permissoes = { emitir: true, cancelar: true, tomadores: true, servicos: true, empresa: true, usuarios: true };
+export const PRESET_EMISSOR: Permissoes = { ...SEM_PERMISSAO, emitir: true, tomadores: true };
+export const permissoesDe = (r: Partial<Record<`pode_${Permissao}`, boolean>>): Permissoes =>
+  Object.fromEntries(PERMISSOES.map((p) => [p.id, r[`pode_${p.id}`] === true])) as Permissoes;
+export const PERMISSOES_COLS = PERMISSOES.map((p) => `pode_${p.id}`).join(', ');
+
+export interface Membro {
+  user_id: string; nome: string | null; email: string | null; eu: boolean; pendente: boolean;
+  pode_emitir: boolean; pode_cancelar: boolean; pode_tomadores: boolean; pode_servicos: boolean; pode_empresa: boolean; pode_usuarios: boolean;
+}
 
 export const STATUS_LABEL: Record<StatusNota, string> = {
   processando: 'Processando',

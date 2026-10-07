@@ -2,8 +2,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { avisar, confirmar } from '@/pages/contratacao/dialog';
+import { Modal } from './CadastrosTab';
 import {
-  type Empresa, type Membro, NOME_ARQUIVO_CAMPOS, NOME_ARQUIVO_PADRAO, nomeArquivoNota, buscarCep, cnpjValido, fmtCep, fmtData, fmtDoc, inputCls, labelCls, lerArquivoBase64, nfseCall, soDigitos,
+  type Empresa, type Membro, type Permissoes, NOME_ARQUIVO_CAMPOS, PERMISSOES, PRESET_ADMIN, PRESET_EMISSOR, permissoesDe, NOME_ARQUIVO_PADRAO, nomeArquivoNota, buscarCep, cnpjValido, fmtCep, fmtData, fmtDoc, inputCls, labelCls, lerArquivoBase64, nfseCall, soDigitos,
 } from '../api';
 
 type Form = {
@@ -41,15 +42,15 @@ function Secao({ titulo, desc, children }: { titulo: string; desc?: string; chil
 
 interface Props {
   empresa: Empresa | null; // null = cadastro novo
-  souAdmin: boolean;
+  pode: Permissoes;
   onSalva: (id: string) => void;
 }
 
-export default function EmpresaTab({ empresa, souAdmin, onSalva }: Props) {
+export default function EmpresaTab({ empresa, pode, onSalva }: Props) {
   const [f, setF] = useState<Form>(empresa ? deEmpresa(empresa) : vazio);
   const [salvando, setSalvando] = useState(false);
   const [buscandoCep, setBuscandoCep] = useState(false);
-  const editavel = !empresa || souAdmin;
+  const editavel = !empresa || pode.empresa;
 
   useEffect(() => { setF(empresa ? deEmpresa(empresa) : vazio); }, [empresa]);
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setF((p) => ({ ...p, [k]: v }));
@@ -255,8 +256,8 @@ export default function EmpresaTab({ empresa, souAdmin, onSalva }: Props) {
         </div>
       )}
 
-      {empresa && <Certificado empresa={empresa} souAdmin={souAdmin} onSalvo={() => onSalva(empresa.id)} />}
-      {empresa && <Membros empresa={empresa} souAdmin={souAdmin} />}
+      {empresa && <Certificado empresa={empresa} souAdmin={pode.empresa} onSalvo={() => onSalva(empresa.id)} />}
+      {empresa && <Membros empresa={empresa} podeAdministrar={pode.usuarios} />}
     </div>
   );
 }
@@ -346,10 +347,72 @@ function Certificado({ empresa, souAdmin, onSalvo }: { empresa: Empresa; souAdmi
   );
 }
 
-function Membros({ empresa, souAdmin }: { empresa: Empresa; souAdmin: boolean }) {
+function EscolherPermissoes({ valor, onChange }: { valor: Permissoes; onChange: (p: Permissoes) => void }) {
+  const igual = (a: Permissoes) => PERMISSOES.every((p) => a[p.id] === valor[p.id]);
+  return (
+    <div>
+      <div className="flex flex-wrap gap-2 mb-2">
+        {([['Administrador', PRESET_ADMIN], ['Emissor', PRESET_EMISSOR]] as const).map(([rotulo, preset]) => (
+          <button key={rotulo} type="button" onClick={() => onChange({ ...preset })}
+            className={`px-3 h-8 rounded-full text-xs font-bold border cursor-pointer ${igual(preset) ? 'bg-sky-600 border-sky-600 text-white' : 'border-zinc-200 text-zinc-600 hover:bg-zinc-50'}`}>
+            {rotulo}
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+        {PERMISSOES.map((p) => (
+          <label key={p.id} className="flex items-start gap-2 rounded-xl border border-zinc-100 px-3 py-2 cursor-pointer hover:bg-zinc-50">
+            <input type="checkbox" className="mt-0.5 accent-sky-600" checked={valor[p.id]} onChange={(e) => onChange({ ...valor, [p.id]: e.target.checked })} />
+            <span>
+              <span className="block text-sm font-semibold text-zinc-800">{p.label}</span>
+              <span className="block text-[11px] text-zinc-400">{p.desc}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+      <p className="text-[11px] text-zinc-400 mt-2">Ver as notas da empresa vale para todos.</p>
+    </div>
+  );
+}
+
+function LinkConvite({ link, nome, email, onClose }: { link: string; nome: string; email: string | null; onClose: () => void }) {
+  const [copiado, setCopiado] = useState(false);
+  const texto = `Olá${nome ? `, ${nome.split(' ')[0]}` : ''}! Este é o seu acesso às Notas de Serviço no ERPOS. Abra o link para criar sua senha: ${link}`;
+  const copiar = async () => {
+    try { await navigator.clipboard.writeText(link); setCopiado(true); } catch { avisar('Não foi possível copiar. Selecione o link e copie.'); }
+  };
+  return (
+    <Modal titulo="Link de acesso" onClose={onClose}
+      rodape={<button onClick={onClose} className="px-4 h-10 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-700 hover:bg-zinc-50 cursor-pointer">Fechar</button>}>
+      <p className="text-sm text-zinc-600 mb-3">Mande este link para {nome || 'a pessoa'}. Ao abrir, ela cria a senha e já entra nas Notas de Serviço. O link vale por pouco tempo e uma vez só; se vencer, gere outro pelo botão <i className="ri-link" /> ao lado do nome dela.</p>
+      <input readOnly value={link} onFocus={(e) => e.target.select()} className={`${inputCls} font-mono text-xs`} />
+      <div className="flex flex-col sm:flex-row gap-2 mt-3">
+        <button onClick={copiar} className="px-4 h-10 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-700 hover:bg-zinc-50 cursor-pointer">
+          <i className="ri-file-copy-line mr-1" />{copiado ? 'Copiado' : 'Copiar link'}
+        </button>
+        <a href={`https://wa.me/?text=${encodeURIComponent(texto)}`} target="_blank" rel="noreferrer"
+          className="px-4 h-10 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold flex items-center justify-center">
+          <i className="ri-whatsapp-line mr-1" />Mandar no WhatsApp
+        </a>
+        {email && (
+          <a href={`mailto:${email}?subject=${encodeURIComponent('Seu acesso às Notas de Serviço (ERPOS)')}&body=${encodeURIComponent(texto)}`}
+            className="px-4 h-10 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-700 hover:bg-zinc-50 flex items-center justify-center">
+            <i className="ri-mail-line mr-1" />Mandar por e-mail
+          </a>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function Membros({ empresa, podeAdministrar }: { empresa: Empresa; podeAdministrar: boolean }) {
   const [membros, setMembros] = useState<Membro[]>([]);
+  const [incluindo, setIncluindo] = useState(false);
   const [email, setEmail] = useState('');
-  const [papel, setPapel] = useState<'admin' | 'emissor'>('emissor');
+  const [nome, setNome] = useState('');
+  const [perms, setPerms] = useState<Permissoes>({ ...PRESET_EMISSOR });
+  const [editando, setEditando] = useState<{ m: Membro; perms: Permissoes } | null>(null);
+  const [link, setLink] = useState<{ link: string; nome: string; email: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
 
   const carregar = async () => {
@@ -358,53 +421,128 @@ function Membros({ empresa, souAdmin }: { empresa: Empresa; souAdmin: boolean })
   };
   useEffect(() => { carregar(); }, [empresa.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const fecharInclusao = () => { setIncluindo(false); setEmail(''); setNome(''); setPerms({ ...PRESET_EMISSOR }); };
   const adicionar = async () => {
+    if (!PERMISSOES.some((p) => perms[p.id])) { avisar('Marque pelo menos uma coisa que a pessoa pode fazer.'); return; }
     setBusy(true);
-    const r = await nfseCall<{ aviso?: string | null }>('adicionar_membro', { empresa_id: empresa.id, email, papel });
+    const r = await nfseCall<{ convite?: { enviado: boolean; link: string | null } | null }>('adicionar_membro',
+      { empresa_id: empresa.id, email, nome: nome.trim() || null, permissoes: perms });
     setBusy(false);
-    if (!r.success) { avisar(r.error ?? 'Não foi possível adicionar.'); return; }
-    setEmail('');
-    if (r.aviso) avisar(r.aviso, 'Adicionado');
+    if (!r.success) { avisar(r.error ?? 'Não foi possível incluir.'); return; }
+    const quem = nome.trim();
+    const para = email.trim();
+    fecharInclusao();
+    carregar();
+    if (r.convite?.link) setLink({ link: r.convite.link, nome: quem, email: para });
+    else if (r.convite) avisar('A pessoa foi incluída, mas o link de acesso não saiu. Use o botão de link ao lado do nome dela.');
+  };
+  const salvarEdicao = async () => {
+    if (!editando) return;
+    setBusy(true);
+    const r = await nfseCall('atualizar_membro', { empresa_id: empresa.id, user_id: editando.m.user_id, permissoes: editando.perms });
+    setBusy(false);
+    if (!r.success) { avisar(r.error ?? 'Não foi possível salvar.'); return; }
+    setEditando(null);
     carregar();
   };
   const remover = async (m: Membro) => {
-    if (!(await confirmar({ titulo: 'Remover acesso?', mensagem: `${m.nome ?? m.email} deixa de ver e emitir notas desta empresa.`, perigo: true, confirmarLabel: 'Remover' }))) return;
+    if (!(await confirmar({ titulo: 'Tirar o acesso?', mensagem: `${m.nome ?? m.email} deixa de ver e emitir notas desta empresa.`, perigo: true, confirmarLabel: 'Tirar acesso' }))) return;
     const r = await nfseCall('remover_membro', { empresa_id: empresa.id, user_id: m.user_id });
     if (!r.success) { avisar(r.error ?? 'Não foi possível remover.'); return; }
+    setEditando(null);
     carregar();
+  };
+  const gerarLink = async (m: Membro) => {
+    const r = await nfseCall<{ link?: string }>('link_acesso', { empresa_id: empresa.id, user_id: m.user_id });
+    if (!r.success || !r.link) { avisar(r.error ?? 'Não foi possível gerar o link.'); return; }
+    setLink({ link: r.link, nome: m.nome ?? '', email: m.email });
   };
 
   return (
-    <Secao titulo="Quem acessa esta empresa" desc="Administrador altera cadastro, certificado e cancela notas. Emissor só emite e consulta.">
+    <Secao titulo="Quem acessa esta empresa" desc="Cada pessoa vê as notas desta empresa e faz só o que estiver marcado para ela.">
       <div className="divide-y divide-zinc-100 border border-zinc-100 rounded-xl">
-        {membros.map((m) => (
-          <div key={m.user_id} className="flex items-center gap-3 px-3 py-2.5">
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-zinc-800 truncate">{m.nome ?? m.email}{m.eu && <span className="font-normal text-zinc-400"> (você)</span>}</p>
-              <p className="text-[11px] text-zinc-400 truncate">{m.email}{!m.tem_modulo && ' · sem o módulo liberado no Admin Master'}</p>
+        {membros.map((m) => {
+          const p = permissoesDe(m);
+          const admin = PERMISSOES.every((x) => p[x.id]);
+          return (
+            <div key={m.user_id} className="flex items-start gap-3 px-3 py-2.5">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-zinc-800 truncate">
+                  {m.nome ?? m.email}{m.eu && <span className="font-normal text-zinc-400"> (você)</span>}
+                  {m.pendente && <span className="ml-2 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">convite pendente</span>}
+                </p>
+                <p className="text-[11px] text-zinc-400 truncate">{m.email}</p>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {admin
+                    ? <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700">Tudo</span>
+                    : PERMISSOES.filter((x) => p[x.id]).map((x) => (
+                      <span key={x.id} className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-zinc-100 text-zinc-600">{x.label}</span>
+                    ))}
+                  {!admin && !PERMISSOES.some((x) => p[x.id]) && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-zinc-100 text-zinc-500">Só vê as notas</span>}
+                </div>
+              </div>
+              {podeAdministrar && !m.eu && (
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  {m.pendente && (
+                    <button onClick={() => gerarLink(m)} className="text-zinc-400 hover:text-emerald-600 cursor-pointer" title="Gerar link de acesso">
+                      <i className="ri-link text-lg" />
+                    </button>
+                  )}
+                  <button onClick={() => setEditando({ m, perms: p })} className="text-zinc-400 hover:text-sky-600 cursor-pointer" title="Editar o que faz">
+                    <i className="ri-pencil-line text-lg" />
+                  </button>
+                </div>
+              )}
             </div>
-            <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-600">{m.papel === 'admin' ? 'Administrador' : 'Emissor'}</span>
-            {souAdmin && !m.eu && (
-              <button onClick={() => remover(m)} className="text-zinc-400 hover:text-red-600 cursor-pointer" title="Remover">
-                <i className="ri-close-line text-lg" />
-              </button>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
-      {souAdmin && (
-        <div className="flex flex-col sm:flex-row gap-2 mt-3">
-          <input className={inputCls} placeholder="E-mail de um usuário do ERPOS" value={email} onChange={(e) => setEmail(e.target.value)} />
-          <select className={`${inputCls} sm:w-40`} value={papel} onChange={(e) => setPapel(e.target.value as 'admin' | 'emissor')}>
-            <option value="emissor">Emissor</option>
-            <option value="admin">Administrador</option>
-          </select>
-          <button onClick={adicionar} disabled={busy || !email.includes('@')}
-            className="px-4 h-10 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-700 hover:bg-zinc-50 cursor-pointer disabled:opacity-40 whitespace-nowrap">
-            Adicionar
-          </button>
+
+      {podeAdministrar && !incluindo && (
+        <button onClick={() => setIncluindo(true)} className="mt-3 px-4 h-10 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-700 hover:bg-zinc-50 cursor-pointer">
+          <i className="ri-user-add-line mr-1" />Incluir pessoa
+        </button>
+      )}
+      {podeAdministrar && incluindo && (
+        <div className="mt-3 rounded-xl border border-zinc-200 p-3 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label className={labelCls}>E-mail</label>
+              <input className={inputCls} type="email" placeholder="pessoa@empresa.com.br" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </div>
+            <div>
+              <label className={labelCls}>Nome (se ainda não tem conta no ERPOS)</label>
+              <input className={inputCls} placeholder="Nome e sobrenome" value={nome} onChange={(e) => setNome(e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <label className={labelCls}>O que pode fazer</label>
+            <EscolherPermissoes valor={perms} onChange={setPerms} />
+          </div>
+          <p className="text-[11px] text-zinc-400">Quem ainda não tem conta no ERPOS ganha um link para criar a senha; você manda por WhatsApp ou e-mail. Você só pode dar o que também pode fazer.</p>
+          <div className="flex flex-col sm:flex-row gap-2 justify-end">
+            <button onClick={fecharInclusao} className="px-4 h-10 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-600 hover:bg-zinc-50 cursor-pointer">Cancelar</button>
+            <button onClick={adicionar} disabled={busy || !email.includes('@')}
+              className="px-4 h-10 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-sm font-bold cursor-pointer disabled:opacity-40">
+              {busy ? 'Incluindo…' : 'Incluir'}
+            </button>
+          </div>
         </div>
       )}
+
+      {editando && (
+        <Modal titulo={`O que ${editando.m.nome ?? editando.m.email} pode fazer`} onClose={() => setEditando(null)}
+          rodape={(
+            <>
+              <button onClick={() => remover(editando.m)} className="mr-auto px-3 h-10 rounded-xl text-sm font-bold text-red-600 hover:bg-red-50 cursor-pointer">Tirar acesso</button>
+              <button onClick={() => setEditando(null)} className="px-4 h-10 rounded-xl border border-zinc-200 text-sm font-bold text-zinc-600 hover:bg-zinc-50 cursor-pointer">Cancelar</button>
+              <button onClick={salvarEdicao} disabled={busy} className="px-4 h-10 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-sm font-bold cursor-pointer disabled:opacity-40">Salvar</button>
+            </>
+          )}>
+          <EscolherPermissoes valor={editando.perms} onChange={(perms) => setEditando({ ...editando, perms })} />
+        </Modal>
+      )}
+      {link && <LinkConvite link={link.link} nome={link.nome} email={link.email} onClose={() => setLink(null)} />}
     </Secao>
   );
 }

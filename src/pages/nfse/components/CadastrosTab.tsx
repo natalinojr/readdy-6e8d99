@@ -1,5 +1,6 @@
 // Cadastros do módulo NFS-e: tomadores (clientes da nota) e serviços prestados.
-// Gravação direta nas tabelas (RLS: membro da empresa; serviço só admin).
+// Gravação direta nas tabelas (RLS pela permissão do membro: pode_tomadores / pode_servicos; quem emite
+// também cadastra tomador novo).
 import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { avisar, confirmar } from '@/pages/contratacao/dialog';
@@ -162,7 +163,7 @@ export function TomadorModal({ empresa, inicial, documentoInicial, onClose, onSa
   );
 }
 
-export function TomadoresTab({ empresa, tomadores, onChange }: { empresa: Empresa; tomadores: Tomador[]; onChange: () => void }) {
+export function TomadoresTab({ empresa, tomadores, podeEditar, onChange }: { empresa: Empresa; tomadores: Tomador[]; podeEditar: boolean; onChange: () => void }) {
   const [busca, setBusca] = useState('');
   const [editando, setEditando] = useState<Tomador | 'novo' | null>(null);
   const lista = useMemo(() => {
@@ -182,9 +183,11 @@ export function TomadoresTab({ empresa, tomadores, onChange }: { empresa: Empres
     <div className="space-y-3">
       <div className="flex flex-col sm:flex-row gap-2">
         <input className={inputCls} placeholder="Buscar por nome ou CPF/CNPJ" value={busca} onChange={(e) => setBusca(e.target.value)} />
-        <button onClick={() => setEditando('novo')} className="px-4 h-10 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-sm font-bold cursor-pointer whitespace-nowrap">
-          <i className="ri-add-line mr-1" />Novo tomador
-        </button>
+        {podeEditar && (
+          <button onClick={() => setEditando('novo')} className="px-4 h-10 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-sm font-bold cursor-pointer whitespace-nowrap">
+            <i className="ri-add-line mr-1" />Novo tomador
+          </button>
+        )}
       </div>
       <div className="bg-white rounded-2xl border border-zinc-200 divide-y divide-zinc-100">
         {lista.length === 0 && <p className="text-sm text-zinc-400 px-4 py-6 text-center">Nenhum tomador cadastrado.</p>}
@@ -194,8 +197,12 @@ export function TomadoresTab({ empresa, tomadores, onChange }: { empresa: Empres
               <p className="text-sm font-semibold text-zinc-800 truncate">{t.nome}</p>
               <p className="text-xs text-zinc-400 truncate">{fmtDoc(t.documento)}{t.municipio_nome ? ` · ${t.municipio_nome}/${t.uf}` : ''}{t.email ? ` · ${t.email}` : ''}</p>
             </div>
-            <button onClick={() => setEditando(t)} className="text-zinc-400 hover:text-sky-600 cursor-pointer" title="Editar"><i className="ri-pencil-line text-lg" /></button>
-            <button onClick={() => excluir(t)} className="text-zinc-400 hover:text-red-600 cursor-pointer" title="Excluir"><i className="ri-delete-bin-line text-lg" /></button>
+            {podeEditar && (
+              <>
+                <button onClick={() => setEditando(t)} className="text-zinc-400 hover:text-sky-600 cursor-pointer" title="Editar"><i className="ri-pencil-line text-lg" /></button>
+                <button onClick={() => excluir(t)} className="text-zinc-400 hover:text-red-600 cursor-pointer" title="Excluir"><i className="ri-delete-bin-line text-lg" /></button>
+              </>
+            )}
           </div>
         ))}
       </div>
@@ -351,7 +358,7 @@ export function ServicoModal({ empresa, inicial, onClose, onSalvo }: { empresa: 
   );
 }
 
-export function ServicosTab({ empresa, servicos, souAdmin, onChange }: { empresa: Empresa; servicos: Servico[]; souAdmin: boolean; onChange: () => void }) {
+export function ServicosTab({ empresa, servicos, podeEditar, onChange }: { empresa: Empresa; servicos: Servico[]; podeEditar: boolean; onChange: () => void }) {
   const [editando, setEditando] = useState<Servico | 'novo' | null>(null);
   const excluir = async (s: Servico) => {
     if (!(await confirmar({ titulo: 'Excluir serviço?', mensagem: `"${s.nome}" sai da lista. As notas já emitidas não mudam.`, perigo: true, confirmarLabel: 'Excluir' }))) return;
@@ -361,7 +368,7 @@ export function ServicosTab({ empresa, servicos, souAdmin, onChange }: { empresa
   };
   return (
     <div className="space-y-3">
-      {souAdmin && (
+      {podeEditar && (
         <div className="flex justify-end">
           <button onClick={() => setEditando('novo')} className="px-4 h-10 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-sm font-bold cursor-pointer">
             <i className="ri-add-line mr-1" />Novo serviço
@@ -378,7 +385,7 @@ export function ServicosTab({ empresa, servicos, souAdmin, onChange }: { empresa
                 Código {s.c_trib_nac}{s.aliquota_iss != null ? ` · ISS ${s.aliquota_iss}%` : ''}{s.valor_padrao != null ? ` · ${fmtBRL(s.valor_padrao)}` : ''}
               </p>
             </div>
-            {souAdmin && (
+            {podeEditar && (
               <>
                 <button onClick={() => setEditando(s)} className="text-zinc-400 hover:text-sky-600 cursor-pointer" title="Editar"><i className="ri-pencil-line text-lg" /></button>
                 <button onClick={() => excluir(s)} className="text-zinc-400 hover:text-red-600 cursor-pointer" title="Excluir"><i className="ri-delete-bin-line text-lg" /></button>

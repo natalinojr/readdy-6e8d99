@@ -10,6 +10,7 @@ import MobileKeyboardAssist from '@/components/feature/MobileKeyboardAssist';
 
 // ── Páginas carregadas sob demanda (code-splitting por rota) ──────────────────
 const NotFound = lazy(() => import('../pages/NotFound'));
+const DefinirSenhaPage = lazy(() => import('../pages/definir-senha/page'));
 const Dashboard = lazy(() => import('../pages/dashboard/page'));
 // Comparar lojas (várias lojas lado a lado, ao vivo) — fora do menu de uma loja, como /modulos
 const LojasPage = lazy(() => import('../pages/lojas/page'));
@@ -79,6 +80,7 @@ const ClubePage = lazy(() => import('../pages/clube/page'));
 
 const routes: RouteObject[] = [
   { path: '/login', element: <Login /> },
+  { path: '/definir-senha', element: <DefinirSenhaPage /> },
   { path: '/privacidade', element: <PrivacidadePage /> },
   { path: '/mesa/:mesaId', element: <MesaClientePage /> },
   { path: '/voucher/:token', element: <VoucherLinkPage /> },

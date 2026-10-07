@@ -45,7 +45,7 @@ export const MODULOS_LIVRES = [
     label: 'Notas de Serviço',
     icon: 'ri-file-text-line',
     tone: 'bg-sky-50 text-sky-600',
-    desc: 'Emissão de NFS-e. Cada pessoa só vê as empresas em que foi incluída.',
+    desc: 'Emissão de NFS-e. Não precisa ligar aqui: quem é incluído numa empresa (Notas de Serviço › Empresa) já entra e só vê aquela empresa.',
   },
 ] as const;
 

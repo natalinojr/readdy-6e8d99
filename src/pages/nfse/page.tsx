@@ -1,13 +1,13 @@
 // Notas de Serviço — emissão de NFS-e pela API gratuita do Emissor Nacional (Sefin Nacional).
-// Independente das lojas do ERPOS: acesso por pessoa (módulo 'nfse' em user_module_access) e por
-// empresa (nfse_empresa_membros). Assinatura e transmissão: Edge nfse-write → relay Node no Vercel.
+// Independente das lojas do ERPOS: acesso por empresa emitente (nfse_empresa_membros), com o que cada
+// pessoa pode fazer (pode_*). Só o dono cria empresa nova. Assinatura e transmissão: Edge nfse-write → relay.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { useModuleAccess } from '@/hooks/useModuleAccess';
 import { supabase } from '@/lib/supabase';
 import { DialogHost } from '@/pages/contratacao/dialog';
-import { type Empresa, type Nota, type Servico, type Tomador, EMPRESA_COLS, NOTA_COLS_LISTA, fmtDoc } from './api';
+import { type Empresa, type Nota, type Permissoes, type Servico, type Tomador, EMPRESA_COLS, NOTA_COLS_LISTA, PERMISSOES_COLS, SEM_PERMISSAO, fmtDoc, permissoesDe } from './api';
 import EmpresaTab from './components/EmpresaTab';
 import NotasTab from './components/NotasTab';
 import { ServicosTab, TomadoresTab } from './components/CadastrosTab';
@@ -22,6 +22,7 @@ const ABAS: { id: Aba; label: string; icon: string }[] = [
 const LS_EMPRESA = 'nfse:empresa';
 const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* sem storage */ } };
+const DONO_EMAIL = 'natalinojr.engel@gmail.com';
 const mesAtual = () => new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 7);
 
 function intervaloMes(ym: string) {
@@ -36,7 +37,8 @@ export default function NfsePage() {
   const { hasModule, loading: acessoLoading } = useModuleAccess();
   const [params, setParams] = useSearchParams();
   const [empresas, setEmpresas] = useState<Empresa[]>([]);
-  const [papeis, setPapeis] = useState<Record<string, string>>({});
+  const [permissoes, setPermissoes] = useState<Record<string, Permissoes>>({});
+  const [souDono, setSouDono] = useState(false);
   const [empresaId, setEmpresaId] = useState<string | null>(lsGet(LS_EMPRESA));
   const [criando, setCriando] = useState(false);
   const [carregando, setCarregando] = useState(true);
@@ -51,13 +53,14 @@ export default function NfsePage() {
   const carregarEmpresas = useCallback(async (selecionar?: string) => {
     const [{ data: emps }, { data: memb }] = await Promise.all([
       supabase.from('nfse_empresas').select(EMPRESA_COLS).order('razao_social'),
-      supabase.from('nfse_empresa_membros').select('empresa_id, papel, user_id'),
+      supabase.from('nfse_empresa_membros').select(`empresa_id, user_id, ${PERMISSOES_COLS}`),
     ]);
     const lista = (emps ?? []) as unknown as Empresa[];
     setEmpresas(lista);
-    const uid = (await supabase.auth.getSession()).data.session?.user.id;
-    setPapeis(Object.fromEntries(((memb ?? []) as { empresa_id: string; papel: string; user_id: string }[])
-      .filter((m) => m.user_id === uid).map((m) => [m.empresa_id, m.papel])));
+    const sessao = (await supabase.auth.getSession()).data.session?.user;
+    setSouDono((sessao?.email ?? '').toLowerCase() === DONO_EMAIL);
+    setPermissoes(Object.fromEntries(((memb ?? []) as unknown as ({ empresa_id: string; user_id: string } & Parameters<typeof permissoesDe>[0])[])
+      .filter((m) => m.user_id === sessao?.id).map((m) => [m.empresa_id, permissoesDe(m)])));
     setEmpresaId((atual) => {
       const alvo = selecionar ?? atual;
       const id = lista.some((e) => e.id === alvo) ? alvo! : lista[0]?.id ?? null;
@@ -70,7 +73,7 @@ export default function NfsePage() {
   useEffect(() => { if (temAcesso) carregarEmpresas(); }, [temAcesso, carregarEmpresas]);
 
   const empresa = useMemo(() => empresas.find((e) => e.id === empresaId) ?? null, [empresas, empresaId]);
-  const souAdmin = empresa ? papeis[empresa.id] === 'admin' : false;
+  const pode = (empresa && permissoes[empresa.id]) || SEM_PERMISSAO;
 
   const carregarNotas = useCallback(async () => {
     if (!empresaId) { setNotas([]); return; }
@@ -97,7 +100,7 @@ export default function NfsePage() {
   void user;
 
   const semEmpresa = !carregando && empresas.length === 0;
-  const mostrarCadastro = criando || semEmpresa;
+  const mostrarCadastro = souDono && (criando || semEmpresa);
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -116,9 +119,11 @@ export default function NfsePage() {
               className="w-full sm:w-auto h-10 px-3 rounded-xl border border-zinc-200 text-sm font-semibold text-zinc-700 cursor-pointer">
               {empresas.map((e) => <option key={e.id} value={e.id}>{e.nome_fantasia || e.razao_social} · {fmtDoc(e.cnpj)}</option>)}
             </select>
-            <button onClick={() => setCriando(true)} className="h-10 px-3 rounded-xl border border-zinc-200 text-xs font-bold text-zinc-600 hover:bg-zinc-50 cursor-pointer whitespace-nowrap">
-              + Empresa
-            </button>
+            {souDono && (
+              <button onClick={() => setCriando(true)} className="h-10 px-3 rounded-xl border border-zinc-200 text-xs font-bold text-zinc-600 hover:bg-zinc-50 cursor-pointer whitespace-nowrap">
+                + Empresa
+              </button>
+            )}
           </>
         )}
       </div>
@@ -132,7 +137,13 @@ export default function NfsePage() {
               <i className="ri-arrow-left-line mr-1" />Voltar
             </button>
           )}
-          <EmpresaTab empresa={null} souAdmin onSalva={async (id) => { setCriando(false); await carregarEmpresas(id); setAba('empresa'); }} />
+          <EmpresaTab empresa={null} pode={SEM_PERMISSAO} onSalva={async (id) => { setCriando(false); await carregarEmpresas(id); setAba('empresa'); }} />
+        </div>
+      ) : semEmpresa ? (
+        <div className="bg-white rounded-2xl border border-zinc-200 px-5 py-8 text-center">
+          <i className="ri-building-line text-3xl text-zinc-300" />
+          <p className="mt-2 text-sm font-semibold text-zinc-700">Você ainda não participa de nenhuma empresa</p>
+          <p className="mt-1 text-xs text-zinc-400">Peça a quem administra a empresa para incluir o seu e-mail em Empresa › Quem acessa esta empresa.</p>
         </div>
       ) : empresa ? (
         <>
@@ -152,12 +163,12 @@ export default function NfsePage() {
           </div>
 
           {aba === 'notas' && (
-            <NotasTab empresa={empresa} notas={notas} tomadores={tomadores} servicos={servicos} souAdmin={souAdmin}
+            <NotasTab empresa={empresa} notas={notas} tomadores={tomadores} servicos={servicos} pode={pode}
               mes={mes} onMes={setMes} onChange={carregarNotas} onTomadores={carregarTomadores} />
           )}
-          {aba === 'tomadores' && <TomadoresTab empresa={empresa} tomadores={tomadores} onChange={carregarTomadores} />}
-          {aba === 'servicos' && <ServicosTab empresa={empresa} servicos={servicos} souAdmin={souAdmin} onChange={carregarServicos} />}
-          {aba === 'empresa' && <EmpresaTab empresa={empresa} souAdmin={souAdmin} onSalva={(id) => carregarEmpresas(id)} />}
+          {aba === 'tomadores' && <TomadoresTab empresa={empresa} tomadores={tomadores} podeEditar={pode.tomadores} onChange={carregarTomadores} />}
+          {aba === 'servicos' && <ServicosTab empresa={empresa} servicos={servicos} podeEditar={pode.servicos} onChange={carregarServicos} />}
+          {aba === 'empresa' && <EmpresaTab empresa={empresa} pode={pode} onSalva={(id) => carregarEmpresas(id)} />}
         </>
       ) : null}
     </div>

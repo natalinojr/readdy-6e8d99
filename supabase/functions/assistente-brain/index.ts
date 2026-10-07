@@ -1096,7 +1096,7 @@ const EDGE_ALLOW = new Set([
   'fidelidade',
 ]);
 // Credenciais/autorização de integrações (Inter, Stone, iFood, Mercado Pago, fiscal) ficam com o dono na tela.
-const EDGE_ACTION_BLOCK = /(save_config|delete_config|save_pay_credentials|delete_pay_credentials|save_credentials|request_user_code|confirm_authorization|select_merchant|setup_cron|salvar_certificado|adicionar_membro|remover_membro)/i;
+const EDGE_ACTION_BLOCK = /(save_config|delete_config|save_pay_credentials|delete_pay_credentials|save_credentials|request_user_code|confirm_authorization|select_merchant|setup_cron|salvar_certificado|adicionar_membro|atualizar_membro|remover_membro|link_acesso)/i;
 // Funções do banco fora do alcance: acesso de pessoas a lojas, convites, tokens do quiosque, admin da plataforma.
 const RPC_BLOCK = /^(fn_admin_\w*|bootstrap\w*|fn_grant_tenant_access|fn_revoke_tenant_access|fn_create_store_invite|fn_delete_store_invite|fn_create_kiosk_token|fn_revoke_kiosk_token|fn_set_\w*secret\w*|fn_asst_\w*|fn_assistente_\w*)$/i;
 const RPC_SENSITIVE = /(cancel|refund|delete|remove|revoke|close|toggle|restock|bypass|reset|purge|estorn|update_user|open_cash|open_session|cortesia)/i;

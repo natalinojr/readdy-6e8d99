@@ -1,9 +1,11 @@
 // nfse-write — módulo "Notas de Serviço" (NFS-e pela API do Emissor Nacional / Sefin Nacional).
 //
-// Ações (POST JSON, JWT do usuário; exige módulo 'nfse' liberado):
-//   criar_empresa      { dados }                          → cria a empresa e torna o usuário admin dela
-//   salvar_empresa     { empresa_id, dados }              admin
-//   salvar_certificado { empresa_id, pfx_b64, senha }     admin — valida no relay e guarda no Vault
+// Ações (POST JSON, JWT do usuário; exige ser membro de alguma empresa ou ter o módulo 'nfse' liberado).
+// Cada membro tem permissões por empresa (nfse_empresa_membros.pode_*): emitir, cancelar, tomadores,
+// servicos, empresa, usuarios. Ver as notas vale para todo membro.
+//   criar_empresa      { dados }                          só o dono → cria a empresa e entra com todas as permissões
+//   salvar_empresa     { empresa_id, dados }              empresa
+//   salvar_certificado { empresa_id, pfx_b64, senha }     empresa — valida no relay e guarda no Vault
 //   testar_conexao     { empresa_id }                     consulta o convênio do município com o certificado
 //   parametros_servico { empresa_id, c_trib_nac }         alíquota/regras do município para o serviço
 //   contexto           { }                                resumo para o assistente: empresas, serviços e últimos tomadores
@@ -14,8 +16,11 @@
 //                      resposta_curta (só o essencial)
 //   reconsultar        { nota_id }                        nota em erro/processando: procura a DPS na Sefin
 //   cancelar           { nota_id, codigo, motivo }        evento 101101
-//   adicionar_membro   { empresa_id, email, papel }       admin
-//   remover_membro     { empresa_id, user_id }            admin
+//   adicionar_membro   { empresa_id, email, nome?, permissoes }  usuarios — sem conta no ERPOS: cria a conta convidada e
+//                      devolve o link de criar senha (/definir-senha?token_hash=…) para mandar por WhatsApp/e-mail
+//   atualizar_membro   { empresa_id, user_id, permissoes }        usuarios — ninguém altera a si mesmo
+//   remover_membro     { empresa_id, user_id }                    usuarios
+//   link_acesso        { empresa_id, user_id }                    usuarios — novo link para quem ainda não entrou
 //
 // Por que o relay: a Sefin exige mTLS e derruba o Deno/rustls. A assinatura XMLDSig e a conexão
 // com o certificado rodam no Vercel (nfse-relay/api/sefin.js); aqui ficam regras e banco.
@@ -226,23 +231,31 @@ Deno.serve(async (req: Request) => {
   const user = ud.user;
   const dono = (user.email ?? '').toLowerCase() === DONO_EMAIL;
   if (!dono) {
-    const { data: acc } = await admin.from('user_module_access').select('module').eq('user_id', user.id).eq('module', 'nfse').maybeSingle();
-    if (!acc) return fail('Sem acesso ao módulo Notas de Serviço', 403);
+    const [{ data: acc }, { count: nEmp }] = await Promise.all([
+      admin.from('user_module_access').select('module').eq('user_id', user.id).eq('module', 'nfse').maybeSingle(),
+      admin.from('nfse_empresa_membros').select('empresa_id', { count: 'exact', head: true }).eq('user_id', user.id),
+    ]);
+    if (!acc && !(nEmp ?? 0)) return fail('Sem acesso ao módulo Notas de Serviço', 403);
   }
 
   let body: Record<string, any>;
   try { body = await req.json(); } catch { return fail('JSON inválido'); }
   const action = String(body.action ?? '');
 
-  const papelNa = async (empresaId: string) => {
-    const { data } = await admin.from('nfse_empresa_membros').select('papel').eq('empresa_id', empresaId).eq('user_id', user.id).maybeSingle();
-    return (data?.papel as string | undefined) ?? null;
+  let minhasPermissoes: Record<Acao, boolean> = { ...NENHUMA };
+  // Quem administra usuários só dá o que também pode fazer (senão contornaria limites com uma 2ª conta).
+  const alemDoQueTenho = (p: Record<Acao, boolean>) => ACOES.filter((a) => p[a] && !minhasPermissoes[a]);
+  // O dono do sistema não perde o acesso por ação de um admin de CNPJ (sem ele, só por SQL).
+  const ehDono = async (userId: unknown) => {
+    const c = await contaAuth(admin, { userId: String(userId ?? '') });
+    return (c?.email ?? '').toLowerCase() === DONO_EMAIL;
   };
-  const exigirMembro = async (empresaId: unknown, adminOnly = false) => {
+  const exigirMembro = async (empresaId: unknown, acao?: Acao) => {
     if (typeof empresaId !== 'string' || !empresaId) throw new HttpErr('empresa_id obrigatório', 400);
-    const papel = await papelNa(empresaId);
-    if (!papel) throw new HttpErr('Você não participa desta empresa', 403);
-    if (adminOnly && papel !== 'admin') throw new HttpErr('Apenas administradores da empresa podem fazer isso', 403);
+    const { data: m } = await admin.from('nfse_empresa_membros').select('*').eq('empresa_id', empresaId).eq('user_id', user.id).maybeSingle();
+    if (!m) throw new HttpErr('Você não participa desta empresa', 403);
+    if (acao && !(m as Record<string, unknown>)[`pode_${acao}`]) throw new HttpErr(`Você não tem permissão para ${ACAO_TEXTO[acao]} nesta empresa`, 403);
+    minhasPermissoes = Object.fromEntries(ACOES.map((a) => [a, (m as Record<string, unknown>)[`pode_${a}`] === true])) as Record<Acao, boolean>;
     const { data: emp, error } = await admin.from('nfse_empresas').select('*').eq('id', empresaId).single();
     if (error || !emp) throw new HttpErr('Empresa não encontrada', 404);
     return emp as any;
@@ -296,7 +309,7 @@ Deno.serve(async (req: Request) => {
   try {
     // ── contexto ── (assistente: tudo que precisa para emitir, numa chamada só)
     if (action === 'contexto') {
-      const { data: memb } = await admin.from('nfse_empresa_membros').select('empresa_id').eq('user_id', user.id);
+      const { data: memb } = await admin.from('nfse_empresa_membros').select('empresa_id').eq('user_id', user.id).eq('pode_emitir', true);
       const ids = (memb ?? []).map((m) => m.empresa_id);
       if (!ids.length) return json({ success: true, empresas: [] });
       const [{ data: emps }, { data: servs }, { data: toms }] = await Promise.all([
@@ -332,7 +345,9 @@ Deno.serve(async (req: Request) => {
 
     // ── criar_empresa / salvar_empresa ──
     if (action === 'criar_empresa' || action === 'salvar_empresa') {
-      const d = (body.dados ?? {}) as Record<string, unknown>;
+      if (action === 'criar_empresa' && !dono) return fail('Só o administrador do ERPOS cadastra empresas novas', 403);
+      if (action === 'salvar_empresa') await exigirMembro(body.empresa_id, 'empresa');
+      const d =(body.dados ?? {}) as Record<string, unknown>;
       const row: Record<string, unknown> = {
         cnpj: soDigitos(d.cnpj),
         razao_social: texto(d.razao_social),
@@ -368,12 +383,12 @@ Deno.serve(async (req: Request) => {
       if (action === 'criar_empresa') {
         const { data: emp, error } = await admin.from('nfse_empresas').insert({ ...row, created_by: user.id }).select('id').single();
         if (error) return fail(error.code === '23505' ? 'Já existe uma empresa com este CNPJ no sistema' : error.message, error.code === '23505' ? 409 : 500);
-        const { error: mErr } = await admin.from('nfse_empresa_membros').insert({ empresa_id: emp.id, user_id: user.id, papel: 'admin' });
+        const { error: mErr } = await admin.from('nfse_empresa_membros').insert({ empresa_id: emp.id, user_id: user.id, papel: 'admin', ...colunasPermissoes(TODAS) });
         if (mErr) { await admin.from('nfse_empresas').delete().eq('id', emp.id); return fail(mErr.message, 500); }
         log('INFO', action, 'empresa criada', { empresa_id: emp.id, user: user.id });
         return json({ success: true, data: { id: emp.id } });
       }
-      const emp = await exigirMembro(body.empresa_id, true);
+      const emp = await exigirMembro(body.empresa_id, 'empresa');
       if (row.cnpj !== emp.cnpj) {
         const { count } = await admin.from('nfse_notas').select('id', { count: 'exact', head: true }).eq('empresa_id', emp.id);
         if ((count ?? 0) > 0) return fail('Não é possível trocar o CNPJ de uma empresa que já emitiu notas');
@@ -385,7 +400,7 @@ Deno.serve(async (req: Request) => {
 
     // ── salvar_certificado ──
     if (action === 'salvar_certificado') {
-      const emp = await exigirMembro(body.empresa_id, true);
+      const emp = await exigirMembro(body.empresa_id, 'empresa');
       const pfx = String(body.pfx_b64 ?? '').replace(/^data:[^,]*,/, '');
       const senha = typeof body.senha === 'string' ? body.senha : '';
       if (!pfx || pfx.length < 500) return fail('Envie o arquivo .pfx do certificado A1');
@@ -419,7 +434,7 @@ Deno.serve(async (req: Request) => {
 
     // ── emitir ──
     if (action === 'emitir') {
-      const emp = await exigirMembro(body.empresa_id ?? await empresaUnica());
+      const emp = await exigirMembro(body.empresa_id ?? await empresaUnica(), 'emitir');
       if (!emp.cert_pfx_secret) return fail('Cadastre o certificado A1 da empresa antes de emitir');
 
       // Serviço cadastrado preenche o que não veio (a tela manda tudo; o assistente manda só servico_id).
@@ -532,7 +547,7 @@ Deno.serve(async (req: Request) => {
     if (action === 'reconsultar') {
       const { data: nota } = await admin.from('nfse_notas').select('*').eq('id', body.nota_id).maybeSingle();
       if (!nota) return fail('Nota não encontrada', 404);
-      const emp = await exigirMembro(nota.empresa_id);
+      const emp = await exigirMembro(nota.empresa_id, 'emitir');
       const cert = await certDaEmpresa(admin, emp.id);
       let chave = nota.chave_acesso as string | null;
       if (!chave) {
@@ -562,7 +577,7 @@ Deno.serve(async (req: Request) => {
     if (action === 'cancelar') {
       const { data: nota } = await admin.from('nfse_notas').select('*').eq('id', body.nota_id).maybeSingle();
       if (!nota) return fail('Nota não encontrada', 404);
-      const emp = await exigirMembro(nota.empresa_id, true);
+      const emp = await exigirMembro(nota.empresa_id, 'cancelar');
       if (nota.status !== 'autorizada' || !nota.chave_acesso) return fail('Só é possível cancelar nota autorizada');
       const codigo = String(body.codigo ?? '');
       if (!['1', '2', '9'].includes(codigo)) return fail('Escolha o motivo do cancelamento');
@@ -587,32 +602,67 @@ Deno.serve(async (req: Request) => {
 
     // ── membros ──
     if (action === 'adicionar_membro') {
-      const emp = await exigirMembro(body.empresa_id, true);
+      const emp = await exigirMembro(body.empresa_id, 'usuarios');
       const email = String(body.email ?? '').trim().toLowerCase();
-      const papel = body.papel === 'emissor' ? 'emissor' : 'admin';
-      if (!email.includes('@')) return fail('Informe o e-mail do usuário');
-      const { data: u } = await admin.from('users').select('id').ilike('email', email).is('deleted_at', null).maybeSingle();
-      const uid = u?.id as string | undefined;
-      if (!uid) return fail('Nenhum usuário do ERPOS com este e-mail');
-      // Upsert trocaria o papel: evita o admin se rebaixar sem querer e a empresa ficar sem administrador.
-      if (uid === user.id) return fail('Você já participa desta empresa. Não é possível alterar o próprio papel.');
-      if (papel === 'emissor') {
-        const { data: atual } = await admin.from('nfse_empresa_membros').select('papel').eq('empresa_id', emp.id).eq('user_id', uid).maybeSingle();
-        if (atual?.papel === 'admin') {
-          const { count } = await admin.from('nfse_empresa_membros').select('user_id', { count: 'exact', head: true }).eq('empresa_id', emp.id).eq('papel', 'admin');
-          if ((count ?? 0) <= 1) return fail('A empresa precisa de pelo menos um administrador.');
-        }
+      const nome = texto(body.nome);
+      const perms = lerPermissoes(body.permissoes);
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail('Informe um e-mail válido');
+      const alem = alemDoQueTenho(perms);
+      if (alem.length) return fail(`Você só pode dar o que também pode fazer. Desmarque: ${alem.map((a) => ACAO_TEXTO[a]).join(', ')}`);
+      const { data: u } = await admin.from('users').select('id').ilike('email', email.replace(/[%_\\]/g, (c) => `\\${c}`)).is('deleted_at', null).maybeSingle();
+      let uid = u?.id as string | undefined;
+      let convite: { enviado: boolean; link: string | null } | null = null;
+      if (!uid) {
+        if (!nome) return fail('Esta pessoa ainda não tem conta no ERPOS: informe o nome para enviar o convite', 400, { precisa_nome: true });
+        const c = await convidar(admin, email, nome);
+        if ('erro' in c) return fail(c.erro);
+        uid = c.user_id;
+        convite = { enviado: c.enviado, link: c.link };
+        await admin.from('users').update({ name: nome }).eq('id', uid);
       }
-      const { error: iErr } = await admin.from('nfse_empresa_membros').upsert({ empresa_id: emp.id, user_id: uid, papel }, { onConflict: 'empresa_id,user_id' });
+      if (uid === user.id) return fail('Você já participa desta empresa.');
+      const { data: atual } = await admin.from('nfse_empresa_membros').select('user_id').eq('empresa_id', emp.id).eq('user_id', uid).maybeSingle();
+      if (atual) return fail('Esta pessoa já participa desta empresa. Para mudar o que ela faz, use Editar.');
+      const { error: iErr } = await admin.from('nfse_empresa_membros')
+        .insert({ empresa_id: emp.id, user_id: uid, papel: perms.usuarios ? 'admin' : 'emissor', ...colunasPermissoes(perms) });
       if (iErr) return fail(iErr.message, 500);
-      const { data: acc } = await admin.from('user_module_access').select('module').eq('user_id', uid).eq('module', 'nfse').maybeSingle();
-      return json({ success: true, aviso: acc ? null : 'O usuário ainda não tem o módulo liberado (Admin Master › Módulos).' });
+      log('INFO', action, 'membro incluído', { empresa_id: emp.id, membro: uid, por: user.id, convite: convite ? (convite.enviado ? 'email' : 'link') : null });
+      return json({ success: true, convite });
+    }
+    if (action === 'atualizar_membro') {
+      const emp = await exigirMembro(body.empresa_id, 'usuarios');
+      if (body.user_id === user.id) return fail('Ninguém altera o próprio acesso. Peça a outra pessoa que administra usuários.');
+      if (!dono && await ehDono(body.user_id)) return fail('O acesso do administrador do ERPOS não pode ser alterado por aqui.');
+      const perms = lerPermissoes(body.permissoes);
+      const alem = alemDoQueTenho(perms);
+      if (alem.length) return fail(`Você só pode dar o que também pode fazer. Desmarque: ${alem.map((a) => ACAO_TEXTO[a]).join(', ')}`);
+      const { data: alvo } = await admin.from('nfse_empresa_membros').select('user_id').eq('empresa_id', emp.id).eq('user_id', body.user_id).maybeSingle();
+      if (!alvo) return fail('Esta pessoa não participa desta empresa', 404);
+      const { error } = await admin.from('nfse_empresa_membros')
+        .update({ papel: perms.usuarios ? 'admin' : 'emissor', ...colunasPermissoes(perms) })
+        .eq('empresa_id', emp.id).eq('user_id', body.user_id);
+      if (error) return fail(error.message, 500);
+      log('INFO', action, 'permissões alteradas', { empresa_id: emp.id, membro: body.user_id, por: user.id, perms });
+      return json({ success: true });
     }
     if (action === 'remover_membro') {
-      const emp = await exigirMembro(body.empresa_id, true);
+      const emp = await exigirMembro(body.empresa_id, 'usuarios');
       if (body.user_id === user.id) return fail('Você não pode remover a si mesmo');
+      if (!dono && await ehDono(body.user_id)) return fail('O acesso do administrador do ERPOS não pode ser tirado por aqui.');
       await admin.from('nfse_empresa_membros').delete().eq('empresa_id', emp.id).eq('user_id', body.user_id);
+      log('INFO', action, 'membro removido', { empresa_id: emp.id, membro: body.user_id, por: user.id });
       return json({ success: true });
+    }
+    if (action === 'link_acesso') {
+      const emp = await exigirMembro(body.empresa_id, 'usuarios');
+      const { data: alvo } = await admin.from('nfse_empresa_membros').select('user_id').eq('empresa_id', emp.id).eq('user_id', body.user_id).maybeSingle();
+      if (!alvo) return fail('Esta pessoa não participa desta empresa', 404);
+      const conta = await contaAuth(admin, { userId: String(body.user_id) });
+      if (!conta?.email) return fail('Usuário não encontrado', 404);
+      if (!conta.sem_senha || !conta.convite_nfse) return fail('Esta pessoa já tem conta no ERPOS. Se esqueceu a senha, fale com o administrador do sistema.');
+      const link = await linkPrimeiroAcesso(admin, conta.email);
+      if (!link) return fail('Não foi possível gerar o link', 500);
+      return json({ success: true, link });
     }
 
     return fail(`Ação desconhecida: ${action}`);
@@ -622,6 +672,63 @@ Deno.serve(async (req: Request) => {
     return fail(String((e as Error)?.message ?? e), 500);
   }
 });
+
+type Acao = 'emitir' | 'cancelar' | 'tomadores' | 'servicos' | 'empresa' | 'usuarios';
+const ACOES: Acao[] = ['emitir', 'cancelar', 'tomadores', 'servicos', 'empresa', 'usuarios'];
+const NENHUMA: Record<Acao, boolean> = { emitir: false, cancelar: false, tomadores: false, servicos: false, empresa: false, usuarios: false };
+const TODAS: Record<Acao, boolean> = { emitir: true, cancelar: true, tomadores: true, servicos: true, empresa: true, usuarios: true };
+const ACAO_TEXTO: Record<Acao, string> = {
+  emitir: 'emitir notas', cancelar: 'cancelar notas', tomadores: 'cuidar dos tomadores', servicos: 'cuidar dos serviços',
+  empresa: 'alterar a empresa e o certificado', usuarios: 'administrar usuários',
+};
+const APP_URL = (Deno.env.get('APP_URL') ?? 'https://erpos.vercel.app').replace(/\/$/, '');
+const REDIRECT_SENHA = `${APP_URL}/definir-senha`;
+
+function lerPermissoes(p: unknown): Record<Acao, boolean> {
+  const o = (p && typeof p === 'object' ? p : {}) as Record<string, unknown>;
+  return Object.fromEntries(ACOES.map((a) => [a, o[a] === true])) as Record<Acao, boolean>;
+}
+function colunasPermissoes(p: Record<Acao, boolean>) {
+  return Object.fromEntries(ACOES.map((a) => [`pode_${a}`, p[a]]));
+}
+
+// Conta no Auth (fn_nfse_conta_auth, só service_role). sem_senha = convite ainda não aceito.
+async function contaAuth(admin: SupabaseClient, q: { email?: string; userId?: string }) {
+  const { data } = await admin.rpc('fn_nfse_conta_auth', { p_email: q.email ?? null, p_user: q.userId ?? null });
+  return ((data ?? []) as { id: string; email: string; sem_senha: boolean; convite_nfse: boolean }[])[0] ?? null;
+}
+
+// Link de primeiro acesso SÓ para conta criada pelo convite deste módulo e ainda sem senha: para qualquer
+// outra conta seria entregar a conta de outra pessoa a quem pediu o link.
+async function linkPrimeiroAcesso(admin: SupabaseClient, email: string): Promise<string | null> {
+  const c = await contaAuth(admin, { email });
+  if (!c || !c.sem_senha || !c.convite_nfse) return null;
+  const { data, error } = await admin.auth.admin.generateLink({ type: 'recovery', email });
+  const h = data?.properties?.hashed_token;
+  return error || !h ? null : linkDefinirSenha(h, 'recovery');
+}
+
+// O link aponta direto para /definir-senha (a página troca o token pela sessão com verifyOtp). Não usa o
+// redirect do Supabase: o Site URL do Auth está num deploy antigo (erposv3) e /definir-senha não está liberado.
+// Pelo mesmo motivo o convite não sai pelo e-mail do Supabase: o administrador manda o link (WhatsApp/e-mail).
+function linkDefinirSenha(hashedToken: string, tipo: 'invite' | 'recovery') {
+  return `${REDIRECT_SENHA}?token_hash=${encodeURIComponent(hashedToken)}&type=${tipo}`;
+}
+
+// E-mail sem conta: cria a conta como convidada (sem senha, marcada convite_nfse) e devolve o link.
+async function convidar(admin: SupabaseClient, email: string, nome: string):
+  Promise<{ user_id: string; enviado: boolean; link: string | null } | { erro: string }> {
+  const existente = await contaAuth(admin, { email });
+  if (existente) {
+    // Convite anterior nunca aceito: refaz o link. Conta de verdade (com senha): não mexe.
+    if (!existente.sem_senha || !existente.convite_nfse) return { erro: 'Este e-mail já tem conta no ERPOS, mas ela não está ativa. Fale com o administrador do sistema.' };
+    return { user_id: existente.id, enviado: false, link: await linkPrimeiroAcesso(admin, email) };
+  }
+  const gen = await admin.auth.admin.generateLink({ type: 'invite', email, options: { data: { name: nome, nome, convite_nfse: true } } });
+  const h = gen.data?.properties?.hashed_token;
+  if (gen.error || !gen.data?.user || !h) return { erro: `Não foi possível convidar: ${gen.error?.message ?? 'erro desconhecido'}` };
+  return { user_id: gen.data.user.id, enviado: false, link: linkDefinirSenha(h, 'invite') };
+}
 
 class HttpErr extends Error {
   constructor(message: string, public status: number) { super(message); }
