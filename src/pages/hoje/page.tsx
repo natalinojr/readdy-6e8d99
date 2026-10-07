@@ -21,6 +21,7 @@ import CartaoHoje from './CartaoHoje';
 import FiqueDeOlho from './FiqueDeOlho';
 import AprendiComVoce from './AprendiComVoce';
 import VemAi from './VemAi';
+import { semOJaPago, useSituacaoHoje } from './useSituacaoHoje';
 import { DinheiroHoje, IfoodOntem, LojaHoje, VendasHoje } from './ResumoHoje';
 import RotinaHoje from './rotina/RotinaHoje';
 import { useRotinaHoje } from './rotina/useRotina';
@@ -73,8 +74,10 @@ export default function HojePage() {
     navigate(rota);
   };
 
+  // Em que pé está cada conta dos cartões (financeiro); o que já foi pago some na hora (2026-10-07).
+  const situacao = useSituacaoHoje(itens, hoje, dono || perfil === 'admin' || perfil === 'gerente' || perfil === 'financeiro');
   // Lojas com algo (botões do topo só quando há mais de uma).
-  const todos = itens ?? [];
+  const todos = useMemo(() => semOJaPago(itens ?? [], situacao.porCartao), [itens, situacao.porCartao]);
   const lojas = useMemo(() => {
     const m = new Map<string, string>();
     for (const i of todos) if (i.bloco !== 'silenciado') m.set(i.tenantId, i.loja || 'Loja');
@@ -125,7 +128,8 @@ export default function HojePage() {
 
   const cartao = (i: ItemHoje, compacto = false) => (
     <CartaoHoje key={i.chave} item={i} hoje={hoje} dono={dono} papel={papelDe(i.tenantId)} meuNome={user?.nome ?? 'Supervisor'}
-      mostrarLoja={varias && !filtro} abrir={abrir} marcar={marcar} onMudou={recarregar} compacto={compacto} />
+      mostrarLoja={varias && !filtro} abrir={abrir} marcar={marcar} onMudou={recarregar} compacto={compacto}
+      situacoes={situacao.porCartao.get(i.chave)} provavel={situacao.provavel.get(i.chave)} />
   );
 
   const concluir = async (t: TarefaHoje) => {
