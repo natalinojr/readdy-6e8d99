@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { invokeWithAuth } from '@/lib/supabase';
+import { custoFichaItens } from '@/lib/ifoodCusto';
 import RoletaSvg, { rotacaoParaFatia } from '@/components/fidelidade/RoletaSvg';
 import { avisar, confirmar } from '@/components/base/Dialogos';
 import { formatPhoneBR } from '@/lib/deliveryPhone';
@@ -119,12 +120,12 @@ const modoDesconto = (r: Recompensa): ModoDesconto =>
   r.tipo === 'produto' ? (pctProduto(r.valor) >= 100 ? 'gratis' : 'pct') : r.tipo === 'produto_valor' || r.tipo === 'desconto_valor' ? 'reais' : 'pct';
 function mudarOnde(r: Recompensa, onde: OndeVale): Partial<Recompensa> {
   if (onde === ondeVale(r)) return {};
-  return onde === 'produto' ? { tipo: 'produto', valor: 100 } : { tipo: 'desconto_valor', valor: 10, custo_loja: 10, produto_id: null };
+  return onde === 'produto' ? { tipo: 'produto', valor: 100 } : { tipo: 'desconto_valor', valor: 10, produto_id: null };
 }
 function mudarModo(r: Recompensa, modo: ModoDesconto): Partial<Recompensa> {
   if (modo === modoDesconto(r)) return {};
-  if (ehPremioDeProduto(r.tipo)) return modo === 'gratis' ? { tipo: 'produto', valor: 100 } : modo === 'pct' ? { tipo: 'produto', valor: 50 } : { tipo: 'produto_valor', valor: 10, custo_loja: 10 };
-  return modo === 'reais' ? { tipo: 'desconto_valor', valor: 10, custo_loja: 10 } : { tipo: 'desconto_percentual', valor: 10 };
+  if (ehPremioDeProduto(r.tipo)) return modo === 'gratis' ? { tipo: 'produto', valor: 100 } : modo === 'pct' ? { tipo: 'produto', valor: 50 } : { tipo: 'produto_valor', valor: 10 };
+  return modo === 'reais' ? { tipo: 'desconto_valor', valor: 10 } : { tipo: 'desconto_percentual', valor: 10 };
 }
 /** Quanto o prêmio tira do item (preço de cardápio). */
 function descontoNoItem(r: Recompensa, preco: number): number {
@@ -223,6 +224,8 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
   const [hist90, setHist90] = useState<FaixaHistograma[]>([]);
   const [janelaHist, setJanelaHist] = useState<number | null>(null);
   const [produtos, setProdutos] = useState<Produto[]>([]);
+  // Custo atual da ficha técnica dos itens dos prêmios (null = item sem ficha).
+  const [custosFicha, setCustosFicha] = useState<Map<string, number | null>>(new Map());
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState('');
   const [alterado, setAlterado] = useState(false);
@@ -281,7 +284,64 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
     setMsg('');
   };
 
-  const avisos = useMemo(() => (cfg ? avisosConfigPorSecao(cfg) : []), [cfg]);
+  // Busca o custo da ficha dos itens que viraram prêmio (só os que ainda não tem).
+  useEffect(() => {
+    if (!tenantId || !cfg) return;
+    const faltam = [...new Set(cfg.recompensas.filter((r) => ehPremioDeProduto(r.tipo) && r.produto_id).map((r) => r.produto_id as string))]
+      .filter((id) => !custosFicha.has(id));
+    if (faltam.length === 0) return;
+    let vivo = true;
+    custoFichaItens(tenantId, faltam)
+      .then((m) => { if (vivo) setCustosFicha((prev) => new Map([...prev, ...m])); })
+      .catch(() => { if (vivo) setCustosFicha((prev) => new Map([...prev, ...faltam.map((id) => [id, null] as [string, null])])); });
+    return () => { vivo = false; };
+  }, [tenantId, cfg, custosFicha]);
+
+  // Pedido médio dos últimos 90 dias (estimativa do custo de "% do pedido inteiro").
+  const ticket90 = useMemo(() => {
+    const pedidos = hist90.reduce((s, f) => s + f.compras * f.clientes, 0);
+    const gasto = hist90.reduce((s, f) => s + f.gasto, 0);
+    return pedidos > 0 ? gasto / pedidos : 0;
+  }, [hist90]);
+
+  // Custo REAL para a loja quando o cliente usa o prêmio (calculado, não digitado):
+  // item = custo da ficha − o que o cliente ainda paga (nunca abaixo de zero: se ele paga
+  // mais que a ficha, a loja só deixa de ganhar parte do lucro); R$ no pedido = o próprio
+  // valor; % do pedido = % do pedido médio. Sem ficha / sem pedidos: null (vale o digitado).
+  const custoCalculado = useCallback((r: Recompensa): { valor: number | null; explica: string } => {
+    if (ehPremioDeProduto(r.tipo)) {
+      const p = produtos.find((x) => x.id === r.produto_id);
+      if (!p) return { valor: null, explica: 'Escolha o item para calcular.' };
+      const cf = custosFicha.get(p.id);
+      if (cf === undefined) return { valor: null, explica: 'Calculando pela ficha técnica…' };
+      if (cf === null) return { valor: null, explica: 'Item sem ficha técnica: informe o custo (ou faça a ficha em Cardápio).' };
+      const paga = Math.max(0, p.preco - descontoNoItem(r, p.preco));
+      const v = Math.max(0, Math.round((cf - paga) * 100) / 100);
+      if (paga <= 0) return { valor: v, explica: `Sai de graça: custa a ficha do item (${brl(cf)}).` };
+      if (v === 0) return { valor: 0, explica: `O cliente paga ${brl(paga)}, mais que a ficha (${brl(cf)}): a loja não tem custo, só ganha menos.` };
+      return { valor: v, explica: `Ficha ${brl(cf)} − o cliente paga ${brl(paga)}.` };
+    }
+    if (r.tipo === 'desconto_valor') return { valor: Math.max(0, r.valor), explica: 'Desconto em dinheiro: custa o valor inteiro.' };
+    if (r.tipo === 'desconto_percentual') {
+      return ticket90 > 0
+        ? { valor: Math.round(ticket90 * r.valor) / 100, explica: `${r.valor}% de um pedido médio (${brl(ticket90)}).` }
+        : { valor: null, explica: 'Sem pedidos para estimar: informe o custo.' };
+    }
+    return { valor: null, explica: 'Informe quanto custa a entrega.' };
+  }, [produtos, custosFicha, ticket90]);
+
+  // A config com o custo calculado é a que vale para a simulação, os avisos e o Salvar.
+  const cfgCalc = useMemo(() => {
+    if (!cfg) return null;
+    const recompensas = cfg.recompensas.map((r) => ({ ...r, custo_loja: custoCalculado(r).valor ?? r.custo_loja }));
+    const premios = cfg.roleta.premios.map((p) => {
+      const rw = p.tipo === 'recompensa' ? recompensas.find((x) => x.id === p.recompensa_id) : undefined;
+      return rw ? { ...p, custo_loja: rw.custo_loja } : p;
+    });
+    return { ...cfg, recompensas, roleta: { ...cfg.roleta, premios } };
+  }, [cfg, custoCalculado]);
+
+  const avisos = useMemo(() => (cfgCalc ? avisosConfigPorSecao(cfgCalc) : []), [cfgCalc]);
 
   const avisarNaoLiga = () => avisar(
     `Enquanto houver aviso o programa não liga. Corrija e tente de novo — dá para salvar como rascunho (desligado) enquanto isso.\n\n${avisos.map((a) => `• ${a.texto}`).join('\n')}`,
@@ -328,7 +388,7 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
     if (!seguir) { setSalvando(false); return; }
     try {
       const res = await invokeWithAuth<{ config?: FidelidadeConfig; started_at?: string | null; recalculados?: number; error?: string; message?: string }>('fidelidade', {
-        body: { action: 'save', tenant_id: tenantId, config: cfg, enabled: ligado },
+        body: { action: 'save', tenant_id: tenantId, config: cfgCalc ?? cfg, enabled: ligado },
       });
       const d = res.data;
       if (res.error || !d || d.error) {
@@ -376,16 +436,17 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
       gastoPonderado += v.gasto * (cfg.trilha.ativo ? n.multiplicador : 1);
     }
     const multMedio = gastoTrilha > 0 ? gastoPonderado / gastoTrilha : 1;
-    const retorno = retornoPercentual(cfg, multMedio);
-    const { chances, custoGiro } = chancesRoleta(cfg.roleta.premios);
+    const c = cfgCalc ?? cfg;
+    const retorno = retornoPercentual(c, multMedio);
+    const { chances, custoGiro } = chancesRoleta(c.roleta.premios);
     const girosMes = cfg.roleta.ativo && cfg.roleta.a_cada_compras > 0 ? pedidos90 / 3 / cfg.roleta.a_cada_compras : 0;
     const custoPontosMes = (gasto90 / 3) * (retorno / 100);
     return {
       clientes90, pedidos90, gasto90, ticket, porNivel, fora, naTrilha, multMedio, retorno,
       chances, custoGiro, girosMes, custoRoletaMes: girosMes * custoGiro, custoPontosMes,
-      custoPonto: custoPorPonto(cfg.recompensas),
+      custoPonto: custoPorPonto(c.recompensas),
     };
-  }, [cfg, hist, hist90]);
+  }, [cfg, cfgCalc, hist, hist90]);
 
   // Membros: carrega ao abrir a seção.
   useEffect(() => {
@@ -658,7 +719,7 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
           desc="O que o cliente pode trocar com os pontos. Produto grátis costuma valer mais para o cliente e custar menos para a loja."
           acao={!ro && (
             <button
-              onClick={() => mudar((c) => ({ ...c, recompensas: [...c.recompensas, { id: novoId('rw'), nome: 'Nova recompensa', tipo: 'produto', valor: 0, produto_id: null, custo_pontos: 100, custo_loja: 0, nivel_minimo: null, ativo: true }] }))}
+              onClick={() => mudar((c) => ({ ...c, recompensas: [...c.recompensas, { id: novoId('rw'), nome: 'Nova recompensa', tipo: 'produto', valor: 100, produto_id: null, custo_pontos: 100, custo_loja: 0, nivel_minimo: null, ativo: true }] }))}
               className="flex items-center gap-1 px-3 py-1.5 text-sm font-semibold text-white bg-amber-600 hover:bg-amber-700 rounded-lg cursor-pointer whitespace-nowrap"
             >
               <i className="ri-add-line" /> Recompensa
@@ -668,120 +729,124 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
           {cfg.recompensas.length === 0 && <p className="text-sm text-zinc-400 py-6 text-center">Nenhuma recompensa. Adicione a primeira.</p>}
           <div className="space-y-3">
             {cfg.recompensas.map((r) => {
-              const gastoEquivalente = cfg.pontos.pontos_por_real > 0 ? r.custo_pontos / cfg.pontos.pontos_por_real : 0;
-              const devolve = gastoEquivalente > 0 ? (r.custo_loja / gastoEquivalente) * 100 : 0;
-              // Só prêmio de produto tem item; tipo trocado não usa mais o item antigo.
               const produto = ehPremioDeProduto(r.tipo) ? produtos.find((p) => p.id === r.produto_id) : undefined;
               const onde = ondeVale(r);
               const modo = modoDesconto(r);
+              const custo = custoCalculado(r);
+              const custoReal = custo.valor ?? r.custo_loja;
+              const gasto = cfg.pontos.pontos_por_real > 0 ? r.custo_pontos / cfg.pontos.pontos_por_real : 0;
+              // O que o cliente leva, em R$ de cardápio (para "recebe X% do que gastou").
+              const recebe = produto ? descontoNoItem(r, produto.preco)
+                : r.tipo === 'desconto_valor' ? r.valor
+                : r.tipo === 'desconto_percentual' && ticket90 > 0 ? ticket90 * r.valor / 100 : null;
+              const oQue = ehPremioDeProduto(r.tipo)
+                ? (!produto ? 'Escolha o item do cardápio'
+                  : descontoNoItem(r, produto.preco) >= produto.preco ? `${produto.nome} de graça (vale ${brl(produto.preco)})`
+                  : `${produto.nome} por ${brl(produto.preco - descontoNoItem(r, produto.preco))} em vez de ${brl(produto.preco)}`)
+                : r.tipo === 'desconto_valor' ? `${brl(r.valor)} de desconto no pedido inteiro`
+                : r.tipo === 'desconto_percentual' ? `${pct(r.valor)} de desconto no pedido inteiro${ticket90 > 0 ? ` (≈ ${brl(ticket90 * r.valor / 100)} num pedido médio)` : ''}`
+                : 'Entrega grátis (ainda não aplicada no delivery)';
               return (
-                <div key={r.id} className={`border rounded-xl p-3 ${r.ativo ? 'border-zinc-200' : 'border-dashed border-zinc-200 opacity-60'}`}>
-                  <div className="grid grid-cols-2 md:grid-cols-12 gap-2 items-end">
-                    <div className="col-span-2 md:col-span-3">
-                      <Campo label="Nome"><input value={r.nome} disabled={ro} maxLength={80} onChange={(e) => setRecompensa(r.id, { nome: e.target.value })} className={INPUT} /></Campo>
-                    </div>
-                    <div className="md:col-span-2">
-                      <Campo label="Vale em">
-                        <select value={onde} disabled={ro} onChange={(e) => setRecompensa(r.id, mudarOnde(r, e.target.value as OndeVale))} className={INPUT}>
-                          <option value="produto">Um item do cardápio</option>
-                          <option value="pedido">O pedido inteiro</option>
-                          {onde === 'frete' && <option value="frete">Entrega grátis (não aplicada)</option>}
-                        </select>
-                      </Campo>
-                    </div>
-                    <div className="md:col-span-3">
-                      {onde === 'produto' ? (
-                        <Campo label="Item do cardápio">
-                          <select value={r.produto_id ?? ''} disabled={ro} onChange={(e) => setRecompensa(r.id, { produto_id: e.target.value || null })} className={INPUT}>
-                            <option value="">Escolher…</option>
-                            {produtos.map((p) => <option key={p.id} value={p.id}>{p.nome} · {brl(p.preco)}</option>)}
-                          </select>
-                        </Campo>
-                      ) : r.tipo === 'frete_gratis' ? (
-                        <Campo label="Valor"><div className="text-xs text-zinc-400 py-2">Taxa de entrega do pedido</div></Campo>
-                      ) : (
-                        <Campo label="Desconto no pedido inteiro">
+                <div key={r.id} className={`border rounded-xl overflow-hidden ${r.ativo ? 'border-zinc-200 bg-white' : 'border-dashed border-zinc-200 opacity-60'}`}>
+                  {/* Nome + ativa + excluir */}
+                  <div className="flex items-center gap-2 px-3 pt-3">
+                    <input value={r.nome} disabled={ro} maxLength={80} aria-label="Nome do prêmio" placeholder="Nome do prêmio"
+                      onChange={(e) => setRecompensa(r.id, { nome: e.target.value })} className={INPUT + ' font-semibold flex-1 min-w-0'} />
+                    <Chave label="Recompensa ativa" ligado={r.ativo} disabled={ro} onChange={(v) => setRecompensa(r.id, { ativo: v })} />
+                    {!ro && (
+                      <button
+                        onClick={() => excluirRecompensa(r)}
+                        className="w-8 h-8 shrink-0 flex items-center justify-center text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer" aria-label="Remover recompensa"
+                      ><i className="ri-delete-bin-line" /></button>
+                    )}
+                  </div>
+
+                  {/* O que o cliente ganha */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 px-3 pt-3">
+                    <Campo label="Vale em">
+                      <select value={onde} disabled={ro} onChange={(e) => setRecompensa(r.id, mudarOnde(r, e.target.value as OndeVale))} className={INPUT}>
+                        <option value="produto">Um item do cardápio</option>
+                        <option value="pedido">O pedido inteiro</option>
+                        {onde === 'frete' && <option value="frete">Entrega grátis (não aplicada)</option>}
+                      </select>
+                    </Campo>
+                    {onde === 'produto' ? (
+                      <>
+                        <div className="lg:col-span-2">
+                          <Campo label="Item do cardápio">
+                            <select value={r.produto_id ?? ''} disabled={ro} onChange={(e) => setRecompensa(r.id, { produto_id: e.target.value || null })} className={INPUT}>
+                              <option value="">Escolher…</option>
+                              {produtos.map((p) => <option key={p.id} value={p.id}>{p.nome} · {brl(p.preco)}</option>)}
+                            </select>
+                          </Campo>
+                        </div>
+                        <Campo label="Como sai o item">
                           <div className="flex gap-1.5">
-                            <select value={modo} disabled={ro} onChange={(e) => setRecompensa(r.id, mudarModo(r, e.target.value as ModoDesconto))} className={INPUT + ' w-20 shrink-0'}>
+                            <select value={modo} disabled={ro} onChange={(e) => setRecompensa(r.id, mudarModo(r, e.target.value as ModoDesconto))} className={modo === 'gratis' ? INPUT : INPUT.replace('w-full', 'w-24 shrink-0')}>
+                              <option value="gratis">Grátis</option>
+                              <option value="pct">% off</option>
+                              <option value="reais">R$ off</option>
+                            </select>
+                            {modo === 'pct' && (
+                              <div className="flex-1 min-w-0"><Numero value={pctProduto(r.valor)} min={1} step={5} disabled={ro} sufixo="%"
+                                onChange={(v) => setRecompensa(r.id, { valor: Math.min(99, Math.max(1, Math.round(v) || 1)) })} /></div>
+                            )}
+                            {modo === 'reais' && (
+                              <div className="flex-1 min-w-0"><Numero value={r.valor} min={0.5} step={0.5} disabled={ro} prefixo="R$"
+                                onChange={(v) => setRecompensa(r.id, { valor: Math.max(0, v) })} /></div>
+                            )}
+                          </div>
+                        </Campo>
+                      </>
+                    ) : onde === 'frete' ? (
+                      <div className="lg:col-span-3 flex items-end">
+                        <p className="w-full text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 flex gap-1.5">
+                          <i className="ri-error-warning-line mt-px" /> Entrega grátis ainda não é aplicada no delivery — troque para um item ou o pedido inteiro.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="lg:col-span-3">
+                        <Campo label="Desconto no pedido inteiro">
+                          <div className="flex gap-1.5 max-w-xs">
+                            <select value={modo} disabled={ro} onChange={(e) => setRecompensa(r.id, mudarModo(r, e.target.value as ModoDesconto))} className={INPUT.replace('w-full', 'w-20 shrink-0')}>
                               <option value="reais">R$</option>
                               <option value="pct">%</option>
                             </select>
-                            <Numero value={r.valor} disabled={ro} onChange={(v) => setRecompensa(r.id, { valor: v, ...(r.tipo === 'desconto_valor' ? { custo_loja: v } : {}) })} />
+                            <div className="flex-1 min-w-0"><Numero value={r.valor} disabled={ro} onChange={(v) => setRecompensa(r.id, { valor: v })} /></div>
                           </div>
                         </Campo>
-                      )}
-                    </div>
-                    <div className="md:col-span-2">
-                      <Campo label="Custa (pontos)"><Numero value={r.custo_pontos} min={1} disabled={ro} onChange={(v) => setRecompensa(r.id, { custo_pontos: v })} /></Campo>
-                    </div>
-                    <div className="md:col-span-2">
-                      <Campo label="Custo p/ loja"><Numero value={r.custo_loja} step={0.5} disabled={ro} prefixo="R$" onChange={(v) => setRecompensa(r.id, { custo_loja: v })} /></Campo>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Regras e custo */}
+                  <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 px-3 pt-2">
+                    <Campo label="Custa (pontos)"><Numero value={r.custo_pontos} min={1} disabled={ro} onChange={(v) => setRecompensa(r.id, { custo_pontos: v })} /></Campo>
+                    <Campo label="Quem pode usar">
+                      <select value={r.nivel_minimo ?? ''} disabled={ro} onChange={(e) => setRecompensa(r.id, { nivel_minimo: e.target.value || null })} className={INPUT}>
+                        <option value="">Qualquer cliente</option>
+                        {niveisOrdenados.map((n) => <option key={n.id} value={n.id}>Do nível {n.emoji} {n.nome} para cima</option>)}
+                      </select>
+                    </Campo>
+                    <div className="col-span-2">
+                      <Campo label="Custo real para a loja" dica={custo.explica}>
+                        {custo.valor !== null ? (
+                          <div className="px-2.5 py-1.5 text-sm rounded-lg bg-zinc-50 border border-zinc-200 tabular-nums font-semibold text-zinc-800">
+                            {brl(custo.valor)} <span className="font-normal text-xs text-zinc-400">· calculado</span>
+                          </div>
+                        ) : (
+                          <Numero value={r.custo_loja} step={0.5} disabled={ro} prefixo="R$" onChange={(v) => setRecompensa(r.id, { custo_loja: v })} />
+                        )}
+                      </Campo>
                     </div>
                   </div>
-                  {r.tipo === 'frete_gratis' && (
-                    <p className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 flex gap-1.5">
-                      <i className="ri-error-warning-line mt-px" /> Entrega grátis ainda não é aplicada no delivery — troque o tipo.
-                    </p>
-                  )}
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2.5">
-                    <label className="flex items-center gap-1.5 text-xs text-zinc-600">
-                      Só a partir do nível
-                      <select value={r.nivel_minimo ?? ''} disabled={ro} onChange={(e) => setRecompensa(r.id, { nivel_minimo: e.target.value || null })} className="px-2 py-1 text-xs border border-zinc-200 rounded-md bg-white">
-                        <option value="">Qualquer cliente</option>
-                        {niveisOrdenados.map((n) => <option key={n.id} value={n.id}>{n.emoji} {n.nome}</option>)}
-                      </select>
-                    </label>
-                    {onde === 'produto' && (
-                      <label className="flex items-center gap-1.5 text-xs text-zinc-600">
-                        Como sai o item
-                        <select value={modo} disabled={ro} onChange={(e) => setRecompensa(r.id, mudarModo(r, e.target.value as ModoDesconto))} className="px-2 py-1 text-xs border border-zinc-200 rounded-md bg-white">
-                          <option value="gratis">Grátis</option>
-                          <option value="pct">Com % de desconto</option>
-                          <option value="reais">Com R$ de desconto</option>
-                        </select>
-                        {modo === 'pct' && (
-                          <><input
-                            type="number" inputMode="numeric" min={1} max={99} step={5} disabled={ro}
-                            value={pctProduto(r.valor)}
-                            onChange={(e) => setRecompensa(r.id, { valor: Math.min(99, Math.max(1, Math.round(Number(e.target.value) || 1))) })}
-                            className="w-16 px-2 py-1 text-xs border border-zinc-200 rounded-md bg-white tabular-nums disabled:bg-zinc-50"
-                          />%</>
-                        )}
-                        {modo === 'reais' && (
-                          <>R$<input
-                            type="number" inputMode="decimal" min={0.5} step={0.5} disabled={ro}
-                            value={r.valor}
-                            onChange={(e) => { const v = Math.max(0, Number(e.target.value) || 0); setRecompensa(r.id, { valor: v, custo_loja: v }); }}
-                            className="w-20 px-2 py-1 text-xs border border-zinc-200 rounded-md bg-white tabular-nums disabled:bg-zinc-50"
-                          /></>
-                        )}
-                        {produto && (
-                          <span className="text-zinc-400">
-                            {descontoNoItem(r, produto.preco) >= produto.preco ? '(sai de graça)' : `(cliente paga ${brl(produto.preco - descontoNoItem(r, produto.preco))})`}
-                          </span>
-                        )}
-                      </label>
-                    )}
-                    <span className="text-xs text-zinc-500">
-                      = gastar <b className="tabular-nums">{brl(gastoEquivalente)}</b>
-                      {produto && (descontoNoItem(r, produto.preco) >= produto.preco
-                        ? <> · vale <b className="tabular-nums">{brl(produto.preco)}</b> no cardápio</>
-                        : <> · desconta <b className="tabular-nums">{brl(descontoNoItem(r, produto.preco))}</b> de {brl(produto.preco)}</>)}
-                      {r.tipo === 'desconto_valor' && <> · vale no <b>pedido inteiro</b></>}
-                      {r.tipo === 'desconto_percentual' && (
-                        <> · vale para o <b className={r.valor > 20 ? 'text-rose-600' : ''}>pedido inteiro</b> (num pedido de R$ 100 = {brl(r.valor)} de desconto)</>
-                      )}
-                      {' '}· devolve <b className={`tabular-nums ${devolve > 8 ? 'text-rose-600' : 'text-emerald-600'}`}>{pct(devolve)}</b> em custo
-                    </span>
-                    <div className="flex items-center gap-2 ml-auto">
-                      <Chave label="Recompensa ativa" ligado={r.ativo} disabled={ro} onChange={(v) => setRecompensa(r.id, { ativo: v })} />
-                      {!ro && (
-                        <button
-                          onClick={() => excluirRecompensa(r)}
-                          className="w-8 h-8 flex items-center justify-center text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer" aria-label="Remover recompensa"
-                        ><i className="ri-delete-bin-line" /></button>
-                      )}
-                    </div>
+
+                  {/* Resumo em linguagem de gente */}
+                  <div className="mt-3 px-3 py-2.5 bg-amber-50/60 border-t border-amber-100 text-xs text-zinc-700 grid gap-1 sm:grid-cols-2">
+                    <span>🎁 <b>{oQue}</b></span>
+                    <span>🧾 Para ganhar: gastar <b className="tabular-nums">{brl(gasto)}</b>{ticket90 > 0 && gasto > 0 ? <> (≈ {inteiro(Math.max(1, gasto / ticket90))} pedidos)</> : null}</span>
+                    <span>💚 Cliente recebe <b className="tabular-nums">{recebe !== null && gasto > 0 ? pct((recebe / gasto) * 100) : '—'}</b> do que gastou (valor de cardápio)</span>
+                    <span>🏷️ Custo real: <b className={`tabular-nums ${gasto > 0 && (custoReal / gasto) * 100 > 8 ? 'text-rose-600' : 'text-emerald-700'}`}>{gasto > 0 ? pct((custoReal / gasto) * 100) : '—'}</b> do que ele gastou</span>
                   </div>
                 </div>
               );
