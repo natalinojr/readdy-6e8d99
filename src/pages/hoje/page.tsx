@@ -77,7 +77,7 @@ export default function HojePage() {
   // Em que pé está cada conta dos cartões (financeiro); o que já foi pago some na hora (2026-10-07).
   const situacao = useSituacaoHoje(itens, hoje, dono || perfil === 'admin' || perfil === 'gerente' || perfil === 'financeiro');
   // Lojas com algo (botões do topo só quando há mais de uma).
-  const todos = useMemo(() => semOJaPago(itens ?? [], situacao.porCartao), [itens, situacao.porCartao]);
+  const todos = useMemo(() => semOJaPago(itens ?? [], situacao.porCartao, situacao.grupoPago), [itens, situacao.porCartao, situacao.grupoPago]);
   const lojas = useMemo(() => {
     const m = new Map<string, string>();
     for (const i of todos) if (i.bloco !== 'silenciado') m.set(i.tenantId, i.loja || 'Loja');
