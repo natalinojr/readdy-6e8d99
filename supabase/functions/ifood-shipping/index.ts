@@ -13,6 +13,7 @@
 //                                                   o app ERPOS PDV do sistema (secrets IFOOD_PDV_CLIENT_ID/SECRET)
 //   use_system_app                                  volta a loja para o app do sistema
 //   set_options    { homologation_mode?, shipping_enabled?, default_prep_min?, shipping_merchant_id?, order_*?, order_emit_nfce?, order_nfce_momento?, order_print_kitchen?, order_print_receipt? }
+//   set_print      { order_print_kitchen?, order_print_receipt? }   admin/supervisor/líder/caixa — só a impressão
 //   request_user_code / confirm_authorization { authorization_code } / delete_config   admin/gerente
 //   refresh_merchants                                renova o acesso e relê as lojas de cada autorização   admin/gerente
 //   order_backfill { dias? }                        pedidos de antes de ligar (Vendas → GET /orders/{id}, ~15 dias)   admin/gerente
@@ -1530,6 +1531,19 @@ Deno.serve(async (req) => {
       if (!r.ok) return errResp(apiError(r, 'Responder'));
       log('INFO', 'review', 'respondida', { merchant: c.merchantId, id, tenantId });
       return json({ success: true, answer: r.data });
+    }
+
+    // Impressão dos pedidos do iFood: o caixa (e o líder) também liga/desliga — só estes dois campos.
+    if (action === 'set_print') {
+      if (!isManager && !/^(cashier|caixa|supervisor|supervisao)$/i.test(role)) return errResp('Só admin, supervisor, líder ou caixa muda a impressão.', 403);
+      if (!cfg) return errResp('O iFood ainda não está conectado nesta loja.');
+      const upd: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (typeof body.order_print_kitchen === 'boolean') upd.order_print_kitchen = body.order_print_kitchen;
+      if (typeof body.order_print_receipt === 'boolean') upd.order_print_receipt = body.order_print_receipt;
+      const { error } = await admin.from('ifood_pdv_config').update(upd).eq('tenant_id', tenantId);
+      if (error) return errResp(error.message);
+      log('INFO', 'config', 'impressão dos pedidos', { tenantId, userId, ...upd });
+      return json({ success: true });
     }
 
     // ── Configuração (admin/gerente) ──

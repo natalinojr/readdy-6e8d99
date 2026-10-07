@@ -15,7 +15,7 @@ const ABAS: { id: AbaIfood; rotulo: string; icone: string }[] = [
   { id: 'loja', rotulo: 'Loja', icone: 'ri-store-3-line' },
 ];
 
-export default function IfoodCabecalho({ aba, onAba, podeAba, lojas, loja, onLoja, rotuloPeriodo, onAbrirPeriodo, configurar, nItensSemFicha }: {
+export default function IfoodCabecalho({ aba, onAba, podeAba, lojas, loja, onLoja, rotuloPeriodo, onAbrirPeriodo, configurar, onImpressao, nItensSemFicha }: {
   aba: AbaIfood;
   onAba: (a: AbaIfood) => void;
   podeAba: (a: AbaIfood) => boolean;
@@ -26,6 +26,8 @@ export default function IfoodCabecalho({ aba, onAba, podeAba, lojas, loja, onLoj
   rotuloPeriodo: string | null;
   onAbrirPeriodo: () => void;
   configurar: boolean;
+  /** Quem não configura (ex.: caixa) mas pode mexer na impressão: botão da impressora no lugar da engrenagem. */
+  onImpressao?: () => void;
   nItensSemFicha: number;
 }) {
   const texto = rotuloPeriodo != null ? rotuloDoPeriodo(rotuloPeriodo) : null;
@@ -61,6 +63,12 @@ export default function IfoodCabecalho({ aba, onAba, podeAba, lojas, loja, onLoj
             className={`w-10 h-10 flex-shrink-0 inline-flex items-center justify-center rounded-xl border cursor-pointer ${
               naConexao ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-600'}`}>
             <i className="ri-settings-3-line text-lg" />
+          </button>
+        )}
+        {!configurar && onImpressao && (
+          <button type="button" onClick={onImpressao} aria-label="Impressão dos pedidos do iFood" title="Impressão dos pedidos do iFood"
+            className="w-10 h-10 flex-shrink-0 inline-flex items-center justify-center rounded-xl border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-600 cursor-pointer">
+            <i className="ri-printer-line text-lg" />
           </button>
         )}
       </div>

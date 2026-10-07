@@ -18,6 +18,8 @@ export interface AcessoIfood {
   resultados: boolean;
   /** Conectar e ligar (configuração): admin ou gerente. */
   configurar: boolean;
+  /** Impressão dos pedidos do iFood (botão da impressora no cabeçalho; quem configura usa a Conexão): admin, gerente, líder e caixa. */
+  imprimir: boolean;
 }
 
 export type DadosIfood = ReturnType<typeof useIfoodDados>;

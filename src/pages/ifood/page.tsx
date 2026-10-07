@@ -15,6 +15,7 @@ import DinheiroAba from './components/DinheiroAba';
 import ResultadosAba from './components/ResultadosAba';
 import LojaAba from './components/LojaAba';
 import ConexaoAba from './components/ConexaoAba';
+import ImpressaoIfoodFolha from './components/ImpressaoIfoodFolha';
 
 // Área iFood (2026-10-05, aprovada pelo dono: docs/prototipos/ifood-proposta.html). Um lugar só para os
 // pedidos, os itens e o custo, o dinheiro, os resultados e a loja no iFood. Antes isso estava espalhado
@@ -34,6 +35,7 @@ export default function IfoodPage() {
   const [periodos, setPeriodos] = useState<Partial<Record<AbaIfood, string>>>(PERIODO_PADRAO);
   const [loja, setLoja] = useState<string | null>(null);
   const [periodoAberto, setPeriodoAberto] = useState(false);
+  const [impressao, setImpressao] = useState(false);
   const pedidoAberto = params.get('pedido');
 
   const perfil = user?.perfil ?? '';
@@ -49,6 +51,7 @@ export default function IfoodPage() {
       ligar: admin || perfil === 'gerente' || perfil === 'financeiro',
       resultados: fin || rel,
       configurar: admin || perfil === 'gerente',
+      imprimir: admin || perfil === 'gerente' || perfil === 'supervisao' || perfil === 'caixa',
     };
   }, [admin, perfil, hasPermissao]);
 
@@ -101,6 +104,7 @@ export default function IfoodPage() {
         rotuloPeriodo={temPeriodo ? periodo : null}
         onAbrirPeriodo={() => setPeriodoAberto(true)}
         configurar={acesso.configurar}
+        onImpressao={acesso.imprimir ? () => setImpressao(true) : undefined}
         nItensSemFicha={nItensSemFicha}
       />
       <div className="flex-1 overflow-y-auto">
@@ -114,6 +118,7 @@ export default function IfoodPage() {
           {abaEfetiva === 'conexao' && <ConexaoAba {...props} />}
         </div>
       </div>
+      {acesso.imprimir && !acesso.configurar && <ImpressaoIfoodFolha aberta={impressao} tenantId={tenantId} onFechar={() => setImpressao(false)} />}
       <PeriodoIfoodFolha
         aberta={periodoAberto}
         onFechar={() => setPeriodoAberto(false)}
