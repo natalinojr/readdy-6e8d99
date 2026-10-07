@@ -4436,6 +4436,18 @@ Sem SW ativo o POST cai no Vercel e falha — por isso o destino só existe no S
   `list_orders` devolve `rota` (última saída dele nas últimas 6 h, só paradas pendentes) → cartão "Sua rota" + "Abrir
   rota no Maps" (sem origem: o Maps usa onde o motoboy está). PEGADINHA: a posição dos motoboys chega depois de abrir
   a janela — a `key` do cartão inclui o motoboy sugerido, senão o select fica em "Escolha…".
+  **2026-10-06 — encaixar e esperar**: (1) motoboy com pedido que **ainda não saiu** (`motoboy_status` nulo ou
+  `a_caminho_loja`, nenhum pedido dele na rua) vira "saída aberta": os prontos perto de QUALQUER parada dele entram
+  primeiro ("Encaixar na saída de X"; os dele ficam travados, motoboy fixo). O `montar_saida` já aceitava pedido do
+  mesmo motoboy; a nova linha de `delivery_saidas` traz todos e vira a rota dele. (2) Pedido **na cozinha** sem
+  entregador com previsão de pronto ≤ 8 min, perto de uma parada e sem fazer ninguém a mais atrasar vira a opção
+  "Esperar e incluir" (no máx. uma saída por pedido); a saída só sai `espera + 2 min` depois. Previsão vem do
+  `list_delivery_board` (`preparo_at`, `pronto_previsto_at`, `preparo`): início do preparo + mediana do preparo do
+  **delivery** da loja (30 dias, cache de 10 min na edge); `preparing` sem início = criação + tempo total; `new` que
+  ninguém começou = sem previsão. PEGADINHA: os itens do **salão** não servem para medir o preparo (iniciar e pronto
+  marcados juntos, mediana ~0 min em 10/2026); com < 5 pedidos de delivery usa o padrão 20/30 min e a tela avisa.
+  (3) Sem sugestão, a janela diz o que está acontecendo: prontos sem localização, quantos na cozinha e quando o 1º fica
+  pronto, quem está com pedido e ainda não saiu. Aceitar a espera sugerida conta como `seguiu_sugestao`.
 - **GPS do motoboy com a tela apagada (app Android, 2026-09-27 — código pronto, APK não gerado)**: plugin
   `@capacitor-community/background-geolocation` no `android-app` (serviço em primeiro plano com aviso fixo);
   `useMotoboyGps` usa o plugin quando `window.Capacitor.isNativePlatform()` (estado `ativo_fundo`), mesmas regras de

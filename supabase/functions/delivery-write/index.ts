@@ -428,6 +428,38 @@ async function releaseHeldOrder(admin: any, tenant_id: string, order_id: string,
   return {};
 }
 
+// "Montar saída": quanto a cozinha leva no DELIVERY desta loja (mediana dos últimos 30 dias). Itens do salão
+// ficam de fora: lá o "iniciar" e o "pronto" costumam ser marcados juntos (mediana ~0 min em 10/2026).
+// Pouco histórico (< 5 pedidos) = tempo padrão. Guardado 10 min por loja (o quadro recarrega a cada mudança).
+const PREPARO_PADRAO = { prepMin: 20, totalMin: 30 };
+const preparoCache = new Map<string, { at: number; v: { prepMin: number; totalMin: number; base: "historico" | "padrao" } }>();
+async function tempoPreparoDelivery(admin: any, tenantId: string) {
+  const c = preparoCache.get(tenantId);
+  if (c && Date.now() - c.at < 10 * 60000) return c.v;
+  const desde = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { data } = await admin.from("order_items")
+    .select("order_id, started_preparing_at, ready_at, skip_kds, orders!inner(origin_type, created_at)")
+    .eq("tenant_id", tenantId).eq("orders.origin_type", "delivery").gte("created_at", desde).limit(3000);
+  const porPedido = new Map<string, { criado: number; prep: number | null; pronto: number; todos: boolean }>();
+  for (const i of (data ?? []) as Record<string, any>[]) {
+    if (i.skip_kds) continue;
+    const ped = Array.isArray(i.orders) ? i.orders[0] : i.orders;
+    const p = porPedido.get(i.order_id) ?? { criado: new Date(ped?.created_at).getTime(), prep: null, pronto: 0, todos: true };
+    if (i.started_preparing_at) { const t = new Date(i.started_preparing_at).getTime(); p.prep = p.prep == null ? t : Math.min(p.prep, t); }
+    if (i.ready_at) p.pronto = Math.max(p.pronto, new Date(i.ready_at).getTime()); else p.todos = false;
+    porPedido.set(i.order_id, p);
+  }
+  const mediana = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
+  const ok = [...porPedido.values()].filter((p) => p.todos && p.pronto > p.criado);
+  const totais = ok.map((p) => (p.pronto - p.criado) / 60000).filter((m) => m <= 120);
+  const preps = ok.filter((p) => p.prep != null && p.pronto >= p.prep!).map((p) => (p.pronto - p.prep!) / 60000).filter((m) => m <= 120);
+  const v = totais.length >= 5
+    ? { prepMin: Math.max(3, Math.round(preps.length >= 5 ? mediana(preps) : mediana(totais) * 0.7)), totalMin: Math.max(5, Math.round(mediana(totais))), base: "historico" as const }
+    : { ...PREPARO_PADRAO, base: "padrao" as const };
+  preparoCache.set(tenantId, { at: Date.now(), v });
+  return v;
+}
+
 Deno.serve({ verify_jwt: false }, async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -1045,7 +1077,32 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         ]);
         const slBoard = (ssBoard?.delivery_config as Record<string, any> | null)?.store_location;
         const lojaBoard = slBoard && Number.isFinite(Number(slBoard.lat)) && Number.isFinite(Number(slBoard.lng)) ? { lat: Number(slBoard.lat), lng: Number(slBoard.lng) } : null;
-        return new Response(JSON.stringify({ _v: "v18", ok: true, loja: lojaBoard, motoboys: motosAtivos ?? [], orders: lista.map((o) => ({
+        // "Montar saída": quando o pedido ainda na cozinha deve ficar pronto (dá para a saída esperar por ele).
+        // Começou o preparo = início + tempo de preparo; status "preparing" sem início marcado = criação + tempo total;
+        // "new" que ninguém começou = sem previsão.
+        const naCozinha = lista.filter((o) => o.status === "new" || o.status === "preparing");
+        const preparoAt: Record<string, number> = {};
+        let preparo: { prepMin: number; totalMin: number; base: "historico" | "padrao" } | null = null;
+        if (naCozinha.length) {
+          const [{ data: itsCoz }, tp] = await Promise.all([
+            admin.from("order_items").select("order_id, started_preparing_at, skip_kds").in("order_id", naCozinha.map((o) => o.id as string)),
+            tempoPreparoDelivery(admin, tenant_id),
+          ]);
+          preparo = tp;
+          for (const i of (itsCoz ?? []) as Record<string, any>[]) {
+            if (i.skip_kds || !i.started_preparing_at) continue;
+            const t = new Date(i.started_preparing_at).getTime();
+            preparoAt[i.order_id] = preparoAt[i.order_id] == null ? t : Math.min(preparoAt[i.order_id], t);
+          }
+        }
+        const prontoPrevisto = (o: Record<string, unknown>): string | null => {
+          if (!preparo || (o.status !== "new" && o.status !== "preparing")) return null;
+          const ini = preparoAt[o.id as string];
+          if (ini != null) return new Date(ini + preparo.prepMin * 60000).toISOString();
+          if (o.status === "preparing") return new Date(new Date(o.created_at as string).getTime() + preparo.totalMin * 60000).toISOString();
+          return null;
+        };
+        return new Response(JSON.stringify({ _v: "v19", ok: true, loja: lojaBoard, motoboys: motosAtivos ?? [], preparo, orders: lista.map((o) => ({
           id: o.id, number: o.number,
           cliente: ((o.destination_name as string | null) ?? "Cliente").split(/\s+[-–—]\s+/)[0].trim() || "Cliente",
           telefone: ((o.destination_phone as string | null) ?? "").replace(/\D/g, ""),
@@ -1062,6 +1119,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
           pago: !!o.is_paid, pagamento: (o.notes as string | null) ?? null,
           lat: o.delivery_lat != null ? Number(o.delivery_lat) : null,
           lng: o.delivery_lng != null ? Number(o.delivery_lng) : null,
+          preparo_at: preparoAt[o.id as string] != null ? new Date(preparoAt[o.id as string]).toISOString() : null,
+          pronto_previsto_at: prontoPrevisto(o),
         })) }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
 

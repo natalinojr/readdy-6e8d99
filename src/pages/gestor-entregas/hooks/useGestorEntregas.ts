@@ -62,7 +62,13 @@ export interface EntregaPedido {
   motoboy_timeline: Record<string, string>;
   lat: number | null;
   lng: number | null;
+  /** "Montar saída": início do preparo e previsão de ficar pronto (só pedido ainda na cozinha) */
+  preparo_at?: string | null;
+  pronto_previsto_at?: string | null;
 }
+
+/** Tempo de cozinha do delivery da loja usado na previsão (histórico de 30 dias ou padrão) */
+export interface TempoPreparo { prepMin: number; totalMin: number; base: 'historico' | 'padrao' }
 
 /**
  * Dados do "Gestor de Entregas". Reaproveita as ações da Edge `delivery-write`:
@@ -78,6 +84,7 @@ export function useGestorEntregas() {
   // "Montar saída" (Fase 3): pin da loja e motoboys ativos (vêm junto do quadro)
   const [loja, setLoja] = useState<{ lat: number; lng: number } | null>(null);
   const [motoboys, setMotoboys] = useState<{ id: string; name: string }[]>([]);
+  const [preparo, setPreparo] = useState<TempoPreparo | null>(null);
   const [loading, setLoading] = useState(true);
   const [erro, setErro] = useState('');
   const [busy, setBusy] = useState('');
@@ -114,6 +121,7 @@ export function useGestorEntregas() {
         setOrders(lista); setErro('');
         setLoja(data.loja ?? null);
         setMotoboys(Array.isArray(data.motoboys) ? data.motoboys : []);
+        setPreparo(data.preparo ?? null);
         const [porPedido, ativas] = await Promise.all([fetchShippingByOrder(tenantId, lista.map((o) => o.id)), fetchShippingAtivas(tenantId)]);
         setIfood(porPedido);
         const noQuadro = new Set(lista.map((o) => o.id));
@@ -250,7 +258,7 @@ export function useGestorEntregas() {
 
   return {
     orders, loading, erro, busy, now, autor, recarregar: () => carregar(), setStatus, liberar, fetchDetalhe, addNote,
-    loja, motoboys, montarSaida,
+    loja, motoboys, preparo, montarSaida,
     tenantId, ifood, ifoodOn, ifoodForaDoQuadro, ifoodPedidos, ifoodLoja, recarregarIfoodCfg: carregarIfoodCfg,
   };
 }

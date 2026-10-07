@@ -20,7 +20,7 @@ const FASE_CURTA: Record<ColunaId, string> = {
 
 export default function GestorEntregasPage() {
   const navigate = useNavigate();
-  const { orders, loading, erro, busy, now, autor, recarregar, setStatus, liberar, fetchDetalhe, addNote, loja, motoboys, montarSaida, tenantId, ifood, ifoodOn, ifoodForaDoQuadro, ifoodPedidos, ifoodLoja } = useGestorEntregas();
+  const { orders, loading, erro, busy, now, autor, recarregar, setStatus, liberar, fetchDetalhe, addNote, loja, motoboys, preparo, montarSaida, tenantId, ifood, ifoodOn, ifoodForaDoQuadro, ifoodPedidos, ifoodLoja } = useGestorEntregas();
   const { user } = useAuth();
   // Configurar o iFood (conexão, iFood Entrega, loja) agora é na área iFood — só quem administra
   const podeConfigurarIfood = user?.perfil === 'admin' || user?.perfil === 'gerente';
@@ -282,7 +282,7 @@ export default function GestorEntregasPage() {
       )}
 
       {montarOpen && (
-        <MontarSaidaModal tenantId={tenantId} orders={orders} loja={loja} motoboys={motoboys}
+        <MontarSaidaModal tenantId={tenantId} orders={orders} loja={loja} motoboys={motoboys} preparo={preparo}
           onConfirmar={montarSaida} onFechar={() => setMontarOpen(false)} />
       )}
       {showMapa && <MapaEntregasGestor pontos={pontosMapa} tenantId={tenantId} onClose={() => setShowMapa(false)} />}

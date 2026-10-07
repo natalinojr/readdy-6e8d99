@@ -86,3 +86,65 @@ describe('auxiliares', () => {
     expect(url).toContain('waypoints=-25.530000%2C-48.510000');
   });
 });
+
+describe('encaixar na saída de quem ainda não saiu', () => {
+  const joao = (pedidos: PedidoSaida[]) => ({ driver_id: 'joao', nome: 'João', pedidos });
+
+  it('pronto perto de qualquer parada do motoboy entra na saída dele, sem trocar o motoboy', () => {
+    const s = montarSaidas([ped('NOVO', -25.535, -48.51)], [{ driver_id: 'livre', nome: 'Livre', lat: -25.52, lng: -48.51 }], LOJA, AGORA, {},
+      { abertas: [joao([ped('DELE', -25.53, -48.51)])] });
+    expect(s).toHaveLength(1);
+    expect(s[0].encaixe).toEqual({ driver_id: 'joao', nome: 'João', fixos: ['DELE'] });
+    expect(s[0].paradas.map((p) => p.pedido.id)).toEqual(['DELE', 'NOVO']);
+    expect(s[0].motoboy).toBeNull();
+  });
+
+  it('nada perto: não sugere encaixe e o pronto vira saída nova', () => {
+    const s = montarSaidas([ped('LONGE', -25.60, -48.51)], [], LOJA, AGORA, {}, { abertas: [joao([ped('DELE', -25.53, -48.51)])] });
+    expect(s).toHaveLength(1);
+    expect(s[0].encaixe).toBeUndefined();
+    expect(s[0].paradas.map((p) => p.pedido.id)).toEqual(['LONGE']);
+  });
+
+  it('respeita o máximo de paradas contando os que já eram dele', () => {
+    const dele = [ped('D1', -25.53, -48.51), ped('D2', -25.531, -48.51), ped('D3', -25.532, -48.51)];
+    const s = montarSaidas([ped('NOVO', -25.533, -48.51)], [], LOJA, AGORA, {}, { abertas: [joao(dele)] });
+    expect(s.every((x) => !x.encaixe)).toBe(true);
+  });
+});
+
+describe('esperar pedido que ainda está na cozinha', () => {
+  const cozinha = (id: string, lat: number, emMin: number, criadoHaMin = 5, sla: number | null = 50): PedidoSaida =>
+    ({ ...ped(id, lat, -48.51, criadoHaMin, sla), prontoEm: AGORA + emMin * 60000 });
+
+  it('sugere esperar o pedido perto que fica pronto logo e não atrasa ninguém', () => {
+    const s = montarSaidas([ped('A', -25.53, -48.51)], [], LOJA, AGORA, {}, { emPreparo: [cozinha('C', -25.535, 4)] });
+    expect(s[0].espera?.pedido.id).toBe('C');
+    expect(s[0].espera?.esperaMin).toBe(4);
+    expect(s[0].espera?.perto.id).toBe('A');
+    // a sugestão em si continua só com os prontos
+    expect(s[0].paradas.map((p) => p.pedido.id)).toEqual(['A']);
+  });
+
+  it('não sugere quando falta muito para ficar pronto ou é longe', () => {
+    expect(montarSaidas([ped('A', -25.53, -48.51)], [], LOJA, AGORA, {}, { emPreparo: [cozinha('DEMORA', -25.535, 15)] })[0].espera).toBeFalsy();
+    expect(montarSaidas([ped('A', -25.53, -48.51)], [], LOJA, AGORA, {}, { emPreparo: [cozinha('LONGE', -25.60, 3)] })[0].espera).toBeFalsy();
+  });
+
+  it('não sugere se a espera fizer o pronto atrasar', () => {
+    // A tem 10 min de folga (criado há 40, prazo 50); esperar 7 min empurra a saída para 9 min e a chegada estoura
+    const s = montarSaidas([ped('A', -25.53, -48.51, 40, 50)], [], LOJA, AGORA, {}, { emPreparo: [cozinha('C', -25.535, 7)] });
+    expect(s[0].espera).toBeFalsy();
+  });
+
+  it('cada pedido da cozinha vai para uma saída só', () => {
+    const s = montarSaidas([ped('A', -25.53, -48.51), ped('B', -25.60, -48.51)], [], LOJA, AGORA, {},
+      { emPreparo: [cozinha('C', -25.535, 3)] });
+    expect(s.filter((x) => x.espera).length).toBe(1);
+  });
+
+  it('com o pedido da cozinha na saída, ela só sai depois que ele fica pronto', () => {
+    const [x] = montarSaidas([cozinha('C', -25.53, 6)], [], LOJA, AGORA);
+    expect(x.paradas[0].chegadaMin).toBeGreaterThanOrEqual(8); // 6 de espera + 2 para pegar + o caminho
+  });
+});
