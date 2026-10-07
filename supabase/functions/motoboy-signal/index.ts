@@ -16,7 +16,8 @@ const VALID_SIGNALS = ["a_caminho_loja", "coletou", "entregou", "problema"];
 const STATUS_ABERTOS = ["new", "preparing", "ready"];
 
 function nomeLimpo(dn: string | null): string {
-  const n = (dn ?? "").trim();
+  // Pedido do iFood chega como "iFood #3948 Nome - endereço": o número já aparece no cabeçalho.
+  const n = (dn ?? "").trim().replace(/^iFood\s*#\S+\s+/, "");
   if (!n) return "Cliente";
   return n.split(/\s+[-–—]\s+/)[0].trim() || "Cliente";
 }
@@ -77,6 +78,42 @@ async function alertasPorPedido(admin: any, tenantId: string, orderIds: string[]
   }
   for (const id of Object.keys(sets)) out[id] = Array.from(sets[id]).filter(Boolean);
   return out;
+}
+
+// ── Pedido do iFood que a LOJA entrega: o cliente mostra um código no app do iFood e o motoboy digita
+// aqui; o ifood-shipping confere (verifyDeliveryCode) e, válido, o iFood conclui o pedido sozinho.
+type IfoodPed = { id: string; tenant_id: string; display_id: string | null; delivered_by: string | null; order_type: string | null; delivery_code_ok: boolean | null };
+// deno-lint-ignore no-explicit-any
+async function ifoodDoPedido(admin: any, orderId: string): Promise<IfoodPed | null> {
+  const { data } = await admin.from("ifood_orders")
+    .select("id, tenant_id, display_id, delivered_by, order_type, delivery_code_ok").eq("order_id", orderId).maybeSingle();
+  return (data as IfoodPed | null) ?? null;
+}
+function pedeCodigoIfood(io: IfoodPed | null): boolean {
+  return !!io && (io.order_type ?? "DELIVERY") === "DELIVERY" && io.delivered_by === "MERCHANT" && !io.delivery_code_ok;
+}
+async function conferirCodigoIfood(url: string, key: string, io: IfoodPed, code: string): Promise<{ valid: boolean; erro?: string }> {
+  const internalKey = Deno.env.get("FISCAL_INTERNAL_KEY") ?? "";
+  if (!internalKey) return { valid: false, erro: "Conferência do código indisponível." };
+  try {
+    const r = await fetch(`${url}/functions/v1/ifood-shipping`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}`, apikey: key, "x-internal-key": internalKey },
+      body: JSON.stringify({ action: "order_action", op: "verify_code", tenant_id: io.tenant_id, order_row_id: io.id, code }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (d?.success) return { valid: d.valid === true };
+    return { valid: false, erro: String(d?.error ?? `Falha ${r.status}`) };
+  } catch (e) {
+    return { valid: false, erro: e instanceof Error ? e.message : "Falha de conexão com o iFood." };
+  }
+}
+// Observação do pedido do iFood para o motoboy: sem as linhas internas do funil (estoque, repasse,
+// "pago no app", código de coleta — esse é do entregador do iFood). Ver src/lib/ifoodNotas.ts.
+function notasParaMotoboy(notes: string | null): string {
+  const n = (notes ?? "").trim();
+  if (!n.startsWith("Pedido iFood")) return n;
+  return n.split(" | ").slice(1).filter((p) => !/^(Código de coleta:|Pago no app do iFood|Desconto bancado pelo iFood|Sem vínculo com o cardápio)/.test(p.trim())).join("\n");
 }
 
 function json(obj: unknown, status = 200): Response {
@@ -466,6 +503,7 @@ serve(async (req) => {
         pronto_at: todosProntos ? maxTs("ready_at") : null,
       };
       const { data: tnt } = await admin.from("tenants").select("slug, name").eq("id", order.tenant_id).maybeSingle();
+      const ifoodPed = await ifoodDoPedido(admin, orderId);
       let claimedByName: string | null = null;
       if (order.motoboy_driver_id) {
         const { data: drv } = await admin.from("delivery_drivers").select("name").eq("id", order.motoboy_driver_id).maybeSingle();
@@ -485,7 +523,9 @@ serve(async (req) => {
           lng: order.delivery_lng != null ? Number(order.delivery_lng) : null,
           total: Number(order.total_amount ?? 0),
           taxa: Number(order.delivery_fee ?? 0),
-          pagamento: order.notes ?? "",
+          pagamento: notasParaMotoboy(order.notes as string | null),
+          // Pedido do iFood: número do iFood e se a entrega pede o código do cliente.
+          ifood: ifoodPed ? { numero: ifoodPed.display_id, pede_codigo: pedeCodigoIfood(ifoodPed) } : null,
           // Pago pelo app (Pix): o motoboy NAO cobra na entrega
           pago: !!order.is_paid,
           status: order.status,
@@ -527,6 +567,21 @@ serve(async (req) => {
       if (dono && (!driverId || dono !== driverId)) {
         return json({ ok: false, error: "assumido_por_outro" }, 200);
       }
+      // iFood entregue pela loja: só conclui com o código do cliente conferido pelo iFood — ou, se o cliente
+      // não tiver o código, com a marca "sem código" no histórico (a loja vê no Gestor de Entregas).
+      let semCodigoIfood = false;
+      if (signal === "entregou") {
+        const io = await ifoodDoPedido(admin, orderId);
+        if (pedeCodigoIfood(io)) {
+          if (body.sem_codigo === true) semCodigoIfood = true;
+          else {
+            const code = String(body.ifood_code ?? "").replace(/\D/g, "").slice(0, 12);
+            if (!code) return json({ ok: false, error: "pede_codigo" }, 200);
+            const r = await conferirCodigoIfood(url, key, io!, code);
+            if (!r.valid) return json({ ok: false, error: "codigo_invalido", message: r.erro ?? null }, 200);
+          }
+        }
+      }
       // Registra o horario da 1a vez que o pedido entrou nesta fase do motoboy.
       const tl = (cur.motoboy_timeline as Record<string, string> | null) ?? {};
       if (!tl[signal]) tl[signal] = nowIso;
@@ -535,6 +590,10 @@ serve(async (req) => {
       if (signal === "problema") {
         const probs = Array.isArray(cur.motoboy_problems) ? (cur.motoboy_problems as unknown[]) : [];
         updates.motoboy_problems = [...probs, { at: nowIso, text: motivo ?? "", by: "motoboy" }];
+      }
+      if (semCodigoIfood) {
+        const probs = Array.isArray(cur.motoboy_problems) ? (cur.motoboy_problems as unknown[]) : [];
+        updates.motoboy_problems = [...probs, { at: nowIso, text: "Entregue sem o código do iFood (cliente não informou)", by: "motoboy" }];
       }
       // Registra qual motoboy assumiu o pedido (1o sinal define o dono).
       if (driverId) updates.motoboy_driver_id = driverId;

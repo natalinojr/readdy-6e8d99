@@ -70,6 +70,8 @@ interface OrderData {
   em_rota?: boolean;
   cozinha?: { status: string; novo_at: string | null; preparo_at: string | null; pronto_at: string | null };
   itens: { nome: string; qtd: number }[];
+  /** Pedido do iFood: número do iFood e se a entrega pede o código que o cliente vê no app. */
+  ifood?: { numero: string | null; pede_codigo: boolean } | null;
 }
 
 // HH:MM de um ISO (fuso do dispositivo). '' se vazio.
@@ -102,6 +104,10 @@ export default function MotoboyPage() {
   const [entrando, setEntrando] = useState(false);
   const [loginErro, setLoginErro] = useState('');
   const [aviso, setAviso] = useState('');
+  // Código de entrega do iFood (entrega pela loja): pedido ao tocar em "Entreguei".
+  const [showCodigo, setShowCodigo] = useState(false);
+  const [codigo, setCodigo] = useState('');
+  const [codigoErro, setCodigoErro] = useState('');
   const [showNav, setShowNav] = useState(false);
   // Teclado virtual: empurra a tela pra cima pro campo de "problema" não ficar escondido.
   const [kbInset, setKbInset] = useState(0);
@@ -158,12 +164,12 @@ export default function MotoboyPage() {
   }, [minhaEntregaAtiva, turnoLigado]);
   const avisoGps = textoGps(gps.estado);
 
-  const sinalizar = async (signal: string, motivoTxt?: string) => {
+  const sinalizar = async (signal: string, motivoTxt?: string, extra?: { ifood_code?: string; sem_codigo?: boolean }) => {
     setEnviando(signal);
     try {
       const res = await fetch(edgeUrl(), {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'signal', order_id: orderId, signal, motivo: motivoTxt, driver_id: session?.driver_id }),
+        body: JSON.stringify({ action: 'signal', order_id: orderId, signal, motivo: motivoTxt, driver_id: session?.driver_id, ...extra }),
       });
       const data = await res.json();
       if (data.ok) {
@@ -174,6 +180,13 @@ export default function MotoboyPage() {
         } : o));
         setShowProblema(false);
         setMotivo('');
+        setShowCodigo(false);
+        setCodigo('');
+      } else if (data.error === 'pede_codigo') {
+        setCodigoErro('');
+        setShowCodigo(true);
+      } else if (data.error === 'codigo_invalido') {
+        setCodigoErro(data.message ? `O iFood não confirmou: ${data.message}` : 'Código não confere. Peça ao cliente para conferir no app do iFood.');
       } else if (data.error === 'assumido_por_outro') {
         // Outro entregador assumiu o pedido — recarrega pra refletir e travar.
         setAviso('Este pedido já está sendo entregue por outro entregador.');
@@ -249,7 +262,11 @@ export default function MotoboyPage() {
     <button
       type="button"
       disabled={!!enviando || entregue}
-      onClick={() => sinalizar(signal)}
+      onClick={() => {
+        // iFood entregue pela loja: antes de concluir, pede o código que o cliente vê no app do iFood.
+        if (signal === 'entregou' && order.ifood?.pede_codigo) { setCodigoErro(''); setShowCodigo(true); return; }
+        sinalizar(signal);
+      }}
       className={`w-full flex items-center justify-center gap-2 py-3.5 rounded-2xl text-white font-bold text-sm transition-colors disabled:opacity-50 ${cor}`}
     >
       <i className={icon + ' text-lg'} />
@@ -272,7 +289,9 @@ export default function MotoboyPage() {
             <i className="ri-e-bike-2-line" />
             <span className="text-xs font-semibold opacity-70">Entrega — Pedido</span>
           </div>
-          <h1 className="text-2xl font-black">#{String(order.number).replace(/\D/g, '').slice(-4) || order.number}</h1>
+          <h1 className="text-2xl font-black">
+            {order.ifood?.numero ? `iFood #${order.ifood.numero}` : `#${String(order.number).replace(/\D/g, '').slice(-4) || order.number}`}
+          </h1>
           {order.motoboy_status ? (
             <span className="inline-block mt-2 px-2.5 py-1 rounded-full bg-white/15 text-[11px] font-bold">
               {SINAL_LABEL[order.motoboy_status] ?? order.motoboy_status}
@@ -476,6 +495,40 @@ export default function MotoboyPage() {
       ) : null}
 
       {/* Modal "problema" ancorado no TOPO: o teclado fica embaixo e nunca cobre o campo. */}
+      {/* Código de entrega do iFood: o cliente mostra no app; o iFood confere e conclui o pedido. */}
+      {showCodigo ? (
+        <div className="fixed inset-0 z-[100] bg-black/50 flex items-start justify-center p-4"
+          onClick={() => { if (!enviando) setShowCodigo(false); }}>
+          <form className="bg-white rounded-2xl w-full max-w-md p-4 space-y-3 mt-2" onClick={(e) => e.stopPropagation()}
+            onSubmit={(e) => { e.preventDefault(); if (codigo.trim()) { setCodigoErro(''); sinalizar('entregou', undefined, { ifood_code: codigo.trim() }); } }}>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 flex items-center justify-center bg-red-100 rounded-lg shrink-0">
+                <i className="ri-key-2-line text-red-600" />
+              </div>
+              <div>
+                <h4 className="text-sm font-bold text-zinc-800">Código de entrega do iFood</h4>
+                <p className="text-xs text-zinc-500">Peça ao cliente o código que aparece no app do iFood.</p>
+              </div>
+            </div>
+            <input value={codigo} onChange={(e) => setCodigo(e.target.value.replace(/\D/g, '').slice(0, 8))}
+              inputMode="numeric" autoFocus placeholder="0000"
+              className="w-full px-3 py-3 rounded-xl border border-zinc-200 focus:border-red-400 outline-none text-2xl font-black tracking-[0.4em] text-center" />
+            {codigoErro ? <p className="text-xs font-semibold text-red-600">{codigoErro}</p> : null}
+            <button type="submit" disabled={!codigo.trim() || enviando === 'entregou'}
+              className="w-full py-3 rounded-xl bg-green-600 text-white text-sm font-bold disabled:opacity-50">
+              {enviando === 'entregou' ? 'Conferindo com o iFood…' : 'Confirmar entrega'}
+            </button>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setShowCodigo(false)}
+                className="flex-1 py-2.5 rounded-xl bg-zinc-100 text-zinc-600 text-xs font-semibold">Voltar</button>
+              <button type="button" disabled={enviando === 'entregou'}
+                onClick={() => { if (window.confirm('Entregar sem o código? A loja vai ver que o cliente não informou.')) sinalizar('entregou', undefined, { sem_codigo: true }); }}
+                className="flex-1 py-2.5 rounded-xl border border-zinc-200 text-zinc-500 text-xs font-semibold disabled:opacity-50">Cliente não tem o código</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
       {showProblema ? (
         <div className="fixed inset-0 z-[100] bg-black/50 flex items-start justify-center p-4"
           onClick={() => { setShowProblema(false); setMotivo(''); }}>
