@@ -1059,15 +1059,26 @@ export function BaixaDaConta({ tenantId, billId, onCancelar, onFeito }: { tenant
   return <BaixaConta conta={conta} tenantId={tenantId} saldo={Number(conta.amount) - Number(conta.paid_amount ?? 0)} hoje={hoje} onCancelar={onCancelar} onFeito={onFeito} />;
 }
 
-// Baixa de conta paga por fora: mesmo caminho do "Pagar" da aba Contas Vencidas (financial-write ›
-// pay_bill — lança a despesa, debita o banco, gera a próxima recorrente). Classificação DRE obrigatória
-// quando a conta não tem (regra do dono, 2026-09-12).
+// "Já paguei" (dono, 2026-10-08): primeiro COMO pagou. Boleto/Pix/transferência → acha a saída no extrato
+// e a baixa sai dela (conciliacao-pagamentos › bill_extrato_search + link_manual: data, valor, juros e conta
+// do banco vêm da linha). Dinheiro/cartão → só a data (financial-write › pay_bill). Se a saída não está no
+// extrato (banco sem integração, ainda não caiu), dá para dar baixa sem ele, como antes. Classificação DRE
+// obrigatória quando a conta não tem (regra do dono, 2026-09-12).
+const FORMAS_BANCO = ['Boleto', 'Pix', 'Transferência'];
+interface CandidataExtrato { id: string; transaction_date: string; valor: number; diferenca: number; description: string | null; counterpart_name: string | null; sugerida: boolean; outra: boolean }
+const dm = (d: string | null | undefined) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}` : '—');
+const reais = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
 function BaixaConta({ conta, tenantId, saldo, hoje, onCancelar, onFeito }: {
   conta: ContaAtrasada; tenantId: string; saldo: number; hoje: string; onCancelar: () => void; onFeito: () => void;
 }) {
+  const [forma, setForma] = useState<string | null>(null);
+  const [semExtrato, setSemExtrato] = useState(false);
+  const [busca, setBusca] = useState<{ candidatos: CandidataExtrato[]; de: string; ate: string; extrato_ate: string | null } | null>(null);
+  const [buscando, setBuscando] = useState(false);
   const [valor, setValor] = useState(saldo.toFixed(2));
+  const [outroValor, setOutroValor] = useState(false);
   const [dia, setDia] = useState(hoje);
-  const [forma, setForma] = useState('Pix');
   const [dre, setDre] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -1076,15 +1087,48 @@ function BaixaConta({ conta, tenantId, saldo, hoje, onCancelar, onFeito }: {
   const [motivo, setMotivo] = useState('');
   const { toPayload } = useDreEscolha();
   const precisaDre = precisaClassificarDRE(conta);
+  const peloBanco = !!forma && FORMAS_BANCO.includes(forma) && !semExtrato;
+
+  const procurar = useCallback(async (sincronizar: boolean) => {
+    setBuscando(true); setErro(null);
+    if (sincronizar) {
+      await Promise.all([
+        invokeWithAuth('inter-bank', { body: { action: 'sync', tenant_id: tenantId } }),
+        invokeWithAuth('mp-conciliation', { body: { action: 'sync', tenant_id: tenantId } }),
+      ]).catch(() => null);
+    }
+    const { data, error } = await invokeWithAuth<{ candidatos?: CandidataExtrato[]; de: string; ate: string; extrato_ate: string | null; error?: string }>('conciliacao-pagamentos', {
+      body: { action: 'bill_extrato_search', tenant_id: tenantId, bill_id: conta.id },
+    });
+    setBuscando(false);
+    if (error || data?.error || !data) { setErro(String(error?.message ?? data?.error ?? 'Não consegui procurar no extrato')); setBusca({ candidatos: [], de: '', ate: '', extrato_ate: null }); return; }
+    setBusca({ candidatos: data.candidatos ?? [], de: data.de, ate: data.ate, extrato_ate: data.extrato_ate });
+  }, [tenantId, conta.id]);
+
+  useEffect(() => { if (peloBanco && !busca && !buscando) procurar(false); }, [peloBanco, busca, buscando, procurar]);
+
+  const ligar = async (c: CandidataExtrato) => {
+    if (precisaDre && !dre) { setErro('Escolha a classificação DRE.'); return; }
+    setSalvando(true); setErro(null);
+    const { data: r, error } = await invokeWithAuth<{ error?: string; results?: Array<{ ok: boolean; msg: string }> }>('conciliacao-pagamentos', {
+      body: { action: 'link_manual', tenant_id: tenantId, id: c.id, alvo: { kind: 'payable', ref_id: conta.id }, ...(precisaDre ? toPayload(dre) ?? {} : {}) },
+    });
+    setSalvando(false);
+    const res = r?.results?.[0];
+    if (error || r?.error) setErro(String(error?.message ?? r?.error));
+    else if (res && !res.ok) setErro(res.msg);
+    else onFeito();
+  };
+
   const salvar = async (e: React.FormEvent) => {
     e.preventDefault();
-    const v = Number(valor.replace(',', '.'));
+    const v = outroValor ? Number(valor.replace(',', '.')) : saldo;
     if (!(v > 0)) { setErro('Informe o valor pago.'); return; }
     if (precisaDre && !dre) { setErro('Escolha a classificação DRE.'); return; }
     if (avisos.length && motivo.trim().length < 3) { setErro('Escreva o motivo para dar baixa mesmo assim.'); return; }
     setSalvando(true); setErro(null);
     const { data: r, error } = await invokeWithAuth<{ error?: string }>('financial-write', {
-      body: { action: 'pay_bill', tenant_id: tenantId, payload: { id: conta.id, paid_date: dia, paid_amount: v, payment_method: forma, ...(precisaDre ? toPayload(dre) ?? {} : {}), ...(avisos.length ? { motivo_aviso: motivo.trim() } : {}) } },
+      body: { action: 'pay_bill', tenant_id: tenantId, payload: { id: conta.id, paid_date: dia, paid_amount: v, payment_method: forma ?? 'Pix', ...(precisaDre ? toPayload(dre) ?? {} : {}), ...(avisos.length ? { motivo_aviso: motivo.trim() } : {}) } },
     });
     setSalvando(false);
     if ((error as { code?: string } | null)?.code === PRECISA_CONFIRMAR) { setAvisos(avisosDaMensagem(error!.message)); return; }
@@ -1092,28 +1136,78 @@ function BaixaConta({ conta, tenantId, saldo, hoje, onCancelar, onFeito }: {
     if (falha) setErro(String(falha)); else onFeito();
   };
   const campo = 'h-8 px-2 rounded-lg border border-zinc-200 bg-white text-xs focus:outline-none focus:border-violet-400';
+  const chip = (f: string) => `h-8 px-3 rounded-lg border text-xs font-semibold cursor-pointer ${forma === f ? 'bg-violet-600 border-violet-600 text-white' : 'bg-white border-zinc-200 text-zinc-700 hover:bg-zinc-50'}`;
+
   return (
-    <form onSubmit={salvar} className="mt-2 space-y-2 rounded-lg bg-white border border-zinc-200 p-2.5">
-      <div className="grid grid-cols-3 gap-1.5">
-        <label className="text-[10px] text-zinc-500">Valor pago
-          <input value={valor} onChange={(e) => setValor(e.target.value)} inputMode="decimal" className={`${campo} w-full mt-0.5`} />
-        </label>
-        <label className="text-[10px] text-zinc-500">Pago em
-          <input type="date" value={dia} max={hoje} onChange={(e) => setDia(e.target.value)} className={`${campo} w-full mt-0.5`} />
-        </label>
-        <label className="text-[10px] text-zinc-500">Como
-          <select value={forma} onChange={(e) => setForma(e.target.value)} className={`${campo} w-full mt-0.5`}>
-            {['Pix', 'Boleto', 'Transferência', 'Dinheiro', 'Cartão'].map((f) => <option key={f}>{f}</option>)}
-          </select>
-        </label>
+    <div className="mt-2 space-y-2 rounded-lg bg-white border border-zinc-200 p-2.5">
+      <p className="text-[11px] font-semibold text-zinc-600">Como foi pago?</p>
+      <div className="flex flex-wrap gap-1.5">
+        {[...FORMAS_BANCO, 'Dinheiro', 'Cartão'].map((f) => (
+          <button key={f} type="button" disabled={salvando} onClick={() => { setForma(f); setSemExtrato(false); setErro(null); setAvisos([]); }} className={chip(f)}>{f}</button>
+        ))}
       </div>
-      {precisaDre && <DreClassificacaoSelect value={dre} onChange={setDre} categorias={[]} />}
-      <AvisoAntesDePagar avisos={avisos} motivo={motivo} onMotivo={setMotivo} compacto />
+      {forma && precisaDre && <DreClassificacaoSelect value={dre} onChange={setDre} categorias={[]} />}
+
+      {peloBanco && (
+        <div className="space-y-1.5">
+          {buscando ? <p className="text-[11px] text-zinc-500"><i className="ri-loader-4-line animate-spin" /> Procurando a saída no extrato…</p>
+            : busca && busca.candidatos.length > 0 ? (
+              <>
+                <p className="text-[11px] text-zinc-500">Qual destas saídas do banco foi o pagamento de {reais(saldo)}?</p>
+                {busca.candidatos.map((c) => (
+                  <button key={c.id} type="button" disabled={salvando} onClick={() => ligar(c)}
+                    className="w-full text-left flex items-center gap-2 rounded-lg border border-zinc-200 hover:border-violet-300 hover:bg-violet-50/40 px-2.5 py-2 disabled:opacity-50 cursor-pointer">
+                    <span className="text-[11px] font-bold text-zinc-500 tabular-nums w-10">{dm(c.transaction_date)}</span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-xs font-semibold text-zinc-800 truncate">{c.counterpart_name || c.description || 'Saída do banco'}</span>
+                      <span className="block text-[10px] text-zinc-500">
+                        {c.sugerida ? 'o sistema já achava que era esta · ' : c.outra ? 'estava sugerida para outra conta · ' : ''}
+                        {Math.abs(c.diferenca) < 0.01 ? 'valor igual' : c.diferenca > 0 ? `${reais(c.diferenca)} de juros` : `${reais(-c.diferenca)} de desconto`}
+                      </span>
+                    </span>
+                    <span className="text-xs font-bold tabular-nums">{reais(c.valor)}</span>
+                    <span className="text-[11px] font-bold text-violet-700 whitespace-nowrap">{salvando ? '…' : 'É esta'}</span>
+                  </button>
+                ))}
+              </>
+            ) : busca && busca.de ? (
+              <p className="text-[11px] text-amber-800 bg-amber-50 rounded-lg px-2.5 py-2">
+                Não achei no extrato uma saída de {reais(saldo)} entre {dm(busca.de)} e {dm(busca.ate)}
+                {busca.extrato_ate ? ` (o extrato vai até ${dm(busca.extrato_ate)})` : ''}.
+              </p>
+            ) : null}
+          {!buscando && (
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
+              <button type="button" onClick={() => procurar(true)} disabled={salvando} className="text-[11px] font-semibold text-violet-700 hover:underline cursor-pointer"><i className="ri-refresh-line" /> Buscar no banco de novo</button>
+              <button type="button" onClick={() => setSemExtrato(true)} disabled={salvando} className="text-[11px] font-semibold text-zinc-500 hover:underline cursor-pointer">Dar baixa sem o extrato</button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {forma && !peloBanco && (
+        <form onSubmit={salvar} className="space-y-2">
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="text-[10px] text-zinc-500">Pago em
+              <input type="date" value={dia} max={hoje} onChange={(e) => setDia(e.target.value)} className={`${campo} block mt-0.5`} />
+            </label>
+            {outroValor ? (
+              <label className="text-[10px] text-zinc-500">Valor pago
+                <input value={valor} onChange={(e) => setValor(e.target.value)} inputMode="decimal" className={`${campo} block w-28 mt-0.5`} />
+              </label>
+            ) : (
+              <span className="text-xs text-zinc-600 pb-2">{reais(saldo)} · <button type="button" onClick={() => setOutroValor(true)} className="text-violet-700 font-semibold hover:underline cursor-pointer">outro valor</button></span>
+            )}
+          </div>
+          <AvisoAntesDePagar avisos={avisos} motivo={motivo} onMotivo={setMotivo} compacto />
+          <div className="flex gap-1.5">
+            <button type="submit" disabled={salvando} className={PRINCIPAL}>{salvando ? 'Salvando…' : <><i className="ri-check-line" /> {avisos.length ? 'Dar baixa mesmo assim' : 'Confirmar baixa'}</>}</button>
+            <button type="button" onClick={onCancelar} disabled={salvando} className={NEUTRO}>Cancelar</button>
+          </div>
+        </form>
+      )}
       {erro && <p className="text-[11px] text-red-600">{erro}</p>}
-      <div className="flex gap-1.5">
-        <button type="submit" disabled={salvando} className={PRINCIPAL}>{salvando ? 'Salvando…' : <><i className="ri-check-line" /> {avisos.length ? 'Dar baixa mesmo assim' : 'Confirmar baixa'}</>}</button>
-        <button type="button" onClick={onCancelar} disabled={salvando} className={NEUTRO}>Cancelar</button>
-      </div>
-    </form>
+      {(!forma || peloBanco) && <button type="button" onClick={onCancelar} disabled={salvando} className={`${NEUTRO} w-full`}>Cancelar</button>}
+    </div>
   );
 }

@@ -522,10 +522,17 @@ async function reverseStockForItems(
       p_notes: null, p_order_id: null, p_operator_id: user.id, p_batch_id: null,
     });
     if (mvErr) console.error('[purchase-write] estorno fn_add_stock_movement error:', mvErr.message ?? mvErr);
-    // Estorno ligado à compra: soma com sinal com as entradas dela (Alterar data / entradasDaCompra)
-    else if (mvRes?.movement_id && (soOQueEntrou?.id || item.purchase_id)) {
-      await supabase.from('stock_movements').update({ purchase_id: soOQueEntrou?.id ?? item.purchase_id })
-        .eq('id', mvRes.movement_id).eq('tenant_id', tenant_id);
+    // Estorno ligado à compra: soma com sinal com as entradas dela (Alterar data / entradasDaCompra).
+    // Data do estorno = data do recebimento, a mesma da entrada que ele desfaz (2026-10-08): com a hora do
+    // clique, excluir/editar uma compra recebida dias antes deixava entrada em dobro naquele dia e uma saída
+    // que ninguém fez hoje (Lapeana NF 336: +100 em 02/10, −100 em 08/10).
+    else if (mvRes?.movement_id) {
+      const purchaseId = soOQueEntrou?.id ?? item.purchase_id ?? null;
+      const datar = !!recebidoEm && new Date(recebidoEm).getTime() < Date.now() - 60_000;
+      if (purchaseId || datar) {
+        await supabase.from('stock_movements').update({ ...(purchaseId ? { purchase_id: purchaseId } : {}), ...(datar ? { created_at: recebidoEm } : {}) })
+          .eq('id', mvRes.movement_id).eq('tenant_id', tenant_id);
+      }
     }
   }
 }

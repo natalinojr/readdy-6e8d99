@@ -141,7 +141,9 @@ export function numeros(d: DadosPainel, linhas: Linha[]): Numeros {
     aPagar: soma(dividas),
     vencidas: soma(dividas.filter((l) => l.atrasada)),
     semana: soma(dividas.filter((l) => l.grupo === 'sem')),
-    saldo: { v: r2(d.saldos.reduce((s, x) => s + Number(x.saldo || 0), 0)), atualizado_em: integradas.length ? integradas[0] : null },
+    // Hora da busca mais recente (2026-10-08): o Mercado Pago guarda a hora do último relatório dele, que
+    // fica para trás mesmo com a busca feita agora — a mais antiga parecia "não atualizou".
+    saldo: { v: r2(d.saldos.reduce((s, x) => s + Number(x.saldo || 0), 0)), atualizado_em: integradas.length ? integradas[integradas.length - 1] : null },
     saidas: soma(linhas.filter((l) => l.tipo === 'saida')),
     entradasPendentes: { v: r2(ent.reduce((s, e) => s + Number(e.valor), 0)), n: ent.length },
   };

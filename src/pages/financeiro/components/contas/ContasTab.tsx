@@ -67,9 +67,9 @@ function Situacao({ l }: { l: Linha }) {
 }
 function Explica({ children, rotulo, alinhar = 'right' }: { children: React.ReactNode; rotulo: React.ReactNode; alinhar?: 'left' | 'right' }) {
   return (
-    <span tabIndex={0} className="relative inline-flex items-center gap-1 cursor-help outline-none group">
+    <span tabIndex={0} className="relative inline-flex items-center gap-1 cursor-help outline-none group/explica">
       {rotulo}
-      <span className={`hidden group-hover:block group-focus:block absolute top-[calc(100%+6px)] ${alinhar === 'right' ? 'right-0' : 'left-0'} z-30 w-[330px] bg-zinc-900 text-zinc-200 rounded-xl p-3.5 text-xs font-medium leading-relaxed text-left shadow-xl whitespace-normal`}>{children}</span>
+      <span className={`hidden group-hover/explica:block group-focus/explica:block absolute top-[calc(100%+6px)] ${alinhar === 'right' ? 'right-0' : 'left-0'} z-30 w-[330px] bg-zinc-900 text-zinc-200 rounded-xl p-3.5 text-xs font-medium leading-relaxed text-left shadow-xl whitespace-normal`}>{children}</span>
     </span>
   );
 }
@@ -141,6 +141,7 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
   const [lote, setLote] = useState(false);
   // Celular (2026-10-08): sem mouse, "Marcar" liga o modo em que tocar na linha marca em vez de abrir.
   const [marcando, setMarcando] = useState(false);
+  const [aviso, setAviso] = useState<string | null>(null);
   const [aberta, setAberta] = useState<Linha | null>(null);
   const [extrato, setExtrato] = useState<{ id: string; transaction_date: string; bank_account_id?: string | null } | null>(null);
   const [abreDep, setAbreDep] = useState(false);
@@ -175,9 +176,19 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
       invokeWithAuth('inter-bank', { body: { action: 'sync', tenant_id: user.tenantId, ...maxAge } }),
       invokeWithAuth('mp-conciliation', { body: { action: 'sync', tenant_id: user.tenantId, ...maxAge } }),
     ]).catch(() => null);
+    // Saída do banco que bate EXATO com uma conta em aberto (valor, vencimento e fornecedor) já dá a baixa
+    // — a mesma regra da rotina diária (auto_confirm_exact). O resto fica como "Saiu sem explicação".
+    // Só quem pode conciliar (o servidor recusa os demais; aí a tela só recarrega).
+    let baixadas = 0;
+    if (financeiro) {
+      const { data: ac } = await invokeWithAuth<{ baixados?: unknown[] }>('conciliacao-pagamentos', { body: { action: 'auto_confirm_exact', tenant_id: user.tenantId } }).catch(() => ({ data: null }));
+      baixadas = ac?.baixados?.length ?? 0;
+    }
     await carregar();
     setAtualizando(false);
-  }, [user?.tenantId, carregar]);
+    if (forcar || baixadas) setAviso(baixadas ? `${baixadas === 1 ? '1 conta baixada' : `${baixadas} contas baixadas`} pelo extrato` : 'Banco atualizado agora');
+  }, [user?.tenantId, carregar, financeiro]);
+  useEffect(() => { if (!aviso) return; const t = setTimeout(() => setAviso(null), 6000); return () => clearTimeout(t); }, [aviso]);
   useEffect(() => { setDados(null); carregar().then(() => atualizar(false)); }, [carregar]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (versao) carregar(); }, [versao, carregar]);
   const recarregar = () => setVersao((v) => v + 1);
@@ -250,6 +261,7 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
           </button>
         </div>
       </div>
+      {aviso && <div className="mb-3 rounded-xl bg-emerald-50 text-emerald-800 text-sm font-semibold px-3 py-2"><i className="ri-check-line" /> {aviso}</div>}
       {erro && <div className="mb-3 rounded-xl bg-red-50 text-red-700 text-sm px-3 py-2">Não consegui carregar as contas: {erro}</div>}
       {!dados || !nums ? (
         <div className="flex flex-col gap-2">{[0, 1, 2].map((i) => <div key={i} className="h-14 rounded-xl bg-zinc-100 animate-pulse" />)}</div>
@@ -264,7 +276,7 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
             <div className="rounded-2xl px-3.5 py-2.5 min-w-[150px] snap-start">
               <div className="text-xs font-bold text-zinc-500"><i className="ri-bank-line" /> Saldo · {dados.saldos.length} conta{dados.saldos.length === 1 ? '' : 's'}</div>
               <div className="text-lg md:text-xl font-extrabold tabular-nums whitespace-nowrap text-zinc-900">{brl(nums.saldo.v)}</div>
-              <div className="text-xs text-zinc-500 font-semibold whitespace-nowrap">{nums.saldo.atualizado_em ? `atualizado às ${hora(nums.saldo.atualizado_em)}` : 'sem banco integrado'}</div>
+              <div className="text-xs text-zinc-500 font-semibold whitespace-nowrap" title={dados.saldos.map((x) => `${x.nome}: ${brl(x.saldo)}${x.atualizado_em ? ` · dados de ${hora(x.atualizado_em)}` : ' · lançado à mão'}`).join(' | ')}>{nums.saldo.atualizado_em ? `atualizado às ${hora(nums.saldo.atualizado_em)}` : 'sem banco integrado'}</div>
             </div>
             {nums.saidas.n ? kpi('semexp', 'Saiu sem explicação', brl(nums.saidas.v), `${nums.saidas.n} saída${nums.saidas.n > 1 ? 's' : ''} do banco`, 'amb')
               : <div className="rounded-2xl border border-zinc-200 bg-white px-3.5 py-2.5 min-w-[150px] snap-start"><div className="text-xs font-bold text-zinc-500">Banco confere</div><div className="text-lg md:text-xl font-extrabold text-emerald-700">✓</div><div className="text-xs text-zinc-500 font-semibold">toda saída explicada</div></div>}
@@ -299,7 +311,7 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
 
           {/* tabela */}
           <div className="bg-white border border-zinc-200 rounded-2xl">
-            <div className="hidden md:grid grid-cols-[28px_70px_minmax(0,1fr)_88px_96px_96px_116px_104px_14px] gap-2 items-center px-3 py-2 text-xs font-bold text-zinc-500 border-b border-zinc-200 bg-zinc-50/60 rounded-t-2xl">
+            <div className="hidden md:grid grid-cols-[28px_70px_minmax(0,1fr)_88px_96px_110px_116px_104px_14px] gap-2 items-center px-3 py-2 text-xs font-bold text-zinc-500 border-b border-zinc-200 bg-zinc-50/60 rounded-t-2xl">
               <span /><span>{aba === 'pagas' ? 'Pago em' : 'Vence'}</span><span>Conta</span><span className="text-right">Valor (R$)</span>
               <span className="text-right">{aba === 'pagas' ? '' : 'Saldo depois'}</span>
               <span className="text-right text-blue-900">{aba === 'pagas' ? '' : <Explica rotulo={<>Projetado <i className="ri-information-line" /></>}>{REGRA(janela)}</Explica>}</span>
@@ -343,7 +355,7 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
         <div className="fixed left-3 right-[76px] bottom-20 md:left-1/2 md:right-auto md:-translate-x-1/2 md:bottom-4 z-40 md:w-[min(560px,calc(100vw-24px))] bg-zinc-900 text-white rounded-2xl px-3 md:px-4 py-2.5 flex items-center gap-2 md:gap-3 shadow-2xl">
           <span className="text-sm whitespace-nowrap">{sel.size}<span className="hidden md:inline"> selecionada{sel.size > 1 ? 's' : ''}</span></span><b className="tabular-nums whitespace-nowrap text-sm md:text-base">{brl(somaSel)}</b>
           <span className="flex-1" />
-          {financeiro && selBaixa.length > 0 && <button onClick={() => setLote(true)} className="h-8 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-900 text-xs font-bold whitespace-nowrap"><i className="ri-check-double-line" /> Paguei<span className="hidden sm:inline"> no banco</span>{selBaixa.length < sel.size ? ` (${selBaixa.length})` : ''}</button>}
+          {financeiro && selBaixa.length > 0 && <button onClick={() => setLote(true)} className="h-8 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-900 text-xs font-bold whitespace-nowrap"><i className="ri-check-double-line" /> Já paguei{selBaixa.length < sel.size ? ` (${selBaixa.length})` : ''}</button>}
           <button onClick={() => { setSel(new Set()); setMarcando(false); }} className="text-xs font-bold text-zinc-300" aria-label="Limpar"><span className="hidden md:inline">Limpar</span><i className="md:hidden ri-close-line text-lg" /></button>
         </div>
       )}
@@ -368,7 +380,7 @@ function LinhaTabela({ l, s, sel, marcando, onSel, onAbrir }: { l: Linha; s?: Sa
   const temSaldo = !!s && l.tipo !== 'paga';
   return (
     <div onClick={marcando ? onSel : onAbrir} role="button"
-      className={`group relative grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[28px_70px_minmax(0,1fr)_88px_96px_96px_116px_104px_14px] gap-x-2 gap-y-1.5 items-center px-4 md:px-3 py-2.5 border-b border-zinc-100 last:border-b-0 cursor-pointer hover:bg-amber-50/30 ${sel ? 'bg-amber-50/60' : ''}`}>
+      className={`group relative grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[28px_70px_minmax(0,1fr)_88px_96px_110px_116px_104px_14px] gap-x-2 gap-y-1.5 items-center px-4 md:px-3 py-2.5 border-b border-zinc-100 last:border-b-0 cursor-pointer hover:bg-amber-50/30 ${sel ? 'bg-amber-50/60' : ''}`}>
       {(l.atrasada || l.tipo === 'saida') && <span className={`absolute left-0 top-0 bottom-0 w-[3px] ${l.tipo === 'saida' ? 'bg-orange-600' : 'bg-red-600'}`} />}
       <span onClick={(e) => { e.stopPropagation(); onSel(); }} className={`hidden md:grid w-[18px] h-[18px] rounded-[5px] border-[1.5px] place-items-center text-[13px] ${sel ? 'bg-zinc-900 border-zinc-900 text-white opacity-100' : 'border-zinc-400 opacity-0 group-hover:opacity-100'}`}>{sel && <i className="ri-check-line" />}</span>
       <span className={`hidden md:block text-xs font-bold ${l.atrasada ? 'text-red-600' : 'text-zinc-700'}`}>{dataTxt}<small className="block font-semibold text-zinc-500">{sub2}</small></span>
@@ -379,7 +391,7 @@ function LinhaTabela({ l, s, sel, marcando, onSel, onAbrir }: { l: Linha; s?: Sa
       <span className="text-right text-[13.5px] font-extrabold tabular-nums whitespace-nowrap">{nb(l.valor)}</span>
       <span className={`hidden md:block text-right text-[13px] font-bold tabular-nums ${temSaldo && s!.real < 0 ? 'text-red-600' : 'text-zinc-600'}`}>{temSaldo ? sinal(s!.real) : <span className="text-zinc-300">—</span>}</span>
       <span className={`hidden md:block text-right text-[13px] font-bold tabular-nums ${temSaldo && s!.proj < 0 ? 'text-red-600' : 'text-blue-900'}`} onClick={(e) => e.stopPropagation()}>
-        {temSaldo ? <Explica rotulo={sinal(s!.proj)}><ContaDoProjetado l={l} s={s!} /></Explica> : <span className="text-zinc-300">—</span>}
+        {temSaldo ? <span className="inline-flex items-center gap-1">{sinal(s!.proj)}<Explica rotulo={<i className="ri-question-line text-zinc-400 hover:text-blue-900" aria-label="Como chegou neste valor" />}><ContaDoProjetado l={l} s={s!} /></Explica></span> : <span className="text-zinc-300">—</span>}
       </span>
       {/* celular: data + andamento + situação numa linha */}
       <span className="md:hidden flex items-center gap-2"><span className={`text-xs font-bold ${l.atrasada ? 'text-red-600' : 'text-zinc-600'}`}>{dataTxt}</span><Andamento l={l} /></span>

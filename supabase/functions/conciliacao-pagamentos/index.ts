@@ -80,7 +80,7 @@
 // O estorno (undo) é feito aqui, com service role, porque não existe "despagar" no financial-write.
 
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
-import { janelaPagoExtrato, ordenarPorDias, valorIgual, valorPago } from '../_shared/trilha-acoes.ts';
+import { candidatosDaConta, janelaContaAberta, janelaPagoExtrato, ordenarPorDias, valorIgual, valorPago } from '../_shared/trilha-acoes.ts';
 
 type Admin = SupabaseClient;
 type Row = Record<string, any>;
@@ -2027,6 +2027,26 @@ Deno.serve(async (req: Request) => {
         if (b.status === 'paid' || b.status === 'cancelled') return errResp('Esta conta já está quitada ou cancelada');
         // Conta sem classificação DRE: o pay_bill recusa. A tela manda a categoria escolhida ali mesmo
         // (antes o usuário tinha de sair para Contas a Pagar, classificar e voltar) — 2026-09-25.
+        // dre_group (+ dre_category_name): mesma escolha da baixa à mão (DreClassificacaoSelect sem categorias
+        // oferece o grupo) — reaproveita/cria a categoria raiz do grupo, como o pay_bill (2026-10-08).
+        if (!b.dre_category_id && !body.dre_category_id && body.dre_group && !['purchase', 'hr_payroll'].includes(String(b.reference_type ?? ''))) {
+          const grupo = String(body.dre_group);
+          if (grupo !== 'expense' && grupo !== 'tax') {
+            const { data: g } = await admin.from('fin_dre_groups').select('key').eq('tenant_id', tenantId).eq('key', grupo).maybeSingle();
+            if (!g || ['revenue', 'cost'].includes(grupo)) return errResp('Grupo DRE inválido para despesa');
+          }
+          const nome = String(body.dre_category_name || (grupo === 'expense' ? 'Despesas Operacionais' : grupo === 'tax' ? 'Deduções da receita bruta' : grupo)).trim().slice(0, 120);
+          const { data: existentes } = await admin.from('fin_dre_categories').select('id, name').eq('tenant_id', tenantId).eq('group_type', grupo);
+          let catId = (existentes ?? []).find((c: Row) => String(c.name).trim().toLowerCase() === nome.toLowerCase())?.id ?? null;
+          if (!catId) {
+            const { data: nova, error: novaErr } = await admin.from('fin_dre_categories')
+              .insert({ tenant_id: tenantId, name: nome, group_type: grupo, sort_order: 0, is_active: true }).select('id').single();
+            if (novaErr || !nova) return errResp('Criar a categoria DRE: ' + (novaErr?.message ?? 'falhou'), 500);
+            catId = nova.id;
+          }
+          const { error: catErr } = await admin.from('fin_accounts_payable').update({ dre_category_id: catId }).eq('id', b.id).eq('tenant_id', tenantId);
+          if (catErr) return errResp('Classificar a conta: ' + catErr.message, 500);
+        }
         if (!b.dre_category_id && body.dre_category_id && !['purchase', 'hr_payroll'].includes(String(b.reference_type ?? ''))) {
           const { data: cat } = await admin.from('fin_dre_categories').select('id, group_type')
             .eq('id', String(body.dre_category_id)).eq('tenant_id', tenantId).maybeSingle();
@@ -2092,6 +2112,28 @@ Deno.serve(async (req: Request) => {
       }
       log('INFO', 'link_manual', 'ok', { tenantId, userId, rowId, kind, lembrou: !!lembrou });
       return json({ success: true, results: [r], lembrou });
+    }
+
+    // ── "Já paguei" numa conta em aberto: qual saída do extrato foi? (2026-10-08) ──
+    // A tela mostra as candidatas; o usuário escolhe e a baixa sai pelo link_manual (mesmo caminho da
+    // Conciliação: data, valor, juros/desconto e conta do banco vêm da linha do extrato).
+    if (action === 'bill_extrato_search') {
+      const { data: bill } = await admin.from('fin_accounts_payable').select('id, description, supplier, amount, paid_amount, due_date, status')
+        .eq('id', String(body.bill_id ?? '')).eq('tenant_id', tenantId).maybeSingle();
+      if (!bill) return errResp('Conta a pagar não encontrada', 404);
+      if (bill.status === 'paid' || bill.status === 'cancelled') return errResp('Esta conta já está quitada ou cancelada');
+      const falta = round2(Number(bill.amount) - Number(bill.paid_amount ?? 0));
+      const jan = janelaContaAberta(bill.due_date, todayBR());
+      const { data: linhas, error } = await admin.from('fin_bank_statement_imports')
+        .select('id, transaction_date, amount, description, counterpart_name, bank_account_id, transaction_type, status, reconciled, match_kind, match_ref_id, match_detail')
+        .eq('tenant_id', tenantId).eq('transaction_type', 'debit').eq('status', 'pending')
+        .gte('transaction_date', jan.de).lte('transaction_date', jan.ate).limit(1000);
+      if (error) return errResp('Buscar no extrato: ' + error.message, 500);
+      const candidatos = candidatosDaConta((linhas ?? []) as Row[], String(bill.id), falta, jan.base);
+      // Até quando o extrato está atualizado (a tela diz "procurei até…")
+      const { data: ult } = await admin.from('fin_bank_statement_imports').select('transaction_date')
+        .eq('tenant_id', tenantId).order('transaction_date', { ascending: false }).limit(1);
+      return json({ success: true, falta, de: jan.de, ate: jan.ate, extrato_ate: ult?.[0]?.transaction_date ?? null, candidatos });
     }
 
     // ── Conta já paga × linha do extrato (Trilha versão D) ────────────────────

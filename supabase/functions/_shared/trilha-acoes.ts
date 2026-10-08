@@ -108,6 +108,56 @@ export function ordenarPorDias<T extends { transaction_date: string }>(linhas: T
     .slice(0, max);
 }
 
+// ── "Já paguei" numa conta EM ABERTO: achar a saída no extrato (conciliacao-pagamentos › bill_extrato_search) ──
+// Regra do dono (2026-10-08): pago por boleto/Pix/transferência → a baixa vem da linha do banco (o mesmo
+// link_manual da Conciliação, que já trata juros/desconto e a conta do banco); dinheiro → só a data.
+/** Janela: 20 dias antes do vencimento (ou de hoje, se vence depois) até hoje. */
+export function janelaContaAberta(dueDate: unknown, hoje: string): { base: string; de: string; ate: string } {
+  const venc = String(dueDate ?? '').slice(0, 10);
+  const base = dataValida(venc) ? venc : hoje;
+  const ref = base < hoje ? base : hoje;
+  return { base, de: addDias(ref, -20), ate: hoje };
+}
+
+/** Diferença aceita entre a saída e o que falta pagar: até 10% a mais (juros/multa) e 5% a menos (desconto). */
+export function valorPerto(saida: number, falta: number): boolean {
+  const d = round2(saida - falta);
+  return d <= Math.max(0.05, round2(falta * 0.10)) && d >= -Math.max(0.05, round2(falta * 0.05));
+}
+
+export interface LinhaExtratoBusca {
+  id: string; transaction_date: string; amount: number; transaction_type?: string | null; status?: string | null;
+  reconciled?: boolean | null; match_kind?: string | null; match_ref_id?: string | null;
+  // deno-lint-ignore no-explicit-any
+  match_detail?: Record<string, any> | null; description?: string | null; counterpart_name?: string | null; bank_account_id?: string | null;
+}
+
+/**
+ * Saídas do extrato que podem ser o pagamento desta conta: débito pendente, sem baixa confirmada, sem
+ * outro destino (transferência, repasse…) — sugestão de vínculo a conta/nota pode ser trocada. Ordem:
+ * a que o motor já sugeriu para ESTA conta, as livres antes das sugeridas para outra conta, depois valor
+ * mais perto, depois data mais perto do vencimento.
+ */
+export function candidatosDaConta(linhas: LinhaExtratoBusca[], billId: string, falta: number, base: string, max = 6) {
+  return linhas
+    .filter((r) => r.transaction_type === 'debit' && r.status === 'pending' && !r.reconciled && !r.match_detail?.confirmed
+      && (!r.match_kind || r.match_kind === 'payable' || r.match_kind === 'inbound_doc')
+      && valorPerto(Math.abs(Number(r.amount)), falta))
+    .map((r) => {
+      const valor = round2(Math.abs(Number(r.amount)));
+      return {
+        id: r.id, transaction_date: String(r.transaction_date).slice(0, 10), valor, diferenca: round2(valor - falta),
+        description: r.description ?? null, counterpart_name: r.counterpart_name ?? null, bank_account_id: r.bank_account_id ?? null,
+        sugerida: r.match_kind === 'payable' && r.match_ref_id === billId,
+        outra: !!r.match_kind && !(r.match_kind === 'payable' && r.match_ref_id === billId),
+        dias: diasEntre(base, String(r.transaction_date).slice(0, 10)),
+      };
+    })
+    .sort((a, b) => Number(b.sugerida) - Number(a.sugerida) || Number(a.outra) - Number(b.outra) || Math.abs(a.diferenca) - Math.abs(b.diferenca)
+      || Math.abs(a.dias) - Math.abs(b.dias) || a.transaction_date.localeCompare(b.transaction_date))
+    .slice(0, max);
+}
+
 // ── Boleto guardado pela tela (assistente-app › conta_guardar_boleto) ────────────────────────
 /** Valor do documento difere do saldo da conta em mais de R$ 0,05 → a tela pergunta antes de gravar. */
 export function precisaConfirmarValor(valorDoc: number | null | undefined, saldo: number): boolean {
