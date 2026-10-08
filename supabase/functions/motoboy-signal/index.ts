@@ -361,6 +361,7 @@ serve(async (req) => {
       const { data: r, error: pErr } = await admin.rpc("fn_driver_ping", {
         p_tenant_id: tenantId, p_driver_id: driverId, p_lat: lat, p_lng: lng,
         p_accuracy: accuracy, p_heading: num(body.heading), p_speed: num(body.speed),
+        p_source: body.source === "app" || body.source === "web" ? body.source : null,
       });
       if (pErr) return json({ error: pErr.message }, 500);
       if (r === "driver_invalido") return json({ ok: false, blocked: true, error: "driver_invalido" }, 200);
