@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
-import { textoGps, useMotoboyGps } from '@/pages/motoboy/useMotoboyGps';
+import { textoGps, textoPausaGps, useMotoboyGps } from '@/pages/motoboy/useMotoboyGps';
+import { sinalParadoEmRota } from '@/hooks/useDriverPositions';
 
 // App Android: o hook usa o plugin nativo (window.Capacitor.Plugins.BackgroundGeolocation) em vez do navegador.
 type Cb = (l?: { latitude: number; longitude: number; accuracy: number | null; bearing: number | null; speed: number | null }, e?: { code?: string }) => void;
@@ -53,7 +54,7 @@ describe('useMotoboyGps no app (GPS em segundo plano)', () => {
     vi.setSystemTime(new Date('2026-09-27T12:00:40Z'));
     await ler(-25.53); // 40 s e ~1 km: envia
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ action: 'ping_position', tenant_id: 't1', driver_id: 'd1', lat: -25.53 });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toMatchObject({ action: 'ping_position', tenant_id: 't1', driver_id: 'd1', lat: -25.53, source: 'app' });
   });
 
   it('desligar remove o serviço (some o aviso fixo)', async () => {
@@ -85,8 +86,53 @@ describe('useMotoboyGps no navegador (sem o app)', () => {
     await act(async () => { ok!({ coords: { latitude: -25.52, longitude: -48.51, accuracy: 8, heading: null, speed: null } } as unknown as GeolocationPosition); });
     expect(result.current.estado).toBe('ativo');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ source: 'web' });
     unmount();
     expect(geo.clearWatch).toHaveBeenCalledWith(7);
     expect(textoGps('ativo')?.texto).toMatch(/mantenha esta tela aberta/);
+  });
+});
+
+describe('useMotoboyGps: tela apagada no site', () => {
+  let vis: DocumentVisibilityState = 'visible';
+  beforeEach(() => {
+    vis = 'visible';
+    Object.defineProperty(document, 'visibilityState', { get: () => vis, configurable: true });
+    const geo = { watchPosition: vi.fn(() => 1), clearWatch: vi.fn() };
+    Object.defineProperty(navigator, 'geolocation', { value: geo, configurable: true });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-07T22:30:00Z'));
+  });
+  afterEach(() => { vi.useRealTimers(); });
+  const mudar = (v: DocumentVisibilityState) => act(() => { vis = v; document.dispatchEvent(new Event('visibilitychange')); });
+
+  it('voltou depois de 7 min apagada: avisa quanto tempo ficou sem GPS', () => {
+    const { result } = renderHook(() => useMotoboyGps('t1', 'd1', true));
+    mudar('hidden');
+    vi.setSystemTime(new Date('2026-10-07T22:37:00Z'));
+    mudar('visible');
+    expect(result.current.pausaMin).toBe(7);
+    expect(textoPausaGps(result.current.pausaMin)).toMatch(/parado 7 min/);
+    act(() => result.current.fecharPausa());
+    expect(result.current.pausaMin).toBeNull();
+  });
+
+  it('olhada rápida em outro app (< 1 min) não avisa', () => {
+    const { result } = renderHook(() => useMotoboyGps('t1', 'd1', true));
+    mudar('hidden');
+    vi.setSystemTime(new Date('2026-10-07T22:30:40Z'));
+    mudar('visible');
+    expect(result.current.pausaMin).toBeNull();
+  });
+});
+
+describe('sinalParadoEmRota (mapa do gestor)', () => {
+  const agora = new Date('2026-10-07T22:37:30Z').getTime();
+  it('em rota e sem posição há mais de 4 min: sinal parado', () => {
+    expect(sinalParadoEmRota('2026-10-07T22:30:35Z', true, agora)).toBe(true);
+  });
+  it('posição recente ou sem pedido em rota: normal', () => {
+    expect(sinalParadoEmRota('2026-10-07T22:35:00Z', true, agora)).toBe(false);
+    expect(sinalParadoEmRota('2026-10-07T22:30:35Z', false, agora)).toBe(false);
   });
 });

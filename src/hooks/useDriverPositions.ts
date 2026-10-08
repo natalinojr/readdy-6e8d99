@@ -8,6 +8,8 @@ export interface PosicaoMotoboy {
   lng: number;
   accuracy: number | null;
   recorded_at: string;
+  /** 'app' (Android, manda com a tela apagada) | 'web' (site, só com a tela aberta) | null (versão antiga). */
+  source: 'app' | 'web' | null;
 }
 
 // Posições mais velhas que isso não aparecem no mapa (motoboy que desligou/fechou a tela).
@@ -29,14 +31,14 @@ export function useDriverPositions(tenantId: string | null | undefined, enabled:
     const desde = new Date(Date.now() - JANELA_MS).toISOString();
     const { data } = await supabase
       .from('delivery_driver_positions')
-      .select('driver_id, lat, lng, accuracy, recorded_at, driver:delivery_drivers!driver_id(name, is_active)')
+      .select('driver_id, lat, lng, accuracy, source, recorded_at, driver:delivery_drivers!driver_id(name, is_active)')
       .eq('tenant_id', tenantId)
       .gte('recorded_at', desde);
-    type Row = { driver_id: string; lat: number; lng: number; accuracy: number | null; recorded_at: string; driver?: { name: string | null; is_active: boolean | null } | { name: string | null; is_active: boolean | null }[] | null };
-    const lista = ((data ?? []) as Row[]).flatMap((r) => {
+    type Row = { driver_id: string; lat: number; lng: number; accuracy: number | null; source: string | null; recorded_at: string; driver?: { name: string | null; is_active: boolean | null } | { name: string | null; is_active: boolean | null }[] | null };
+    const lista = ((data ?? []) as Row[]).flatMap((r): PosicaoMotoboy[] => {
       const d = Array.isArray(r.driver) ? r.driver[0] : r.driver;
       if (d && d.is_active === false) return [];
-      return [{ driver_id: r.driver_id, nome: d?.name ?? 'Motoboy', lat: Number(r.lat), lng: Number(r.lng), accuracy: r.accuracy != null ? Number(r.accuracy) : null, recorded_at: r.recorded_at }];
+      return [{ driver_id: r.driver_id, nome: d?.name ?? 'Motoboy', lat: Number(r.lat), lng: Number(r.lng), accuracy: r.accuracy != null ? Number(r.accuracy) : null, source: r.source === 'app' || r.source === 'web' ? r.source : null, recorded_at: r.recorded_at }];
     });
     setPosicoes(lista);
   }, [tenantId]);
@@ -66,4 +68,13 @@ export function haQuanto(iso: string, now = Date.now()): string {
   if (min < 1) return 'agora';
   if (min < 60) return `há ${min} min`;
   return `há ${Math.floor(min / 60)}h${String(min % 60).padStart(2, '0')}`;
+}
+
+// Com pedido em rota o motoboy manda a cada ~15 s andando e a cada 3 min parado: passou de 4 min, o sinal
+// caiu (no site: tela apagada/outro app). Avisa bem antes dos 10 min do cinza (07/10: 7 min sem sinal em rota).
+const SINAL_PARADO_ROTA_MS = 4 * 60000;
+
+/** Moto com pedido em rota cuja posição parou de chegar. */
+export function sinalParadoEmRota(recordedAt: string, emRota: boolean, now = Date.now()): boolean {
+  return emRota && now - new Date(recordedAt).getTime() > SINAL_PARADO_ROTA_MS;
 }

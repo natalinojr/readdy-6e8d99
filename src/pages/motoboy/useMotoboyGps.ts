@@ -32,6 +32,8 @@ const MIN_INTERVALO_MS = 15000;   // no mínimo 15 s entre envios
 const MIN_DISTANCIA_M = 30;       // e só se andou ≥ 30 m...
 const HEARTBEAT_MS = 180000;      // ...ou a cada 3 min parado (mantém o "atualizado há X min")
 const MAX_PRECISAO_M = 300;       // leitura pior que isso (antena) é descartada
+// Site: tela apagada/outro app por mais que isso = a loja e o cliente ficaram sem a posição (avisa ao voltar).
+const PAUSA_AVISO_MS = 60000;
 
 function distanciaM(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
   const rad = Math.PI / 180;
@@ -43,17 +45,20 @@ function distanciaM(a: { lat: number; lng: number }, b: { lat: number; lng: numb
 /**
  * GPS do motoboy: liga `watchPosition` SÓ enquanto `ativo` (pedido dele em rota ou turno
  * ligado) e manda a posição pela Edge `motoboy-signal` (`ping_position`), com ≥15 s e ≥30 m
- * entre envios. Web só envia com a tela aberta: pede Wake Lock pra tela não apagar.
+ * entre envios. Web só envia com a tela aberta: pede Wake Lock pra tela não apagar e, se a
+ * tela ficou apagada (ou em outro app) ≥ 1 min, devolve `pausaMin` para o aviso ao voltar.
  */
 export function useMotoboyGps(tenantId: string | null | undefined, driverId: string | null | undefined, ativo: boolean) {
   const [estado, setEstado] = useState<GpsEstado>('desligado');
   const [ultimoEnvio, setUltimoEnvio] = useState<number | null>(null);
+  const [pausaMin, setPausaMin] = useState<number | null>(null);
   const ultimoRef = useRef<{ lat: number; lng: number; t: number } | null>(null);
   const enviandoRef = useRef(false);
 
   useEffect(() => {
-    if (!ativo || !tenantId || !driverId) { setEstado('desligado'); return; }
+    if (!ativo || !tenantId || !driverId) { setEstado('desligado'); setPausaMin(null); return; }
     const nativo = gpsNativo();
+    const source = nativo ? 'app' : 'web';
     if (!nativo && (typeof navigator === 'undefined' || !('geolocation' in navigator))) { setEstado('indisponivel'); return; }
     setEstado('pedindo');
 
@@ -75,7 +80,7 @@ export function useMotoboyGps(tenantId: string | null | undefined, driverId: str
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             action: 'ping_position', tenant_id: tenantId, driver_id: driverId, lat, lng,
-            accuracy: accuracy ?? null, heading: heading ?? null, speed: speed ?? null,
+            accuracy: accuracy ?? null, heading: heading ?? null, speed: speed ?? null, source,
           }),
         });
         const data = await res.json().catch(() => null);
@@ -133,17 +138,32 @@ export function useMotoboyGps(tenantId: string | null | undefined, driverId: str
     let lock: WakeLockSentinel | null = null;
     const wl = (navigator as unknown as { wakeLock?: { request: (t: 'screen') => Promise<WakeLockSentinel> } }).wakeLock;
     const pedirLock = () => { if (wl && document.visibilityState === 'visible') wl.request('screen').then((l) => { lock = l; }).catch(() => {}); };
+    // Saiu da tela (apagou / foi para outro app): o navegador para o GPS. Ao voltar, mede quanto tempo ficou sem.
+    let saiuEm: number | null = document.visibilityState === 'hidden' ? Date.now() : null;
+    const aoMudarTela = () => {
+      if (document.visibilityState === 'hidden') { saiuEm = Date.now(); return; }
+      if (saiuEm != null && Date.now() - saiuEm >= PAUSA_AVISO_MS) setPausaMin(Math.round((Date.now() - saiuEm) / 60000));
+      saiuEm = null;
+      pedirLock();
+    };
     pedirLock();
-    document.addEventListener('visibilitychange', pedirLock);
+    document.addEventListener('visibilitychange', aoMudarTela);
 
     return () => {
       navigator.geolocation.clearWatch(watchId);
-      document.removeEventListener('visibilitychange', pedirLock);
+      document.removeEventListener('visibilitychange', aoMudarTela);
       lock?.release().catch(() => {});
     };
   }, [ativo, tenantId, driverId]);
 
-  return { estado, ultimoEnvio };
+  return { estado, ultimoEnvio, pausaMin, fecharPausa: () => setPausaMin(null) };
+}
+
+/** Aviso ao voltar para a tela (site) depois de ficar ≥ 1 min com ela apagada durante a entrega. */
+export function textoPausaGps(min: number | null): string | null {
+  if (min == null) return null;
+  return `Seu GPS ficou parado ${min} min enquanto a tela estava apagada: a loja e o cliente não viram onde você estava. ` +
+    'Deixe esta tela acesa durante a entrega ou use o app ERPOS Entregas, que manda mesmo com a tela apagada.';
 }
 
 /** Faixa de aviso do GPS para o motoboy ("mantenha esta tela aberta"). `acao` = tocar abre as configurações (app). */

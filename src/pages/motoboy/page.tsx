@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { useMotoboyGps, textoGps } from './useMotoboyGps';
+import { useMotoboyGps, textoGps, textoPausaGps } from './useMotoboyGps';
 
 // Mapa com a rota dentro do app (Leaflet só carrega quando o motoboy abre).
 const NavegacaoMotoboy = lazy(() => import('./NavegacaoMotoboy'));
@@ -163,6 +163,7 @@ export default function MotoboyPage() {
     if (minhaEntregaAtiva && !turnoLigado) { try { localStorage.setItem('erpos_motoboy_turno', '1'); } catch { /* ok */ } }
   }, [minhaEntregaAtiva, turnoLigado]);
   const avisoGps = textoGps(gps.estado);
+  const avisoPausa = textoPausaGps(gps.pausaMin);
 
   const sinalizar = async (signal: string, motivoTxt?: string, extra?: { ifood_code?: string; sem_codigo?: boolean }) => {
     setEnviando(signal);
@@ -303,6 +304,12 @@ export default function MotoboyPage() {
           <div role={avisoGps.acao ? 'button' : undefined} onClick={avisoGps.acao}
             className={'flex items-start gap-2 rounded-2xl border px-3 py-2 text-[11px] font-semibold ' + avisoGps.cls + (avisoGps.acao ? ' cursor-pointer' : '')}>
             <i className={avisoGps.icon + ' text-sm mt-px'} /> <span>{avisoGps.texto}</span>
+          </div>
+        ) : null}
+        {avisoPausa ? (
+          <div className="flex items-start gap-2 rounded-2xl border px-3 py-2 text-[11px] font-semibold bg-amber-50 text-amber-800 border-amber-300">
+            <i className="ri-error-warning-line text-sm mt-px" /> <span className="flex-1">{avisoPausa}</span>
+            <button type="button" onClick={gps.fecharPausa} aria-label="Fechar aviso" className="shrink-0 font-bold"><i className="ri-close-line" /></button>
           </div>
         ) : null}
 

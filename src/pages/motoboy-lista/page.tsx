@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { MOTOBOY_SESSION_KEY, getMotoboySession, type MotoboySession } from '@/pages/motoboy/page';
 import MapaEntregas from './MapaEntregas';
-import { useMotoboyGps, textoGps } from '@/pages/motoboy/useMotoboyGps';
+import { useMotoboyGps, textoGps, textoPausaGps } from '@/pages/motoboy/useMotoboyGps';
 import { linkMaps } from '@/lib/montarSaida';
 import { usaAppEntregas } from '@/lib/motoboyApp';
 
@@ -124,6 +124,7 @@ export default function MotoboyListaPage() {
     try { localStorage.setItem(TURNO_KEY, '1'); } catch { /* ok */ }
   }, [temEntregaAtiva, turno]);
   const avisoGps = textoGps(gps.estado);
+  const avisoPausa = textoPausaGps(gps.pausaMin);
   // Tick local (sem tocar servidor) pra o contador de tempo andar.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -446,6 +447,12 @@ export default function MotoboyListaPage() {
           <div role={avisoGps.acao ? 'button' : undefined} onClick={avisoGps.acao}
             className={'flex items-start gap-2 rounded-2xl border px-3 py-2 text-[11px] font-semibold ' + avisoGps.cls + (avisoGps.acao ? ' cursor-pointer' : '')}>
             <i className={avisoGps.icon + ' text-sm mt-px'} /> <span>{avisoGps.texto}</span>
+          </div>
+        ) : null}
+        {avisoPausa ? (
+          <div className="flex items-start gap-2 rounded-2xl border px-3 py-2 text-[11px] font-semibold bg-amber-50 text-amber-800 border-amber-300">
+            <i className="ri-error-warning-line text-sm mt-px" /> <span className="flex-1">{avisoPausa}</span>
+            <button type="button" onClick={gps.fecharPausa} aria-label="Fechar aviso" className="shrink-0 font-bold"><i className="ri-close-line" /></button>
           </div>
         ) : null}
 

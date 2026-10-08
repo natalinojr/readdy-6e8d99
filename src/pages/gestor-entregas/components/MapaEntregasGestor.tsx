@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { useDriverPositions, haQuanto, type PosicaoMotoboy } from '@/hooks/useDriverPositions';
+import { useDriverPositions, haQuanto, sinalParadoEmRota, type PosicaoMotoboy } from '@/hooks/useDriverPositions';
 
 export interface PontoGestor {
   id: string;
@@ -27,7 +27,7 @@ function escHtml(s: string): string {
 // Moto: círculo com 🛵 + primeiro nome; cinza quando a posição está velha.
 function makeMotoIcon(m: PosicaoMotoboy, emRota: boolean, now: number) {
   const velha = now - new Date(m.recorded_at).getTime() > POSICAO_VELHA_MS;
-  const cor = velha ? '#a1a1aa' : emRota ? '#7c3aed' : '#059669';
+  const cor = sinalParadoEmRota(m.recorded_at, emRota, now) ? '#f59e0b' : velha ? '#a1a1aa' : emRota ? '#7c3aed' : '#059669';
   const nome = escHtml((m.nome || 'Motoboy').split(' ')[0]);
   return L.divIcon({
     className: '',
@@ -148,14 +148,21 @@ export default function MapaEntregasGestor({ pontos, onClose, tenantId }: { pont
             <AjustarBounds pontos={comPin} motos={motos} />
             {motos.map((m) => {
               const rota = emRotaPorMotoboy.get(m.driver_id) ?? [];
+              const parado = sinalParadoEmRota(m.recorded_at, rota.length > 0, now);
               return (
                 <Marker key={'moto:' + m.driver_id} position={[m.lat, m.lng]} icon={makeMotoIcon(m, rota.length > 0, now)} zIndexOffset={1000}>
                   <Popup minWidth={190}>
                     <div>
                       <div style={{ fontWeight: 800 }}>🛵 {m.nome}</div>
-                      <div style={{ fontSize: 11, color: now - new Date(m.recorded_at).getTime() > POSICAO_VELHA_MS ? '#dc2626' : '#555' }}>
+                      <div style={{ fontSize: 11, color: parado || now - new Date(m.recorded_at).getTime() > POSICAO_VELHA_MS ? '#dc2626' : '#555' }}>
                         Atualizado {haQuanto(m.recorded_at, now)}{m.accuracy != null ? ` · ±${Math.round(m.accuracy)} m` : ''}
+                        {m.source ? ` · pelo ${m.source === 'app' ? 'app' : 'site'}` : ''}
                       </div>
+                      {parado ? (
+                        <div style={{ fontSize: 11, color: '#b45309', fontWeight: 700, marginTop: 4 }}>
+                          Sem posição nova durante a entrega: {m.source === 'web' ? 'tela do motoboy apagada/em outro app, ou ele está parado' : 'GPS ou internet do celular caiu, ou ele está parado'}
+                        </div>
+                      ) : null}
                       {rota.length > 0 ? (
                         <div style={{ fontSize: 11, color: '#7c3aed', fontWeight: 700, marginTop: 4 }}>
                           Em rota: {rota.map((p) => '#' + (String(p.number).replace(/\D/g, '').slice(-4) || p.number)).join(', ')}
