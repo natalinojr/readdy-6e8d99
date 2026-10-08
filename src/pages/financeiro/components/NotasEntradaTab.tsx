@@ -117,6 +117,9 @@ function UrgenciaTag({ d }: { d: DocRow }) {
   return <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${u.dias < 0 ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-800'}`} title={`1º vencimento: ${dataBR(u.venc)}`}>{txt}</span>;
 }
 
+// Nota "Dinheiro" sem boleto: o lançamento automático não pega (fiscal-inbound › pagoNaHora)
+const dinheiroSemBoleto = (d: DocRow) => (d.parcelas ?? []).length === 0 && (d.pagamento ?? []).some((p) => p.forma === '01');
+
 // Por que a nota não entrou sozinha: as mesmas regras do lançamento automático
 // (fiscal-inbound › autoLaunchTenant), para o usuário não ter de adivinhar.
 interface Historico { ultima: DocRow; teto: number }
@@ -134,6 +137,7 @@ function motivoParada(d: DocRow, h: Historico | undefined, prePago = false): { t
   if (!servico && pareceNaoVenda(d)) return { txt: 'Parece remessa/devolução', dica: `CFOP ${d.cfops ?? '—'} ou nota sem pagamento: normalmente se ignora.` };
   if (!servico && h.ultima.import_type !== 'purchase') return { txt: 'Última foi lançada como despesa', dica: 'NF-e só entra sozinha como compra. Confira como lançar esta.' };
   if (h.teto > 0 && Number(d.valor_total ?? 0) > h.teto * 3) return { txt: 'Valor fora do normal', dica: `Mais de 3× a maior nota já lançada deste fornecedor (${brl(h.teto)}).` };
+  if (h.ultima.import_type === 'purchase' && dinheiroSemBoleto(d)) return { txt: 'Nota diz "Dinheiro"', dica: 'Muito fornecedor escreve dinheiro na nota e manda boleto depois. Confira como foi pago: se veio boleto, lance como "A pagar" com o vencimento.' };
   return { txt: 'Entra sozinha na próxima busca', dica: 'Fornecedor conhecido: o lançamento automático pega esta nota na próxima busca (06h, 12h ou "Buscar notas agora").' };
 }
 
@@ -749,7 +753,10 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
   // Como a compra vai ser paga (2026-09-29): a nota traz boleto, mas o dono pode pagar de outro jeito.
   // 'boleto'/'pix' = conta a pagar nas parcelas; 'cartao' = parcelas nos vencimentos das faturas;
   // 'pago' = já paga (saída no Fluxo de Caixa na data da nota).
-  const [modoPag, setModoPag] = useState<ModoPag>(semBoleto && formaPrincipal === '03' ? 'cartao' : pagoNaHora ? 'pago' : 'boleto');
+  // "Dinheiro" abre como A pagar (2026-10-08): o fornecedor costuma mandar boleto depois; marcar
+  // "Já paga" à toa esconde a conta e o vencimento passa sem aviso
+  const dinheiro = dinheiroSemBoleto(doc);
+  const [modoPag, setModoPag] = useState<ModoPag>(semBoleto && formaPrincipal === '03' ? 'cartao' : pagoNaHora && !dinheiro ? 'pago' : 'boleto');
   const pago = modoPag === 'pago';
   const [formaPaga, setFormaPaga] = useState<string>(() => {
     const f = formaPrincipal ? TPAG[formaPrincipal] : '';
@@ -1082,6 +1089,11 @@ function ConferirModal({ doc, podeLancar, tenantId, onClose, onLancado, call, on
                   </button>
                 ))}
               </div>
+              {dinheiro && (
+                <p className="mt-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  A nota diz <strong>Dinheiro</strong>, mas muito fornecedor manda boleto depois. Se pagou na entrega, marque "Já paga"; se veio boleto, deixe "A pagar" com o vencimento.
+                </p>
+              )}
               {modoPag === 'cartao' && (
                 <div className="mt-2 border border-zinc-100 rounded-lg p-3 space-y-2">
                   <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-zinc-600">

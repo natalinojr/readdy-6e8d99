@@ -992,6 +992,10 @@ async function autoLaunchTenant(admin: Admin, supabaseUrl: string, tenantId: str
       if (!servico && h.import_type !== 'purchase') { pular('tipo diferente do lançamento anterior'); continue; }
       const max = teto.get(k) ?? 0;
       if (max > 0 && Number(doc.valor_total ?? 0) > max * 3) { pular('valor fora do normal do fornecedor'); continue; }
+      // Nota "Dinheiro" sem boleto (2026-10-08): fornecedor escreve dinheiro e cobra boleto depois
+      // (Lapeana, Costa e Montenegro). Lançar "pago" sumia com a conta e o vencimento passava sem
+      // aviso. Fica em A conferir para o usuário dizer como pagou.
+      if (h.import_type === 'purchase' && pagoNaHora(doc)) { pular('nota diz dinheiro: conferir como foi pago'); continue; }
     }
 
     let r: ImportResult;
