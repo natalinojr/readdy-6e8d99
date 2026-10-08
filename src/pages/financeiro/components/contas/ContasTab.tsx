@@ -139,6 +139,8 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
   const setJanela = (j: Janela) => { setJanelaSt(j); try { localStorage.setItem(JANELA_KEY, String(j)); } catch { /* sem storage */ } };
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [lote, setLote] = useState(false);
+  // Celular (2026-10-08): sem mouse, "Marcar" liga o modo em que tocar na linha marca em vez de abrir.
+  const [marcando, setMarcando] = useState(false);
   const [aberta, setAberta] = useState<Linha | null>(null);
   const [extrato, setExtrato] = useState<{ id: string; transaction_date: string; bank_account_id?: string | null } | null>(null);
   const [abreDep, setAbreDep] = useState(false);
@@ -153,7 +155,7 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
 
   // Troca de loja: descarta resposta atrasada da loja anterior e limpa o que estava marcado/aberto.
   const lojaAtual = useRef(user?.tenantId);
-  useEffect(() => { lojaAtual.current = user?.tenantId; setSel(new Set()); setAberta(null); setExtrato(null); setFiltro(null); }, [user?.tenantId]);
+  useEffect(() => { lojaAtual.current = user?.tenantId; setSel(new Set()); setMarcando(false); setAberta(null); setExtrato(null); setFiltro(null); }, [user?.tenantId]);
   const carregar = useCallback(async () => {
     const t = user?.tenantId;
     if (!t) return;
@@ -275,7 +277,8 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
                 <button key={a} onClick={() => { setAba(a); setFiltro(null); setSel(new Set()); }} className={`px-3 py-1.5 rounded-lg text-xs font-bold ${aba === a ? 'bg-zinc-900 text-white' : 'text-zinc-600'}`}>{a === 'abertas' ? 'Em aberto' : 'Pagas'}</button>
               ))}
             </div>
-            <button onClick={() => setBuscaCel((v) => !v)} className="sm:hidden ml-auto w-8 h-8 rounded-lg bg-white border border-zinc-200 grid place-items-center text-zinc-600"><i className="ri-search-line" /></button>
+            <button onClick={() => { setMarcando((v) => !v); setSel(new Set()); }} className={`md:hidden ml-auto h-8 px-2.5 rounded-lg border text-xs font-bold ${marcando ? 'bg-zinc-900 border-zinc-900 text-white' : 'bg-white border-zinc-200 text-zinc-600'}`}><i className="ri-checkbox-multiple-line" /> {marcando ? 'Pronto' : 'Marcar'}</button>
+            <button onClick={() => setBuscaCel((v) => !v)} className="sm:hidden w-8 h-8 rounded-lg bg-white border border-zinc-200 grid place-items-center text-zinc-600"><i className="ri-search-line" /></button>
             <label className={`${buscaCel ? 'flex' : 'hidden'} sm:flex sm:ml-auto w-full sm:w-60 items-center gap-1.5 bg-white border border-zinc-200 rounded-xl px-2.5 py-1.5`}>
               <i className="ri-search-line text-zinc-400" /><input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Valor ou fornecedor" className="flex-1 min-w-0 text-sm outline-none bg-transparent" />
               {busca && <button onClick={() => setBusca('')} className="text-zinc-400"><i className="ri-close-line" /></button>}
@@ -319,7 +322,7 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
                       {l.id === ondeAcaba && aba === 'abertas' && !busca && (
                         <div className="flex items-center gap-2 px-4 md:pl-12 py-1 text-[11px] font-bold text-blue-700 bg-blue-50/60"><span className="flex-1 border-t border-dashed border-blue-300" />sem novas entradas, o saldo de hoje ({brl(nums.saldo.v)}) acaba aqui<span className="flex-1 border-t border-dashed border-blue-300" /></div>
                       )}
-                      <LinhaTabela l={l} s={saldos.get(l.id)} sel={sel.has(l.id)} onSel={() => toggleSel(l.id)} onAbrir={() => setAberta(l)} />
+                      <LinhaTabela l={l} s={saldos.get(l.id)} sel={sel.has(l.id)} marcando={marcando} onSel={() => toggleSel(l.id)} onAbrir={() => setAberta(l)} />
                     </div>
                   ))}
                 </div>
@@ -330,12 +333,18 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
         </>
       )}
 
+      {marcando && sel.size === 0 && (
+        <div className="md:hidden fixed left-3 right-[76px] bottom-20 z-40 bg-zinc-900 text-white rounded-2xl px-4 py-2.5 flex items-center gap-3 shadow-2xl">
+          <span className="text-sm flex-1">Toque nas contas para marcar</span>
+          <button onClick={() => setMarcando(false)} className="text-xs font-bold text-zinc-300">Cancelar</button>
+        </div>
+      )}
       {sel.size > 0 && (
-        <div className="fixed left-1/2 -translate-x-1/2 bottom-4 z-40 w-[min(560px,calc(100vw-24px))] bg-zinc-900 text-white rounded-2xl px-4 py-2.5 flex items-center gap-3 shadow-2xl">
-          <span className="text-sm">{sel.size} selecionada{sel.size > 1 ? 's' : ''}</span><b className="tabular-nums">{brl(somaSel)}</b>
+        <div className="fixed left-3 right-[76px] bottom-20 md:left-1/2 md:right-auto md:-translate-x-1/2 md:bottom-4 z-40 md:w-[min(560px,calc(100vw-24px))] bg-zinc-900 text-white rounded-2xl px-3 md:px-4 py-2.5 flex items-center gap-2 md:gap-3 shadow-2xl">
+          <span className="text-sm whitespace-nowrap">{sel.size}<span className="hidden md:inline"> selecionada{sel.size > 1 ? 's' : ''}</span></span><b className="tabular-nums whitespace-nowrap text-sm md:text-base">{brl(somaSel)}</b>
           <span className="flex-1" />
-          {financeiro && selBaixa.length > 0 && <button onClick={() => setLote(true)} className="h-8 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-900 text-xs font-bold whitespace-nowrap"><i className="ri-check-double-line" /> Paguei no banco{selBaixa.length < sel.size ? ` (${selBaixa.length})` : ''}</button>}
-          <button onClick={() => setSel(new Set())} className="text-xs font-bold text-zinc-300">Limpar</button>
+          {financeiro && selBaixa.length > 0 && <button onClick={() => setLote(true)} className="h-8 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-900 text-xs font-bold whitespace-nowrap"><i className="ri-check-double-line" /> Paguei<span className="hidden sm:inline"> no banco</span>{selBaixa.length < sel.size ? ` (${selBaixa.length})` : ''}</button>}
+          <button onClick={() => { setSel(new Set()); setMarcando(false); }} className="text-xs font-bold text-zinc-300" aria-label="Limpar"><span className="hidden md:inline">Limpar</span><i className="md:hidden ri-close-line text-lg" /></button>
         </div>
       )}
 
@@ -344,7 +353,7 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
           onFechar={() => setAberta(null)} onMudou={() => { setAberta(null); recarregar(); }}
           onExplicar={(e) => { setAberta(null); setExtrato(e); }} irPara={irPara} onLista={podeLista ? (q) => { setAberta(null); const n = new URLSearchParams(params); n.set('busca', q); n.set('lista', '1'); setParams(n, { replace: true }); setVisao('lista'); } : undefined} />
       )}
-      {lote && <BaixaEmLote tenantId={user?.tenantId ?? ''} ids={selBaixa} onFechar={() => setLote(false)} onFeito={() => { setLote(false); setSel(new Set()); recarregar(); }} />}
+      {lote && <BaixaEmLote tenantId={user?.tenantId ?? ''} ids={selBaixa} onFechar={() => setLote(false)} onFeito={() => { setLote(false); setSel(new Set()); setMarcando(false); recarregar(); }} />}
       {extrato && <LinhaExtratoModal linha={extrato} onClose={() => setExtrato(null)} onChanged={() => recarregar()} />}
     </div>
   );
@@ -353,17 +362,20 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
 const nContas = (n: number) => `${n} ${n === 1 ? 'conta' : 'contas'}`;
 function somarAteDomingo(hoje: string) { const w = new Date(`${hoje}T12:00:00Z`).getUTCDay(); const d = new Date(`${hoje}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + (w === 0 ? 0 : 7 - w)); return d.toISOString().slice(0, 10); }
 
-function LinhaTabela({ l, s, sel, onSel, onAbrir }: { l: Linha; s?: SaldoLinha; sel: boolean; onSel: () => void; onAbrir: () => void }) {
+function LinhaTabela({ l, s, sel, marcando, onSel, onAbrir }: { l: Linha; s?: SaldoLinha; sel: boolean; marcando?: boolean; onSel: () => void; onAbrir: () => void }) {
   const dataTxt = l.atrasada && l.tipo === 'conta' ? `há ${-l.dias} dia${-l.dias > 1 ? 's' : ''}` : ddmm(l.data);
   const sub2 = l.atrasada && l.tipo === 'conta' ? ddmm(l.data) : dsem(l.data);
   const temSaldo = !!s && l.tipo !== 'paga';
   return (
-    <div onClick={onAbrir} role="button"
+    <div onClick={marcando ? onSel : onAbrir} role="button"
       className={`group relative grid grid-cols-[minmax(0,1fr)_auto] md:grid-cols-[28px_70px_minmax(0,1fr)_88px_96px_96px_116px_104px_14px] gap-x-2 gap-y-1.5 items-center px-4 md:px-3 py-2.5 border-b border-zinc-100 last:border-b-0 cursor-pointer hover:bg-amber-50/30 ${sel ? 'bg-amber-50/60' : ''}`}>
       {(l.atrasada || l.tipo === 'saida') && <span className={`absolute left-0 top-0 bottom-0 w-[3px] ${l.tipo === 'saida' ? 'bg-orange-600' : 'bg-red-600'}`} />}
       <span onClick={(e) => { e.stopPropagation(); onSel(); }} className={`hidden md:grid w-[18px] h-[18px] rounded-[5px] border-[1.5px] place-items-center text-[13px] ${sel ? 'bg-zinc-900 border-zinc-900 text-white opacity-100' : 'border-zinc-400 opacity-0 group-hover:opacity-100'}`}>{sel && <i className="ri-check-line" />}</span>
       <span className={`hidden md:block text-xs font-bold ${l.atrasada ? 'text-red-600' : 'text-zinc-700'}`}>{dataTxt}<small className="block font-semibold text-zinc-500">{sub2}</small></span>
-      <span className="min-w-0"><b className="block text-[13.5px] truncate">{l.nome}</b><span className="block text-xs text-zinc-500 truncate">{l.sub}</span></span>
+      <span className="min-w-0 flex items-center gap-2.5">
+        {marcando && <span className={`md:hidden flex-shrink-0 w-5 h-5 rounded-md border-[1.5px] grid place-items-center text-[13px] ${sel ? 'bg-zinc-900 border-zinc-900 text-white' : 'border-zinc-400 bg-white'}`}>{sel && <i className="ri-check-line" />}</span>}
+        <span className="min-w-0"><b className="block text-[13.5px] truncate">{l.nome}</b><span className="block text-xs text-zinc-500 truncate">{l.sub}</span></span>
+      </span>
       <span className="text-right text-[13.5px] font-extrabold tabular-nums whitespace-nowrap">{nb(l.valor)}</span>
       <span className={`hidden md:block text-right text-[13px] font-bold tabular-nums ${temSaldo && s!.real < 0 ? 'text-red-600' : 'text-zinc-600'}`}>{temSaldo ? sinal(s!.real) : <span className="text-zinc-300">—</span>}</span>
       <span className={`hidden md:block text-right text-[13px] font-bold tabular-nums ${temSaldo && s!.proj < 0 ? 'text-red-600' : 'text-blue-900'}`} onClick={(e) => e.stopPropagation()}>

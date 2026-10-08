@@ -76,12 +76,12 @@ export function montarSituacao(c: ContaBruta, compra: CompraBruta | null, pix: P
 
   // 3) Boleto (só enquanto falta pagar)
   if (!paga && !cancelada) {
-    const metodo = `${c.payment_method ?? ''} ${compra?.payment_method ?? ''}`.toLowerCase();
     if (c.boleto_digitavel || c.boleto_barcode) {
       const de = c.boleto_origem === 'email' ? ' (e-mail)' : c.boleto_origem === 'whatsapp' ? ' (WhatsApp)' : c.boleto_origem === 'foto' ? ' (foto)' : '';
       etapas.push({ id: 'boleto', texto: `Boleto no sistema${de}`, tom: 'ok', icone: 'ri-barcode-line' });
     } else if (c.boleto_pix_copia) etapas.push({ id: 'boleto', texto: 'Pix copia e cola no sistema', tom: 'ok', icone: 'ri-qr-code-line' });
-    else if (metodo.includes('boleto')) etapas.push({ id: 'boleto', texto: 'Falta o boleto', tom: 'atencao', icone: 'ri-barcode-line' });
+    // Sem o código no sistema não é problema (dono, 2026-10-08): o boleto aparece no DDA do banco e é
+    // pago por lá — a conciliação liga depois pelo valor + vencimento. Por isso não há "Falta o boleto".
   }
 
   // 4) Pagamento

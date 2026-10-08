@@ -24,8 +24,8 @@ describe('montarSituacao', () => {
   it('compra sem boleto, sem entrega, vencida', () => {
     const s = montarSituacao(conta({ boleto_digitavel: null, boleto_origem: null, due_date: '2026-10-06' }),
       { id: 'c1', invoice_number: '264', payment_method: 'boleto', payment_status: null, delivery_confirmed_at: null, delivery_registered_at: null, is_bonus: false }, null, HOJE);
-    expect(textos(s)).toEqual(['Nota fiscal 264', 'Entrega não confirmada', 'Falta o boleto', 'Não paga — venceu 06/10']);
-    expect(s.etapas[3].tom).toBe('ruim');
+    expect(textos(s)).toEqual(['Nota fiscal 264', 'Entrega não confirmada', 'Não paga — venceu 06/10']);
+    expect(s.etapas[2].tom).toBe('ruim');
   });
 
   it('paga: sem etapa de boleto, com a data', () => {

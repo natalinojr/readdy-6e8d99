@@ -1825,7 +1825,12 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
         .eq('tenant_id', t.id).eq('kind', 'boleto_faltando');
       // deno-lint-ignore no-explicit-any
       const payloadAntigo = new Map<string, any>((pendsBoleto ?? []).map((r) => [String(r.ref), r.payload]));
-      for (const b of semBoleto) {
+      // DESLIGADO (dono, 2026-10-08): "os boletos aparecem no DDA do banco" — 58 de 63 boletos da Paranaguá
+      // foram pagos pelo app do banco e ligados depois pelo valor + vencimento; o aviso por conta só
+      // gerava cartão para pedir o que o banco já mostra. Só segue aberta a pendência de quem PEDIU o
+      // boleto ao fornecedor (pedido_em, logo abaixo); as demais fecham na próxima volta.
+      const AVISAR_FALTA_BOLETO = false;
+      for (const b of AVISAR_FALTA_BOLETO ? semBoleto : []) {
         const quando = b.dias < 0 ? `VENCIDA em ${b.venc}` : b.dias === 0 ? 'vence HOJE' : b.dias === 1 ? 'vence amanhã' : `vence ${b.venc}`;
         await admin.rpc('fn_pendencia_upsert', {
           p_tenant: t.id, p_kind: 'boleto_faltando', p_ref: b.id,
@@ -1840,7 +1845,7 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
       }
       const { data: abertasSemBoleto } = await admin.from('pendencias').select('ref')
         .eq('tenant_id', t.id).eq('kind', 'boleto_faltando').in('status', ['aberta', 'vista']);
-      const aindaFaltam = new Set(semBoleto.map((b) => b.id));
+      const aindaFaltam = new Set(AVISAR_FALTA_BOLETO ? semBoleto.map((b) => b.id) : []);
       for (const r of (abertasSemBoleto ?? []) as Array<{ ref: string }>) {
         if (aindaFaltam.has(r.ref)) continue;
         // Pendência aberta pelo pedido da Trilha numa conta que não é "de boleto" (a query acima só
@@ -1860,7 +1865,7 @@ async function syncPendenciasOperacao(admin: SupabaseClient, tenants: Array<{ id
         }
         await admin.rpc('fn_pendencia_resolver_ref', {
           p_tenant: t.id, p_kind: 'boleto_faltando', p_ref: r.ref,
-          p_motivo: 'boleto chegou ou conta paga/cancelada',
+          p_motivo: AVISAR_FALTA_BOLETO ? 'boleto chegou ou conta paga/cancelada' : 'aviso desligado: o boleto aparece no DDA do banco',
         });
       }
 
