@@ -274,6 +274,12 @@ Quando o usuario pedir "muda X":
 
 Secao viva: registrar aqui padroes, decisoes e pegadinhas reutilizaveis conforme o sistema evolui. Cada entrada com data
 
+### 2026-10-08 — GPS do motoboy: sinal parado em rota e origem app/site
+- **Caso:** 07/10 na Vila, motoboy com 2 pedidos ficou 7 min sem mandar posição no meio da rota (site com a tela apagada ou app fechado pela bateria). O servidor e o broadcast estavam ok (`realtime.messages` mostra cada aviso); faltava o celular mandar.
+- **Mapa do gestor:** `sinalParadoEmRota` (`src/hooks/useDriverPositions.ts`): com pedido em rota e posição com mais de 4 min, a moto fica laranja ("sem posição nova durante a entrega"). 4 min e não 2, porque parado o celular só manda a cada 3 min. O balão mostra "pelo app/site" (`delivery_driver_positions.source`).
+- **Motoboy (site):** `useMotoboyGps` mede o tempo com a tela escondida (`visibilitychange`); ao voltar depois de 1 min ou mais, devolve `pausaMin` e as duas telas mostram `textoPausaGps`. No app não precisa: o serviço continua mandando com a tela apagada.
+- **Pegadinha de migração:** um `drop function` pelo MCP do Supabase pede aprovação e expira em 60 s sem resposta. Para mudar a assinatura de uma RPC usada pela Edge sem janela de erro, crie uma **2ª versão sem default no parâmetro novo** (`fn_driver_ping(..., p_source text)`) ao lado da antiga. Com default, as duas casariam com a chamada antiga e o PostgREST recusaria por ambiguidade. A de 7 parâmetros pode sair depois (já não é chamada pela Edge v67).
+
 ### 2026-10-07 — Hoje: "em que pé está" cada conta e cartão de conta paga some
 - **Pedido do dono:** nos cartões da Hoje, saber se a mercadoria chegou, se a conta veio da nota, do extrato ou de outro jeito; cartão sem sentido, pagamento repetido e boleto já pago continuando ali.
 - **Selos por conta:** `src/lib/situacaoConta.ts` (montagem pura, testes em `src/test/lib/situacaoConta.test.ts`) + `LinhaSituacao.tsx`. Mostra de onde veio (NF nº / compra sem nota / extrato / e-mail / conta fixa / à mão) · mercadoria (`fin_purchases.delivery_confirmed_at|delivery_registered_at` ou `delivery_confirmed` da conta) · boleto · pagamento (último `fin_inter_payments` não substituído, ou pago/vencida). Aparece no cartão (1 conta) e atrás de "Em que pé está cada conta (N)" quando há várias; `ContasAtrasadasInline` ganhou `comSituacao`.
