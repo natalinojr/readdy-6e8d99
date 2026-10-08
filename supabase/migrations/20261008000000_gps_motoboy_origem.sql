@@ -4,17 +4,17 @@
 -- (tela apagada no site ou app fechado pela economia de bateria) e não dava para saber qual.
 -- `source` = 'app' | 'web' (null = versão antiga do front). O Gestor mostra no balão da moto.
 --
--- fn_driver_ping ganha p_source com default: a Edge antiga (7 parâmetros) continua funcionando.
+-- fn_driver_ping ganha uma 2ª versão com p_source OBRIGATÓRIO (sem default), ao lado da antiga de 7
+-- parâmetros: a Edge antiga (7 nomes) só casa com a antiga e a nova (sempre manda p_source, mesmo null)
+-- só com a nova — com default as duas casariam e o PostgREST recusaria a chamada por ambiguidade.
+-- A de 7 parâmetros pode sair depois que a Edge nova estiver no ar.
 
 alter table public.delivery_driver_positions add column if not exists source text;
 alter table public.delivery_driver_position_history add column if not exists source text;
 
-drop function if exists public.fn_driver_ping(uuid, uuid, double precision, double precision, real, real, real);
-
 create or replace function public.fn_driver_ping(
   p_tenant_id uuid, p_driver_id uuid, p_lat double precision, p_lng double precision,
-  p_accuracy real default null, p_heading real default null, p_speed real default null,
-  p_source text default null
+  p_accuracy real, p_heading real, p_speed real, p_source text
 ) returns text
 language plpgsql security definer set search_path to 'public', 'realtime' as $$
 declare
