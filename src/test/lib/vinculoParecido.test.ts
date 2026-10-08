@@ -52,4 +52,12 @@ describe('itemParecido', () => {
     expect(itemParecido(sos, todos)).toBeNull();
     expect(itemParecido(resma2, todos)?.id).toBe('resma');
   });
+  it('NCM diferente não é o mesmo produto (Encarta real: 5 itens, poucos para a regra da marca)', () => {
+    const k = { supplier_key: 'enc' };
+    const resma = { ...it_('resma', 'FRQE EL PATRON / RESMA BB35 25X34 C/500 ENC', { ...k, ingredient_id: 'resma' }), ncm: '48062000' };
+    const base = { ...it_('base', 'FRQE EL PATRON / BASE PORCAO C/100', { ...k, ingredient_id: null }), ncm: '48102990' };
+    const sos = { ...it_('sos', 'FRQE EL PATRON / SOS KN70 10KG(22X28X13)C/250 (E) ENC', { ...k, ingredient_id: null }), ncm: '48195000' };
+    expect(itemParecido(base, [resma, base, sos])).toBeNull();
+    expect(itemParecido(sos, [resma, base, sos])).toBeNull();
+  });
 });

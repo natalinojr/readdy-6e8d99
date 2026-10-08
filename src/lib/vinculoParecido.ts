@@ -5,7 +5,7 @@
 
 export interface ItemParaParecer {
   id: string; supplier_key: string; description: string; ingredient_id: string | null;
-  units_per_package: number | null; last_seen_at: string | null;
+  units_per_package: number | null; last_seen_at: string | null; ncm?: string | null;
 }
 
 /** Palavras que não dizem o que o produto é (unidade, embalagem, abreviações de nota). */
@@ -35,7 +35,7 @@ export function palavras(desc: string): Set<string> {
  * O item ligado do MESMO fornecedor que mais parece este: pelo menos 2 palavras que dizem o produto em comum
  * (metade ou mais das do menor; ou a única palavra dos dois) e, se os dois dizem o tamanho, o mesmo tamanho. Palavra que aparece em metade
  * ou mais dos itens do fornecedor (com 6+ itens) é a marca/prefixo dele ("FRQE EL PATRON / …" na Encarta) e não conta.
- * Empate: o mais recente. Nada parecido: null.
+ * Com NCM nos dois, o NCM tem de bater (6 dígitos). Empate: o mais recente. Nada parecido: null.
  */
 export function itemParecido<T extends ItemParaParecer>(alvo: T, todos: T[]): T | null {
   if (alvo.ingredient_id) return null;
@@ -49,6 +49,9 @@ export function itemParecido<T extends ItemParaParecer>(alvo: T, todos: T[]): T 
   let melhor: { it: T; nota: number } | null = null;
   for (const it of doFornecedor) {
     if (it.id === alvo.id || !it.ingredient_id) continue;
+    // NCM diferente (6 primeiros dígitos) = produto diferente, mesmo com nome parecido (Encarta: resma × base × caixa)
+    const na = String(alvo.ncm ?? '').replace(/\D/g, ''), nb = String(it.ncm ?? '').replace(/\D/g, '');
+    if (na.length >= 6 && nb.length >= 6 && na.slice(0, 6) !== nb.slice(0, 6)) continue;
     const tb = tamanho(it.description);
     if (ta && tb && (ta.u !== tb.u || Math.abs(ta.v - tb.v) > 0.001)) continue;
     const pb = distintas(it.description);
