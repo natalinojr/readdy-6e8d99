@@ -300,7 +300,7 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
               <span className="text-right">Situação</span><span />
             </div>
             {(busca ? [null] : (aba === 'pagas' ? ['pagas' as Grupo] : ORDEM_GRUPOS)).map((g) => {
-              const gl = (g ? visiveis.filter((l) => l.grupo === g) : visiveis).slice().sort((a, b) => (aba === 'pagas' ? b.data.localeCompare(a.data) : a.data.localeCompare(b.data)));
+              const gl = (g ? visiveis.filter((l) => l.grupo === g) : visiveis).slice().sort((a, b) => (aba === 'pagas' ? b.data.localeCompare(a.data) : a.data.localeCompare(b.data) || a.id.localeCompare(b.id)));
               if (!gl.length) return null;
               const soma = gl.reduce((t, l) => t + l.valor, 0);
               if (g === 'dep' && !abreDep && !filtro) {
