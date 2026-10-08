@@ -53,6 +53,25 @@ describe('organizarHoje', () => {
     expect(resto.bloco).toBe('espera');
   });
 
+  it('cartão único "Contas" por loja: atrasadas + vence hoje viram 1, com a soma; notas não lançadas ficam no cartão delas', () => {
+    const atr = p({ kind: 'conta_atrasada', titulo: '3 contas atrasadas — R$ 1.360,00', payload: { total: 3, valor: 1360 } });
+    const hj = p({ kind: 'conta_vence_hoje', titulo: '1 conta vence hoje — R$ 129,22', payload: { total: 1, valor: 129.22 } });
+    const notas = p({ kind: 'nota_nao_lancada', titulo: '2 notas de entrada não lançadas — R$ 500,00 vencendo', payload: { total: 2, valor: 500 } });
+    const deHoje = boleto('ENCARTA', 129.22, '03/10', false);
+    const outraLoja = p({ tenantId: 'vila', loja: 'Vila Leste', kind: 'conta_vence_hoje', payload: { total: 1, valor: 10 } });
+    const itens = organizarHoje([atr, hj, notas, deHoje, outraLoja], HOJE);
+    expect(itens).toHaveLength(3);
+    const par = itens.find((i) => i.tenantId === 'par' && i.tipo === 'contas_vencidas')!;
+    expect(par.titulo).toBe('Contas: 3 vencidas · 1 vence hoje');
+    expect(par.valor).toBe(1489.22);
+    expect(par.juntas.map((j) => j.id)).toEqual([deHoje.id]);
+    expect(par.agregadas?.map((a) => a.kind).sort()).toEqual(['conta_atrasada', 'conta_vence_hoje']);
+    expect(itens.find((i) => i.principal.id === notas.id)?.tipo).toBe('pendencia');
+    const vila = itens.find((i) => i.tenantId === 'vila')!;
+    expect(vila.titulo).toBe('Contas: 1 vence hoje');
+    expect(vila.prazo).toBe(HOJE);
+  });
+
   it('mesmo fornecedor com 2+ contas no mesmo bloco vira um cartão só, com a soma', () => {
     const a = boleto('ENCARTA EMBALAGENS', 129.22, '22/10', false);
     const b = boleto('ENCARTA EMBALAGENS', 129.22, '08/10', false);

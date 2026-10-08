@@ -13,6 +13,7 @@ import {
   type DadosPainel, type Linha, type Grupo, type Janela, type Passo, type SaldoLinha,
 } from '@/lib/contasPainel';
 import { AcoesPagar } from '../pagamentos/comum';
+import BaixaEmLote from './BaixaEmLote';
 import LinhaExtratoModal from '../conciliacao/LinhaExtratoModal';
 import ContasPagarTab from '../ContasPagarTab';
 import FixasDaLoja from './FixasDaLoja';
@@ -137,6 +138,7 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
   const [janela, setJanelaSt] = useState<Janela>(lerJanela);
   const setJanela = (j: Janela) => { setJanelaSt(j); try { localStorage.setItem(JANELA_KEY, String(j)); } catch { /* sem storage */ } };
   const [sel, setSel] = useState<Set<string>>(new Set());
+  const [lote, setLote] = useState(false);
   const [aberta, setAberta] = useState<Linha | null>(null);
   const [extrato, setExtrato] = useState<{ id: string; transaction_date: string; bank_account_id?: string | null } | null>(null);
   const [abreDep, setAbreDep] = useState(false);
@@ -198,6 +200,8 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
   const irPara = (rota: string) => navigate(rota);
   const toggleSel = (id: string) => setSel((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const somaSel = [...linhas, ...pagas].filter((l) => sel.has(l.id)).reduce((t, l) => t + l.valor, 0);
+  // Baixa em lote: só contas em aberto que não são do cartão (fatura é paga junto, fora daqui).
+  const selBaixa = linhas.filter((l) => sel.has(l.id) && l.tipo === 'conta' && !l.cartao && l.conta).map((l) => l.id);
 
   if (visao === 'lista') {
     return (
@@ -251,9 +255,9 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
         <>
           {/* números */}
           <div className="flex gap-2 overflow-x-auto snap-x md:overflow-visible -mx-4 px-4 md:mx-0 md:px-0 mb-4 [scrollbar-width:none]">
-            {kpi(null, 'A pagar', brl(nums.aPagar.v), `${nums.aPagar.n} contas`, '', true)}
-            {nums.vencidas.n ? kpi('venc', 'Vencidas', brl(nums.vencidas.v), `${nums.vencidas.n} contas`, 'red') : kpi('venc', 'Vencidas', '✓ nenhuma', 'tudo em dia', 'ok')}
-            {kpi('sem', 'Esta semana', brl(nums.semana.v), `até dom ${ddmm(somarAteDomingo(dados.hoje))} · ${nums.semana.n} contas`, '')}
+            {kpi(null, 'A pagar', brl(nums.aPagar.v), nContas(nums.aPagar.n), '', true)}
+            {nums.vencidas.n ? kpi('venc', 'Vencidas', brl(nums.vencidas.v), nContas(nums.vencidas.n), 'red') : kpi('venc', 'Vencidas', '✓ nenhuma', 'tudo em dia', 'ok')}
+            {kpi('sem', 'Esta semana', brl(nums.semana.v), `até dom ${ddmm(somarAteDomingo(dados.hoje))} · ${nContas(nums.semana.n)}`, '')}
             <div className="hidden md:block w-px bg-zinc-200 mx-1" />
             <div className="rounded-2xl px-3.5 py-2.5 min-w-[150px] snap-start">
               <div className="text-xs font-bold text-zinc-500"><i className="ri-bank-line" /> Saldo · {dados.saldos.length} conta{dados.saldos.length === 1 ? '' : 's'}</div>
@@ -305,7 +309,7 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
               const soma = gl.reduce((t, l) => t + l.valor, 0);
               if (g === 'dep' && !abreDep && !filtro) {
                 return <button key={g} onClick={() => setAbreDep(true)} className="w-full flex justify-between px-4 md:pl-12 py-2.5 text-xs font-bold text-zinc-600 bg-zinc-50/60 border-b border-zinc-200">
-                  <span>Depois · {gl.length} contas</span><span className="tabular-nums">{brl(soma)} <i className="ri-arrow-down-s-line" /></span></button>;
+                  <span>Depois · {nContas(gl.length)}</span><span className="tabular-nums">{brl(soma)} <i className="ri-arrow-down-s-line" /></span></button>;
               }
               return (
                 <div key={g ?? 'busca'}>
@@ -329,7 +333,9 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
       {sel.size > 0 && (
         <div className="fixed left-1/2 -translate-x-1/2 bottom-4 z-40 w-[min(560px,calc(100vw-24px))] bg-zinc-900 text-white rounded-2xl px-4 py-2.5 flex items-center gap-3 shadow-2xl">
           <span className="text-sm">{sel.size} selecionada{sel.size > 1 ? 's' : ''}</span><b className="tabular-nums">{brl(somaSel)}</b>
-          <span className="flex-1" /><button onClick={() => setSel(new Set())} className="text-xs font-bold text-zinc-300">Limpar</button>
+          <span className="flex-1" />
+          {financeiro && selBaixa.length > 0 && <button onClick={() => setLote(true)} className="h-8 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-900 text-xs font-bold whitespace-nowrap"><i className="ri-check-double-line" /> Paguei no banco{selBaixa.length < sel.size ? ` (${selBaixa.length})` : ''}</button>}
+          <button onClick={() => setSel(new Set())} className="text-xs font-bold text-zinc-300">Limpar</button>
         </div>
       )}
 
@@ -338,11 +344,13 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
           onFechar={() => setAberta(null)} onMudou={() => { setAberta(null); recarregar(); }}
           onExplicar={(e) => { setAberta(null); setExtrato(e); }} irPara={irPara} onLista={podeLista ? (q) => { setAberta(null); const n = new URLSearchParams(params); n.set('busca', q); n.set('lista', '1'); setParams(n, { replace: true }); setVisao('lista'); } : undefined} />
       )}
+      {lote && <BaixaEmLote tenantId={user?.tenantId ?? ''} ids={selBaixa} onFechar={() => setLote(false)} onFeito={() => { setLote(false); setSel(new Set()); recarregar(); }} />}
       {extrato && <LinhaExtratoModal linha={extrato} onClose={() => setExtrato(null)} onChanged={() => recarregar()} />}
     </div>
   );
 }
 
+const nContas = (n: number) => `${n} ${n === 1 ? 'conta' : 'contas'}`;
 function somarAteDomingo(hoje: string) { const w = new Date(`${hoje}T12:00:00Z`).getUTCDay(); const d = new Date(`${hoje}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + (w === 0 ? 0 : 7 - w)); return d.toISOString().slice(0, 10); }
 
 function LinhaTabela({ l, s, sel, onSel, onAbrir }: { l: Linha; s?: SaldoLinha; sel: boolean; onSel: () => void; onAbrir: () => void }) {

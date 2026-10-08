@@ -10,8 +10,8 @@
 //   silenciado   aviso com "Ciente" dado (estoque crítico…): volta sozinho se piorar (assistente-cron)
 //
 // Junta o que é a mesma coisa (pedido do dono, 2026-10-02):
-//   • "N contas atrasadas" (agregada por loja) já inclui as "Falta o boleto" vencidas da mesma loja →
-//     um cartão só, com as sem boleto dentro dele;
+//   • contas da loja (atrasadas e as que vencem hoje) → um cartão "Contas" só
+//     (2026-10-08), que já inclui as "Falta o boleto" vencidas ou de hoje da mesma loja;
 //   • várias "Falta o boleto" do mesmo fornecedor na mesma loja → um cartão só ("OESA: 6 contas").
 
 import { pendenciaVisivelPara } from './pendencia-visivel.ts';
@@ -53,6 +53,8 @@ export interface ItemHoje {
   criadaEm: string;
   /** a pendência "dona" do cartão (contas_vencidas: a agregada; grupo: a de prazo mais curto) */
   principal: PendHoje;
+  /** cartão Contas: as pendências agregadas da loja (atrasadas, vence hoje, notas não lançadas) */
+  agregadas?: PendHoje[];
   /** pendências juntadas neste cartão (boletos sem boleto dentro das vencidas, ou do mesmo fornecedor) */
   juntas: PendHoje[];
   /** boleto pedido: dias desde o pedido */
@@ -185,19 +187,38 @@ export function organizarHoje(pendencias: PendHoje[], hoje: string, porcoes?: Ma
   const usadas = new Set<string>();
   const itens: ItemHoje[] = [];
 
-  // 1) "N contas atrasadas" engole as "Falta o boleto" vencidas (e ainda não pedidas) da mesma loja;
-  //    "Vence hoje" engole as "Falta o boleto" que vencem hoje. São as mesmas contas.
-  for (const ag of lista.filter((p) => p.kind === 'conta_atrasada' || p.kind === 'conta_vence_hoje')) {
-    const deHoje = ag.kind === 'conta_vence_hoje';
-    const juntas = lista.filter((p) => p.kind === 'boleto_faltando' && p.tenantId === ag.tenantId && !usadas.has(p.id)
-      && (deHoje ? p.payload?.vencida !== true && prazoDe(p, hoje) === hoje : p.payload?.vencida === true)
+  // 1) Um cartão "Contas" por loja (2026-10-08, tela Financeiro › Contas): junta "N contas atrasadas" e
+  //    "Vence hoje", e engole as "Falta o boleto" vencidas ou de hoje (e ainda não pedidas) da mesma loja —
+  //    são as mesmas contas. O detalhe mora na tela Contas. "Notas não lançadas" fica no cartão dela (tem a
+  //    porção do dia e outra ação: lançar a nota).
+  const DE_CONTAS = new Set(['conta_atrasada', 'conta_vence_hoje']);
+  const porLoja = new Map<string, PendHoje[]>();
+  for (const p of lista) if (DE_CONTAS.has(p.kind)) porLoja.set(p.tenantId, [...(porLoja.get(p.tenantId) ?? []), p]);
+  for (const [tenantId, ags] of porLoja) {
+    const de = (k: string) => ags.find((p) => p.kind === k);
+    const atr = de('conta_atrasada'), hj = de('conta_vence_hoje');
+    const juntas = lista.filter((p) => p.kind === 'boleto_faltando' && p.tenantId === tenantId && !usadas.has(p.id)
+      && ((atr && p.payload?.vencida === true) || (hj && p.payload?.vencida !== true && prazoDe(p, hoje) === hoje))
       && blocoDe(p, hoje).bloco === 'agora');
     juntas.forEach((p) => usadas.add(p.id));
-    usadas.add(ag.id);
+    ags.forEach((p) => usadas.add(p.id));
+    const qtd = (p: PendHoje | undefined) => num(p?.payload?.total) ?? 0;
+    const partes = [
+      atr && `${qtd(atr)} ${qtd(atr) === 1 ? 'vencida' : 'vencidas'}`,
+      hj && `${qtd(hj)} vence${qtd(hj) === 1 ? '' : 'm'} hoje`,
+    ].filter(Boolean);
+    // A pendência "dona" é a mais apertada: atrasada > vence hoje.
+    const dona = (atr ?? hj) as PendHoje;
+    const valor = num(atr?.payload?.valor) ?? 0;
+    const valorHoje = num(hj?.payload?.valor) ?? 0;
+    const silenciado = ags.every((p) => p.status === 'vista' && !p.acaoRequerida);
     const prazos = juntas.map((p) => prazoDe(p, hoje)).filter((d): d is string => !!d).sort();
-    itens.push(item(ag, hoje, ag.status === 'vista' && !ag.acaoRequerida ? 'silenciado' : 'agora', {
-      chave: `contas:${ag.kind}:${ag.tenantId}`, tipo: 'contas_vencidas', juntas,
-      valor: num(ag.payload?.valor), prazo: deHoje ? hoje : prazos[0] ?? null, urgente: true,
+    itens.push(item(dona, hoje, silenciado ? 'silenciado' : 'agora', {
+      chave: `contas:${tenantId}`, tipo: 'contas_vencidas', juntas, agregadas: ags,
+      titulo: `Contas: ${partes.join(' · ')}`,
+      detalhe: null,
+      valor: Math.round((valor + valorHoje) * 100) / 100,
+      prazo: atr ? prazos[0] ?? null : hoje, urgente: true,
     }));
   }
 

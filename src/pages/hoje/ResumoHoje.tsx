@@ -116,13 +116,14 @@ export function DinheiroHoje() {
   const noBanco = contas.reduce((s, a) => s + saldoDaConta(a), 0);
   const cx = contasAbertas && !erroDevo ? dinheiroXVence(noBanco, contasAbertas, hoje) : null;
   const nVencidas = aPagar(contasAbertas ?? []).filter((c) => c.vencimento < hoje).length;
-  const destino = hasPermissao('fin_pagamentos') ? '/financeiro?tab=pagamentos' : '/financeiro';
+  // 2026-10-08: Pagamentos/Contas Vencidas viraram Financeiro › Contas (aba 'pagar').
+  const destino = hasPermissao('fin_pagar') || hasPermissao('fin_pagamentos') || hasPermissao('fin_contas_vencidas') ? '/financeiro?tab=pagar' : '/financeiro';
   return (
     <button onClick={() => navigate(destino)}
       className="w-full text-left rounded-2xl border border-zinc-200 bg-white p-4 hover:border-zinc-300 cursor-pointer">
       <p className="flex items-center justify-between text-xs font-bold text-zinc-700 mb-2">
-        <span><i className="ri-wallet-3-line text-amber-600" /> Pagamentos{user?.loja ? <span className="font-semibold text-zinc-400"> · {user.loja}</span> : null}</span>
-        <span className="text-[11px] font-semibold text-amber-700">Ver em que pé está <i className="ri-arrow-right-s-line" /></span>
+        <span><i className="ri-wallet-3-line text-amber-600" /> Contas{user?.loja ? <span className="font-semibold text-zinc-400"> · {user.loja}</span> : null}</span>
+        <span className="text-[11px] font-semibold text-amber-700">Abrir Contas <i className="ri-arrow-right-s-line" /></span>
       </p>
       <div className="grid grid-cols-2 gap-3">
         <div>

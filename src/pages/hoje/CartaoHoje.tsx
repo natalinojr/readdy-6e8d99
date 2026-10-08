@@ -83,7 +83,10 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
   const [lerTudo, setLerTudo] = useState(false);
   const [verContas, setVerContas] = useState(false);
   // "N contas atrasadas": a data das contas juntadas não é a mais antiga de todas (a agregada não diz) — só o selo.
-  const prazo = item.tipo === 'contas_vencidas' && p.kind === 'conta_atrasada' ? { texto: 'atrasadas', tom: 'red' as const } : rotuloPrazo(item.prazo, hoje);
+  const agregadas = item.agregadas ?? [p];
+  const temAtrasada = agregadas.some((a) => a.kind === 'conta_atrasada');
+  const temHoje = agregadas.some((a) => a.kind === 'conta_vence_hoje');
+  const prazo = item.tipo === 'contas_vencidas' && temAtrasada ? { texto: 'atrasadas', tom: 'red' as const } : rotuloPrazo(item.prazo, hoje);
   // Caixa da semana: o "prazo" é o dia em que o dinheiro deixa de cobrir ("falta sábado"), não um vencimento.
   if (prazo && p.kind === 'caixa_nao_cobre') prazo.texto = prazo.texto.replace(/^vence/, 'falta');
   const t = item.tenantId;
@@ -103,9 +106,13 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
   const add = (key: string, el: ReactElement) => botoes.push(<span key={key} className="contents">{el}</span>);
   const bill = typeof p.payload?.bill_id === 'string' ? p.payload.bill_id : null;
 
-  if (item.tipo === 'contas_vencidas' || p.kind === 'conta_vence_hoje') {
-    add('ver', <button onClick={() => alternar('contas')} className={aberto === 'contas' ? SECUNDARIO : PRINCIPAL}>
-      <i className={aberto === 'contas' ? 'ri-arrow-up-s-line' : 'ri-list-check-2'} /> {aberto === 'contas' ? 'Fechar' : 'Resolver uma por uma'}
+  if (item.tipo === 'contas_vencidas') {
+    // Cartão único "Contas" (2026-10-08): a tela Contas tem tudo; "Resolver aqui" abre as vencidas/de hoje no cartão.
+    add('tela', <button onClick={() => abrir(t, `/financeiro?tab=pagar${temAtrasada ? '&aberto=vencidas' : ''}`)} className={PRINCIPAL}>
+      <i className="ri-arrow-right-up-line" /> Abrir Contas
+    </button>);
+    if (temAtrasada || temHoje) add('ver', <button onClick={() => alternar('contas')} className={SECUNDARIO}>
+      <i className={aberto === 'contas' ? 'ri-arrow-up-s-line' : 'ri-list-check-2'} /> {aberto === 'contas' ? 'Fechar' : 'Resolver aqui'}
     </button>);
     if (dono && item.juntas.length > 0) {
       add('pedir', <button onClick={() => pedirAoChat({ tipo: 'pedir', texto: textoPedirBoletos(item, item.juntas) })} className={SECUNDARIO}>
@@ -261,7 +268,7 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
         <div className="flex-1 min-w-0">
           <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] font-semibold leading-tight">
             {mostrarLoja && item.loja && <span className="px-1.5 py-0.5 rounded-md bg-zinc-100 text-zinc-600 uppercase tracking-wide text-[10px] font-bold">{item.loja}</span>}
-            <span className={cfg.corTexto}>{cfg.label}</span>
+            <span className={cfg.corTexto}>{item.tipo === 'contas_vencidas' ? 'Contas' : cfg.label}</span>
             {prazo && <span className={`px-1.5 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wide ${prazo.tom === 'red' ? 'bg-red-50 text-red-600' : prazo.tom === 'amber' ? 'bg-amber-50 text-amber-700' : 'bg-zinc-100 text-zinc-500'}`}>{prazo.texto}</span>}
           </p>
           <div className="flex items-baseline justify-between gap-3 mt-1">
@@ -317,7 +324,7 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
       {/* ── O que abre dentro do cartão ── */}
       {aberto === 'contas' && (
         <div className="sm:pl-12">
-          <ContasAtrasadasInline tenantId={t} soHoje={p.kind === 'conta_vence_hoje'} comSituacao={financeiro}
+          <ContasAtrasadasInline tenantId={t} soHoje={!temAtrasada} comSituacao={financeiro}
             onPagarConta={dono ? async (billId) => { pedirAoChat({ tipo: 'pagar_conta', billId }); } : undefined}
             onAbrir={(billId) => abrir(t, `/financeiro?tab=contas-vencidas&foco=${encodeURIComponent(billId)}`)}
             onMudou={onMudou} />
