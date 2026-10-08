@@ -11,6 +11,7 @@ import CategoriaCombobox from './CategoriaCombobox';
 import EntradaTardiaModal from './EntradaTardiaModal';
 import { confirmar } from '@/components/base/Dialogos';
 import { un, num, mesmaUnidade, uppInicial, avisoConversao } from '@/lib/vinculoConversao';
+import { itemParecido } from '@/lib/vinculoParecido';
 
 // ── Classificação de itens (base de correlações) ──
 // Cada item comprado (fornecedor + código do produto; sem código, descrição) tem UMA
@@ -63,7 +64,14 @@ interface Fora { receipts: number; last: string | null }
 const semInsumo = (r: Row) => !r.ingredient_id && !r.is_service && r.classe !== 'despesa';
 
 const brl = (n: number | null | undefined) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(n ?? 0));
-const dataBR = (s: string | null | undefined) => (s ? new Date(s).toLocaleDateString('pt-BR') : '—');
+// last_seen_at vem da data da compra gravada à meia-noite UTC: lida no fuso de Brasília, caía no dia anterior
+// (compra de 08/10 aparecia 07/10 — 2026-10-08). Meia-noite UTC = é uma data, mostra o próprio dia.
+const dataBR = (s: string | null | undefined) => {
+  if (!s) return '—';
+  const d = new Date(s);
+  if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0) return d.toLocaleDateString('pt-BR', { timeZone: 'UTC' });
+  return d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+};
 const docFmt = (k: string) => {
   if (k.startsWith('n:')) return 'sem CNPJ';
   return k.length === 14 ? `${k.slice(0, 2)}.${k.slice(2, 5)}.${k.slice(5, 8)}/${k.slice(8, 12)}-${k.slice(12)}` : k;
@@ -389,6 +397,27 @@ export default function ItensClassificacaoTab() {
         createLabel={(texto) => (texto ? `Criar insumo “${texto}”` : 'Criar novo insumo')}
         buttonClassName="text-[11px] font-semibold rounded-lg px-1.5 py-1 w-[170px] cursor-pointer bg-zinc-50 text-zinc-500 border border-dashed border-zinc-200 hover:border-emerald-300" />
       {pend && <ForaAviso pend={pend} />}
+      {parecido(r)}
+      </div>
+    );
+  };
+
+  // "Parece o mesmo que…" (2026-10-08): item ligado do mesmo fornecedor com descrição parecida. Só sugere;
+  // o toque em "Usar o mesmo" classifica igual (se ainda não tem classe) e liga ao mesmo insumo e conversão.
+  const parecido = (r: Row) => {
+    const p = itemParecido(r, rows);
+    const ing = p?.ingredient_id ? insMap.get(p.ingredient_id) : null;
+    if (!p || !ing) return null;
+    const upp = Number(p.units_per_package ?? 1) || 1;
+    return (
+      <div className="mt-1 max-w-[260px] rounded-lg bg-emerald-50 border border-emerald-100 px-2 py-1.5 text-[11px] text-emerald-900 leading-snug">
+        Parece o mesmo que <b>{p.description}</b> → {ing.name} <span className="text-emerald-700">(1 {p.unit_label || 'un'} = {num(upp)} {un(ing.unit)})</span>
+        <button disabled={busy} onClick={async () => {
+          if (!r.classe && p.classe && !(await classificar([r.id], p.classe, p.dre_category_id, p.merchandise_category_id))) return;
+          await vincular(r, ing.id, upp);
+        }} className="block mt-1 font-bold text-emerald-700 hover:underline cursor-pointer disabled:opacity-50">
+          <i className="ri-links-line" /> Usar o mesmo
+        </button>
       </div>
     );
   };

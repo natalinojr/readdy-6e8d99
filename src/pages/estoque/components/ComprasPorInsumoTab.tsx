@@ -102,9 +102,9 @@ export default function ComprasPorInsumoTab() {
           ]} />
 
           {semInsumo && semInsumo.itens > 0 && (
-            <CartaoAcao tom="prop" icone="ri-links-line" titulo={`${semInsumo.itens} ${semInsumo.itens === 1 ? 'item de nota' : 'itens de nota'} sem insumo ligado (${brlInteiro(semInsumo.valor)})`}
-              acoes={podeConfigurar ? <button className={btn('p', 'sm')} onClick={() => navigate('/financeiro?tab=itens')}>Ligar no Financeiro</button> : undefined}>
-              Não aparecem aqui. Podem ser despesas (embalagem, serviço) ou mercadoria ainda sem insumo — ligue em Financeiro › Compras › Itens.
+            <CartaoAcao tom="prop" icone="ri-links-line" titulo={`${semInsumo.itens} ${semInsumo.itens === 1 ? 'item de mercadoria' : 'itens de mercadoria'} sem insumo ligado (${brlInteiro(semInsumo.valor)})`}
+              acoes={podeConfigurar ? <button className={btn('p', 'sm')} onClick={() => navigate('/financeiro?tab=itens&filtro=sem_insumo')}>Ligar no Financeiro</button> : undefined}>
+              Comprados no período e ainda sem insumo: não entram no estoque nem aparecem aqui. Despesas e serviços já ficam de fora.
             </CartaoAcao>
           )}
 
