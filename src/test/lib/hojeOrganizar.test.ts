@@ -2,7 +2,7 @@
 // Esperando outros, juntando o que é a mesma conta. Casos tirados das pendências reais de 03/10
 // (Paranaguá e Vila Leste) — sem banco.
 import { describe, it, expect } from 'vitest';
-import { organizarHoje, prazoDe, fornecedorDoBoleto, contarAgoraPorLoja, agoraDaPessoa, visivelNaHoje, tituloCurto, pendHojeDaLinha, type PendHoje } from '@/pages/hoje/organizar';
+import { organizarHoje, recontarContas, prazoDe, fornecedorDoBoleto, contarAgoraPorLoja, agoraDaPessoa, visivelNaHoje, tituloCurto, pendHojeDaLinha, type PendHoje } from '@/pages/hoje/organizar';
 
 const HOJE = '2026-10-03';
 let seq = 0;
@@ -216,3 +216,23 @@ describe('servidor: o mesmo "Agora" da tela (bom dia e aviso no celular)', () =>
   });
 });
 
+
+describe('recontarContas (ao vivo)', () => {
+  const ab = (o: Partial<{ id: string; tenant_id: string; vencimento: string; valor: number; ja_paga: boolean; origem: string | null; reference_id: string | null }>) =>
+    ({ id: 'x', tenant_id: 'par', vencimento: '2026-10-01', valor: 10, ja_paga: false, origem: null, reference_id: null, ...o });
+  it('troca o número da foto pelo de agora e tira a que zerou', () => {
+    const atr = p({ kind: 'conta_atrasada', payload: { total: 2, valor: 1034 } });
+    const hj = p({ kind: 'conta_vence_hoje', payload: { total: 2, valor: 459.22 } });
+    const pago = p({ kind: 'boleto_faltando', payload: { bill_id: 'pago' } });
+    const aberto = p({ kind: 'boleto_faltando', payload: { bill_id: 'a1' } });
+    const r = recontarContas([atr, hj, pago, aberto], [
+      ab({ id: 'a1', vencimento: '2026-09-30', valor: 700 }),
+      ab({ id: 'f', vencimento: '2026-09-29', valor: 999, origem: 'hr_payroll', reference_id: 'h' }),
+      ab({ id: 'j', vencimento: '2026-09-29', valor: 50, ja_paga: true }),
+      ab({ id: 'e', vencimento: '2026-10-05', valor: 1 }),
+    ], '2026-10-03');
+    expect(r.find((x) => x.kind === 'conta_atrasada')?.payload).toMatchObject({ total: 1, valor: 700 });
+    expect(r.find((x) => x.kind === 'conta_vence_hoje')).toBeUndefined();
+    expect(r.filter((x) => x.kind === 'boleto_faltando').map((x) => x.id)).toEqual([aberto.id]);
+  });
+});

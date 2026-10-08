@@ -8,7 +8,7 @@ import { useAuth, DB_TO_FRONTEND_ROLE } from '@/contexts/AuthContext';
 import { usePendencias } from '@/contexts/PendenciasContext';
 import { todayBrasilia } from '@/lib/dateUtils';
 import { DONO_EMAIL } from '../../../supabase/functions/_shared/pendencia-visivel';
-import { organizarHoje, visivelNaHoje, pendHojeDaLinha, COLUNAS_PEND_HOJE, PORCAO_KINDS, type ItemHoje, type PendHoje } from './organizar';
+import { organizarHoje, visivelNaHoje, pendHojeDaLinha, recontarContas, COLUNAS_PEND_HOJE, PORCAO_KINDS, type ContaAbertaHoje, type ItemHoje, type PendHoje } from './organizar';
 
 interface Estado {
   pendencias: PendHoje[] | null;
@@ -64,9 +64,15 @@ export async function recarregarHoje(quem: Quem | null, idadeMax = 0): Promise<v
         .select(COLUNAS_PEND_HOJE)
         .in('status', ['aberta', 'vista']).order('criada_em', { ascending: true }).limit(400);
       if (error) throw new Error(error.message);
-      const pendencias: PendHoje[] = (data ?? [])
+      let pendencias: PendHoje[] = (data ?? [])
         .filter((r) => visivelNaHoje(r.kind, mapa.get(r.tenant_id), quem.email, ehDono))
         .map(pendHojeDaLinha);
+      // Contas vencidas / de hoje: reconta ao vivo (a pendência é a foto da última volta do cron).
+      const lojasContas = [...new Set(pendencias.filter((p) => p.kind === 'conta_atrasada' || p.kind === 'conta_vence_hoje' || p.kind === 'boleto_faltando').map((p) => p.tenantId))];
+      if (lojasContas.length) {
+        const { data: ab, error: abErr } = await supabase.rpc('fn_contas_em_aberto', { p_tenants: lojasContas });
+        if (!abErr && Array.isArray(ab)) pendencias = recontarContas(pendencias, ab as ContaAbertaHoje[], dia);
+      }
       // Porções do dia: total de cada trabalho acumulado guardado pelo cron na 1ª volta do dia.
       const idsPorcao = pendencias.filter((p) => PORCAO_KINDS.has(p.kind)).map((p) => p.id);
       const porcoes = new Map<string, number>();

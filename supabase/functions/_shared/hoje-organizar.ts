@@ -265,6 +265,36 @@ export function organizarHoje(pendencias: PendHoje[], hoje: string, porcoes?: Ma
   return itens.sort(compararItens);
 }
 
+/** Linha de fn_contas_em_aberto (o que a recontagem precisa). */
+export interface ContaAbertaHoje { id: string; tenant_id: string; vencimento: string; valor: number; ja_paga: boolean; origem: string | null; reference_id: string | null }
+
+/**
+ * "Contas: N vencidas · M vencem hoje" ao vivo (2026-10-08, o dono: "quantidade de conta vencida não bate").
+ * As pendências conta_atrasada/conta_vence_hoje são uma foto do assistente-cron; depois de uma baixa a tela
+ * Contas já mostra menos e o cartão continuava com o número velho. A tela reconta com fn_contas_em_aberto e a
+ * MESMA regra do cron (sem a já paga na entrega, sem a folha — ela tem o cartão "Folha a pagar"); zerou, a
+ * pendência sai da tela (o cron fecha na próxima volta). "Falta o boleto" de conta que já foi paga também sai.
+ */
+export function recontarContas(pends: PendHoje[], abertas: ContaAbertaHoje[], hoje: string): PendHoje[] {
+  const conta = (tenant: string, kind: string) => {
+    const l = abertas.filter((c) => c.tenant_id === tenant && !c.ja_paga && !(c.origem === 'hr_payroll' && c.reference_id)
+      && (kind === 'conta_atrasada' ? String(c.vencimento).slice(0, 10) < hoje : String(c.vencimento).slice(0, 10) === hoje));
+    return { total: l.length, valor: Math.round(l.reduce((s, c) => s + Number(c.valor), 0) * 100) / 100 };
+  };
+  const abertasIds = new Set(abertas.map((c) => c.id));
+  const lojas = new Set(abertas.map((c) => c.tenant_id));
+  const out: PendHoje[] = [];
+  for (const p of pends) {
+    const bill = typeof p.payload?.bill_id === 'string' ? p.payload.bill_id : null;
+    if (p.kind === 'boleto_faltando' && bill && lojas.has(p.tenantId) && !abertasIds.has(bill)) continue;
+    if (p.kind !== 'conta_atrasada' && p.kind !== 'conta_vence_hoje') { out.push(p); continue; }
+    const r = conta(p.tenantId, p.kind);
+    if (r.total === 0) continue;
+    out.push({ ...p, payload: { ...(p.payload ?? {}), total: r.total, valor: r.valor } });
+  }
+  return out;
+}
+
 /** Quantos cartões em "agora" por loja (os botões de loja do topo). */
 export function contarAgoraPorLoja(itens: ItemHoje[]): Map<string, number> {
   const m = new Map<string, number>();
