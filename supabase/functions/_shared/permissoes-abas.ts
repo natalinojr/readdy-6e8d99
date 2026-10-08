@@ -14,7 +14,8 @@ export const FIN_ABAS = [
   { aba: 'ifood', key: 'fin_ifood', label: 'iFood' },
   { aba: 'despesas', key: 'fin_despesas', label: 'Despesas' },
   { aba: 'fluxo', key: 'fin_fluxo', label: 'Fluxo de Caixa' },
-  { aba: 'pagar', key: 'fin_pagar', label: 'Contas a Pagar' },
+  // 2026-10-08: a aba 'pagar' virou "Contas" (junta Contas a Pagar, Pagamentos e Contas Vencidas).
+  { aba: 'pagar', key: 'fin_pagar', label: 'Contas (a pagar)' },
   { aba: 'receber', key: 'fin_receber', label: 'Contas a Receber' },
   { aba: 'orcamentos', key: 'fin_orcamentos', label: 'Orçamentos' },
   { aba: 'compras', key: 'fin_compras', label: 'Compras' },

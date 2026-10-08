@@ -17,12 +17,12 @@ import { useAuth } from '@/contexts/AuthContext';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useBankAccounts } from '@/hooks/useFinanceiro';
 import { useContasEmAberto } from '@/hooks/useContasEmAberto';
-import { usePermissoes } from '@/hooks/usePermissoes';
 import { resumoContas } from '@/lib/contasAbertas';
 import { usePendencias, kindConfig } from '@/contexts/PendenciasContext';
 import { dreCaixaDoPeriodo } from './DRETab';
 import { mesExtenso } from './dreUi';
 import VazamentosCard from './VazamentosCard';
+import VisaoGeralFinTab from './VisaoGeralFinTab';
 
 const brl = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const ddmm = (ymd: string) => `${ymd.slice(8, 10)}/${ymd.slice(5, 7)}`;
@@ -102,9 +102,8 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
   // Pagamentos, de Contas a Pagar e do número vermelho do Financeiro (2026-10-07).
   const { contas: abertasCP, hoje, erro: erroCP } = useContasEmAberto(user?.tenantId, versaoCP);
   const carregandoContasPagar = abertasCP === null && !erroCP;
-  // "Ver em que pé está" leva a Pagamentos; quem não tem essa aba cai em Contas a Pagar
-  const { hasPermissao } = usePermissoes();
-  const abaPagamentos = hasPermissao('fin_pagamentos') ? 'pagamentos' : 'pagar';
+  // "Ver em que pé está" leva à tela Contas (2026-10-08: Pagamentos, Contas Vencidas e Trilha viraram ela).
+  const abaPagamentos = 'pagar';
   const devo = useMemo(() => resumoContas(abertasCP ?? [], hoje), [abertasCP, hoje]);
 
   // --- O mês (mesma função da DRE, regime de caixa)
@@ -189,13 +188,13 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
           </>)}
         </Pergunta>
 
-        <Pergunta titulo="O que falta resolver?" icone="ri-list-check-3" acao="Abrir a Trilha" onAcao={() => onIrAba('trilha')}>
+        <Pergunta titulo="O que falta resolver?" icone="ri-list-check-3" acao="Abrir Contas" onAcao={() => onIrAba('pagar')}>
           <p className="text-2xl font-bold tabular-nums text-zinc-900">
             {grupos.reduce((s, g) => s + g.n, 0)} <span className="text-sm font-semibold text-zinc-400">pendências</span>
           </p>
           <Linha rotulo="Urgentes" valor={String(grupos.filter((g) => g.alta).reduce((s, g) => s + g.n, 0))} cor="text-red-600" />
           <Linha rotulo="Tipos diferentes" valor={String(grupos.length)} />
-          <p className="text-[11px] text-zinc-400">A lista está logo abaixo; o caminho completo de cada despesa fica na Trilha.</p>
+          <p className="text-[11px] text-zinc-400">A lista está logo abaixo; cada conta, em que pé está, fica em Contas.</p>
         </Pergunta>
       </div>
 
@@ -249,6 +248,9 @@ export default function PainelFinTab({ onIrAba }: { onIrAba: (aba: string) => vo
           )}
         </div>
       </div>
+
+      {/* Visão Geral (2026-10-08): a aba saiu; aqui fica só o que o Painel não tinha. */}
+      <VisaoGeralFinTab soComplemento />
     </div>
   );
 }

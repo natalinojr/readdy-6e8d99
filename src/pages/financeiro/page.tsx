@@ -4,9 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { finKeyDaAba } from '@/constants/permissoesAbas';
 import { useFinanceiroAlertas } from '@/hooks/useFinanceiroAlertas';
-import VisaoGeralFinTab from './components/VisaoGeralFinTab';
 import FluxoCaixaTab from './components/FluxoCaixaTab';
-import ContasPagarTab from './components/ContasPagarTab';
 import ContasReceberTab from './components/ContasReceberTab';
 import ComprasTab from './components/ComprasTab';
 import CentroCustosTab from './components/CentroCustosTab';
@@ -16,7 +14,6 @@ import OrcamentosTab from './components/OrcamentosTab';
 import ConciliacaoTab from './components/ConciliacaoTab';
 import BancosContasTab from './components/BancosContasTab';
 import RHTab, { type RHView } from './components/RHTab';
-import ContasVencidasPanel from './components/ContasVencidasPanel';
 import DespesasTab from './components/DespesasTab';
 import ReceitasTab from './components/ReceitasTab';
 import NotasEntradaTab from './components/NotasEntradaTab';
@@ -25,23 +22,21 @@ import IfoodTab from './components/IfoodTab';
 import FreelancersTab from './components/FreelancersTab';
 import EntregadoresTab from './components/EntregadoresTab';
 import GuiasTab from './components/GuiasTab';
-import TrilhaTab from './components/TrilhaTab';
-import PagamentosTab from './components/pagamentos/PagamentosTab';
 import PainelFinTab from './components/PainelFinTab';
+import ContasTab from './components/contas/ContasTab';
 import LancarFinanceiroModal from './components/LancarFinanceiroModal';
 import { OQueAconteceu } from '@/components/feature/lancar';
 import BuscaFinanceiro from './components/BuscaFinanceiro';
 
+// Contas (2026-10-08): a 1ª tela do Financeiro. Usa o id 'pagar' (antiga Contas a Pagar) para manter a
+// permissão fin_pagar e todos os links ?tab=pagar; a lista antiga fica dentro dela ("Lista completa").
 const TABS = [
+  { id: 'pagar', label: 'Contas', icon: 'ri-checkbox-multiple-line' },
   { id: 'painel', label: 'Painel', icon: 'ri-dashboard-3-line' },
-  { id: 'visao', label: 'Visão Geral', icon: 'ri-dashboard-line' },
-  { id: 'trilha', label: 'Trilha', icon: 'ri-route-line' },
-  { id: 'pagamentos', label: 'Pagamentos', icon: 'ri-wallet-3-line' },
   { id: 'receitas', label: 'Receitas', icon: 'ri-arrow-down-circle-line' },
   { id: 'ifood', label: 'iFood', icon: 'ri-restaurant-2-line' },
   { id: 'despesas', label: 'Despesas', icon: 'ri-pie-chart-2-line' },
   { id: 'fluxo', label: 'Fluxo de Caixa', icon: 'ri-exchange-dollar-line' },
-  { id: 'pagar', label: 'Contas a Pagar', icon: 'ri-bill-line' },
   { id: 'receber', label: 'Contas a Receber', icon: 'ri-hand-coin-line' },
   { id: 'orcamentos', label: 'Orçamentos', icon: 'ri-file-list-3-line' },
   { id: 'compras', label: 'Compras', icon: 'ri-shopping-cart-2-line' },
@@ -52,17 +47,17 @@ const TABS = [
   { id: 'entregadores', label: 'Entregadores', icon: 'ri-e-bike-2-line' },
   { id: 'centros', label: 'Centro de Custos', icon: 'ri-pie-chart-line' },
   { id: 'dre', label: 'DRE', icon: 'ri-file-chart-line' },
-  { id: 'contas-vencidas', label: 'Contas Vencidas', icon: 'ri-alarm-warning-line' },
   { id: 'bancos', label: 'Bancos e Contas', icon: 'ri-bank-card-line' },
   { id: 'conciliacao', label: 'Conciliação', icon: 'ri-bank-line' },
   { id: 'implantacao', label: 'Implantação', icon: 'ri-building-line' },
 ];
 
-// As 21 abas em 6 grupos (2026-09-30): em cima o grupo, embaixo as abas dele em pílula.
-// Nenhuma aba sai; ids e links (?tab=) continuam os mesmos.
+// Abas em 6 grupos (2026-09-30): em cima o grupo, embaixo as abas dele em pílula.
+// 2026-10-08: saíram Pagamentos, Contas Vencidas e Trilha (viraram a tela Contas) e Visão Geral (foi para o Painel);
+// os ids antigos continuam funcionando por link (ABA_QUE_SAIU).
 const GRUPOS = [
-  { id: 'inicio', label: 'Início', icon: 'ri-home-5-line', abas: ['painel', 'visao', 'trilha'] },
-  { id: 'pagar', label: 'Pagar', icon: 'ri-bill-line', abas: ['pagamentos', 'pagar', 'contas-vencidas', 'guias', 'rh', 'entregadores'] },
+  { id: 'inicio', label: 'Início', icon: 'ri-home-5-line', abas: ['pagar', 'painel'] },
+  { id: 'pagar', label: 'Pagar', icon: 'ri-bill-line', abas: ['guias', 'rh', 'entregadores'] },
   { id: 'receber', label: 'Receber', icon: 'ri-arrow-down-circle-line', abas: ['receitas', 'receber', 'ifood'] },
   { id: 'bancos', label: 'Bancos', icon: 'ri-bank-line', abas: ['bancos', 'conciliacao', 'fluxo'] },
   { id: 'compras', label: 'Compras', icon: 'ri-shopping-cart-2-line', abas: ['compras', 'notas-entrada', 'itens', 'orcamentos'] },
@@ -70,6 +65,12 @@ const GRUPOS = [
 ];
 // Ids antigos que ainda chegam por link e abrem dentro de outra aba.
 const ABA_CANONICA: Record<string, string> = { previsao: 'fluxo', 'rh-relatorio': 'rh', freelancers: 'rh' };
+// Abas que saíram em 2026-10-08: o link antigo (pendências gravadas, avisos do assistente, outras telas) é
+// trocado na URL pela aba nova, com o filtro equivalente.
+const ABA_QUE_SAIU: Record<string, { tab: string; extra?: Record<string, string> }> = {
+  pagamentos: { tab: 'pagar' }, trilha: { tab: 'pagar' }, 'contas-pagar': { tab: 'pagar' },
+  'contas-vencidas': { tab: 'pagar', extra: { aberto: 'vencidas' } }, visao: { tab: 'painel' },
+};
 // ?tab=rh&sub=prestadores abre o RH já na subaba (usado pelo "O que aconteceu?").
 const SUBABAS_RH: RHView[] = ['folha', 'funcionarios', 'beneficios', 'freelancers', 'prestadores', 'relatorio'];
 
@@ -79,7 +80,11 @@ export default function FinanceiroPage() {
   // Abas liberadas para o papel (Configurações › Permissões; admin vê todas).
   const { hasPermissao } = usePermissoes();
   // O Painel só junta números de outras abas: vê quem vê a Visão Geral.
-  const podeAba = (t: string) => { const k = finKeyDaAba(t === 'painel' ? 'visao' : t); return !!k && hasPermissao(k); };
+  const podeAba = (t: string) => {
+    // Contas junta Contas a Pagar, Pagamentos e Contas Vencidas: quem tinha qualquer uma delas vê a nova.
+    if (t === 'pagar') return (['fin_pagar', 'fin_pagamentos', 'fin_contas_vencidas'] as const).some((k) => hasPermissao(k));
+    const k = finKeyDaAba(t === 'painel' ? 'visao' : t); return !!k && hasPermissao(k);
+  };
   // Freelancers virou subaba de RH / Folha (2026-09-28): quem só tem a permissão de Freelancers
   // continua vendo a aba RH, mas só com os freelancers (sem folha nem salários).
   const podeRH = podeAba('rh');
@@ -90,7 +95,6 @@ export default function FinanceiroPage() {
   const { contasVencidas, contasVencendo, folhaPendente } = useFinanceiroAlertas();
   const avisoDaAba: Record<string, { n: number; cor: string; dica: string }> = {
     pagar: { n: contasVencidas + contasVencendo, cor: contasVencidas > 0 ? 'bg-red-500' : 'bg-amber-500', dica: `${contasVencidas} vencida(s) e ${contasVencendo} vencendo em 7 dias` },
-    'contas-vencidas': { n: contasVencidas, cor: 'bg-red-500', dica: `${contasVencidas} conta(s) vencida(s)` },
     rh: { n: folhaPendente, cor: 'bg-amber-500', dica: `${folhaPendente} pagamento(s) da folha do mês pendente(s)` },
   };
   // Aba na URL (?tab=dre), como no Estoque e nas Configurações. Antes era só useState com
@@ -100,7 +104,15 @@ export default function FinanceiroPage() {
   const daUrl = searchParams.get('tab');
   const doState = (location.state as { activeTab?: string } | null)?.activeTab;
   const valida = (t: string | null | undefined) => (t && (TABS.some((x) => x.id === t) || t === 'previsao' || t === 'rh-relatorio' || t === 'freelancers') && podeAbaOuFreela(t) ? t : null);
-  const activeTab = valida(daUrl) ?? valida(doState) ?? abas[0]?.id ?? 'visao';
+  const activeTab = valida(daUrl) ?? valida(ABA_QUE_SAIU[doState ?? '']?.tab) ?? valida(doState) ?? abas[0]?.id ?? 'pagar';
+  // Link para aba que saiu: troca a URL pela aba nova (mantém os outros parâmetros, ex.: ?busca=).
+  useEffect(() => {
+    const destino = daUrl ? ABA_QUE_SAIU[daUrl] : undefined;
+    if (!destino) return;
+    const n = new URLSearchParams(searchParams); n.set('tab', destino.tab);
+    Object.entries(destino.extra ?? {}).forEach(([k, v]) => n.set(k, v));
+    setSearchParams(n, { replace: true });
+  }, [daUrl]); // eslint-disable-line react-hooks/exhaustive-deps
   const setActiveTab = (t: string) => setSearchParams({ tab: t }, { replace: true });
   // Abre a aba já pedindo a janela de lançamento (?abrir=), usado pelo botão Lançar.
   const abrirAba = (t: string, abrir?: string) => setSearchParams(abrir ? { tab: t, abrir } : { tab: t }, { replace: true });
@@ -296,9 +308,6 @@ export default function FinanceiroPage() {
       {/* Content */}
       <div key={chaveConteudo} className="flex-1 overflow-y-auto">
         {activeTab === 'painel' && <PainelFinTab onIrAba={setActiveTab} />}
-        {activeTab === 'visao' && <VisaoGeralFinTab />}
-        {activeTab === 'trilha' && <TrilhaTab />}
-        {activeTab === 'pagamentos' && <PagamentosTab />}
         {activeTab === 'receitas' && <ReceitasTab />}
         {activeTab === 'ifood' && <IfoodTab />}
         {activeTab === 'despesas' && <DespesasTab />}
@@ -306,7 +315,7 @@ export default function FinanceiroPage() {
             Fluxo de Caixa. O id antigo continua roteando para cá por causa de
             links salvos e de navegações por `location.state`. */}
         {(activeTab === 'fluxo' || activeTab === 'previsao') && <FluxoCaixaTab />}
-        {activeTab === 'pagar' && <ContasPagarTab onNavigateToCompras={handleNavigateToCompras} />}
+        {activeTab === 'pagar' && <ContasTab onNavigateToCompras={handleNavigateToCompras} />}
         {activeTab === 'receber' && <ContasReceberTab />}
         {activeTab === 'orcamentos' && <OrcamentosTab />}
         {activeTab === 'notas-entrada' && <NotasEntradaTab />}
@@ -320,7 +329,6 @@ export default function FinanceiroPage() {
         {activeTab === 'entregadores' && <EntregadoresTab />}
         {activeTab === 'centros' && <CentroCustosTab />}
         {activeTab === 'dre' && <DREContainer />}
-        {activeTab === 'contas-vencidas' && <ContasVencidasPanel />}
         {activeTab === 'bancos' && <BancosContasTab />}
         {activeTab === 'conciliacao' && <ConciliacaoTab />}
         {activeTab === 'implantacao' && <ImplantacaoTab />}

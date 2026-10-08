@@ -200,7 +200,9 @@ const RvDTooltip = ({ active, payload, label }: { active?: boolean; payload?: { 
   );
 };
 
-export default function VisaoGeralFinTab() {
+// soComplemento (2026-10-08): a aba Visão Geral saiu e foi para o Painel — o Painel mostra só o que ele não
+// tinha (para onde foi o dinheiro, formas de pagamento, tendência e receita × despesa).
+export default function VisaoGeralFinTab({ soComplemento = false }: { soComplemento?: boolean } = {}) {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { hasPermissao: temPermissao } = usePermissoes();
@@ -284,7 +286,7 @@ export default function VisaoGeralFinTab() {
   );
 
   // ─── MODO SESSÃO ───────────────────────────────────────────────────────────
-  if (isSessao) {
+  if (isSessao && !soComplemento) {
     const PAYMENT_COLORS_SESS = ['#f59e0b', '#10b981', '#6366f1', '#f97316', '#06b6d4', '#ec4899'];
 
     return (
@@ -557,9 +559,10 @@ export default function VisaoGeralFinTab() {
   const scoreBg = healthScore >= 80 ? 'bg-green-50 border-green-200' : healthScore >= 50 ? 'bg-amber-50 border-amber-200' : 'bg-red-50 border-red-200';
 
   return (
-    <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto w-full">
-      {headerBar}
+    <div className={soComplemento ? 'space-y-5 w-full' : 'p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto w-full'}>
+      {!soComplemento && headerBar}
       <div className="space-y-5">
+        {!soComplemento && (<>
         <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 -mb-2">O mês até agora</p>
         {/* KPI Cards */}
         <div className={`grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 gap-3 ${temPdv ? 'lg:grid-cols-3 xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
@@ -771,6 +774,7 @@ export default function VisaoGeralFinTab() {
           </div>
         )}
 
+        </>)}
         <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 -mb-2">Para onde foi o dinheiro</p>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
           {/* ── Top Despesas ─────────────────────────────────────────────────────── */}
