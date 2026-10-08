@@ -32,21 +32,30 @@ export function palavras(desc: string): Set<string> {
 }
 
 /**
- * O item ligado do MESMO fornecedor que mais parece este: pelo menos 2 palavras em comum e, se os dois dizem
- * o tamanho, o mesmo tamanho. Empate: o mais recente. Nada parecido: null.
+ * O item ligado do MESMO fornecedor que mais parece este: pelo menos 2 palavras que dizem o produto em comum
+ * (metade ou mais das do menor; ou a única palavra dos dois) e, se os dois dizem o tamanho, o mesmo tamanho. Palavra que aparece em metade
+ * ou mais dos itens do fornecedor (com 6+ itens) é a marca/prefixo dele ("FRQE EL PATRON / …" na Encarta) e não conta.
+ * Empate: o mais recente. Nada parecido: null.
  */
 export function itemParecido<T extends ItemParaParecer>(alvo: T, todos: T[]): T | null {
   if (alvo.ingredient_id) return null;
-  const pa = palavras(alvo.description);
+  const doFornecedor = todos.filter((it) => it.supplier_key === alvo.supplier_key);
+  const freq = new Map<string, number>();
+  for (const it of doFornecedor) for (const w of palavras(it.description)) freq.set(w, (freq.get(w) ?? 0) + 1);
+  const comum = (w: string) => doFornecedor.length >= 6 && (freq.get(w) ?? 0) >= doFornecedor.length / 2;
+  const distintas = (desc: string) => new Set([...palavras(desc)].filter((w) => !comum(w)));
+  const pa = distintas(alvo.description);
   const ta = tamanho(alvo.description);
   let melhor: { it: T; nota: number } | null = null;
-  for (const it of todos) {
-    if (it.id === alvo.id || !it.ingredient_id || it.supplier_key !== alvo.supplier_key) continue;
+  for (const it of doFornecedor) {
+    if (it.id === alvo.id || !it.ingredient_id) continue;
     const tb = tamanho(it.description);
     if (ta && tb && (ta.u !== tb.u || Math.abs(ta.v - tb.v) > 0.001)) continue;
-    const pb = palavras(it.description);
+    const pb = distintas(it.description);
     const comuns = [...pa].filter((w) => pb.has(w)).length;
-    if (comuns < 2) continue;
+    // 2+ palavras em comum (metade ou mais do menor), ou 1 só quando é a única dos dois ("RESMA" × "RESMA")
+    const mesmaUnica = comuns === 1 && pa.size === 1 && pb.size === 1;
+    if (!mesmaUnica && (comuns < 2 || comuns < Math.min(pa.size, pb.size) / 2)) continue;
     const nota = comuns + (ta && tb ? 1 : 0);
     if (!melhor || nota > melhor.nota || (nota === melhor.nota && String(it.last_seen_at ?? '') > String(melhor.it.last_seen_at ?? ''))) melhor = { it, nota };
   }

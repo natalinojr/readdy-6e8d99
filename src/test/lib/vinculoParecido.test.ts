@@ -37,4 +37,19 @@ describe('itemParecido', () => {
   it('item já ligado não recebe sugestão', () => {
     expect(itemParecido(bonare, [pred8])).toBeNull();
   });
+  it('marca/prefixo do fornecedor não conta (Encarta: "FRQE EL PATRON / …")', () => {
+    const k = { supplier_key: 'enc' };
+    const resma = it_('resma', 'FRQE EL PATRON / RESMA BB35 25X34 C/500 ENC', { ...k, ingredient_id: 'resma' });
+    const outros = [
+      it_('o1', 'FRQE EL PATRON / COPO 300ML C/50 ENC', { ...k, ingredient_id: 'copo' }),
+      it_('o2', 'FRQE EL PATRON / GUARDANAPO C/1000 ENC', { ...k, ingredient_id: 'guard' }),
+    ];
+    const base = it_('base', 'FRQE EL PATRON / BASE PORCAO C/100', { ...k, ingredient_id: null });
+    const sos = it_('sos', 'FRQE EL PATRON / SOS KN70 10KG(22X28X13)C/250 (E) ENC', { ...k, ingredient_id: null });
+    const resma2 = it_('resma2', 'FRQE EL PATRON / RESMA BB35 25X34 C/250 ENC', { ...k, ingredient_id: null });
+    const todos = [resma, ...outros, base, sos, resma2];
+    expect(itemParecido(base, todos)).toBeNull();
+    expect(itemParecido(sos, todos)).toBeNull();
+    expect(itemParecido(resma2, todos)?.id).toBe('resma');
+  });
 });
