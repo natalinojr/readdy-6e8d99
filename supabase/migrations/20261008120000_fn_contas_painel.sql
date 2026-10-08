@@ -30,7 +30,7 @@ begin
            pu.id as compra_id, pu.invoice_number, pu.purchase_date, pu.payment_method as forma_compra,
            coalesce(pu.delivery_confirmed_at, pu.stock_applied_at) as chegou_em,
            case when pu.id is not null then public.fn_compra_espera_chegar(pu.id) else false end as espera_chegar,
-           f.numero as nf_numero, f.emitted_at as nf_emitida, f.modelo as nf_modelo
+           f.numero as nf_numero, (f.emitted_at at time zone 'America/Sao_Paulo')::date as nf_emitida, f.modelo as nf_modelo
       from public.fn_contas_em_aberto(array[p_tenant]) c
       join fin_accounts_payable a on a.id = c.id
       left join fin_dre_categories dc on dc.id = a.dre_category_id
@@ -71,6 +71,7 @@ begin
        and coalesce(fd.sefaz_status, 1) <> 2
        and fd.emitted_at::date >= v_inicio
        and jsonb_typeof(fd.parcelas) = 'array' and jsonb_array_length(fd.parcelas) > 0
+       and nullif(p.value ->> 'vencimento', '') is not null
   ),
   extrato as (
     select s.id, s.transaction_date::date as data, s.amount as valor, s.description as descricao,
@@ -89,7 +90,9 @@ begin
            sum(p.amount) filter (where pm.type::text in ('credit_card', 'debit_card')) as cartao
       from payments p
       left join payment_methods pm on pm.id = p.payment_method_id
+      left join orders o on o.id = p.order_id
      where p.tenant_id = p_tenant and not coalesce(p.is_refunded, false)
+       and o.ifood_order_id is null   -- iFood entra pelo repasse exato (fin_ifood_entries), não pela média
        and p.created_at >= (v_hoje - 200)::timestamp
      group by 1
   ),
@@ -130,7 +133,7 @@ begin
         'chegou_em', chegou_em, 'banco', banco
       ) order by pago_em desc) from pg), '[]'::jsonb),
     'notas_sem_conta', coalesce((select jsonb_agg(jsonb_build_object(
-        'id', id || ':' || parcela, 'doc_id', id, 'nome', nome, 'numero', numero, 'emitida', emitted_at,
+        'id', id || ':' || parcela, 'doc_id', id, 'nome', nome, 'numero', numero, 'emitida', (emitted_at at time zone 'America/Sao_Paulo')::date,
         'valor', valor, 'vencimento', vencimento, 'parcela', parcela, 'parcelas', parcelas
       ) order by vencimento) from notas), '[]'::jsonb),
     'extrato_pendente', coalesce((select jsonb_agg(jsonb_build_object(

@@ -2,9 +2,10 @@
 // Substitui as abas Pagamentos, Contas Vencidas e Trilha (os links antigos caem aqui) e absorve Contas a Pagar
 // (a lista completa com nova conta, exportar e despesa fixa fica em "Lista completa").
 // Uma chamada só (fn_contas_painel); as regras ficam em src/lib/contasPainel.ts (testadas).
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { usePermissoes } from '@/hooks/usePermissoes';
 import { supabase, invokeWithAuth } from '@/lib/supabase';
 import { DONO_EMAIL } from '../../../../../supabase/functions/_shared/pendencia-visivel';
 import {
@@ -102,7 +103,7 @@ const REGRA = (janela: Janela) => (
     <b className="block text-white">Como o projetado é calculado</b>
     <span className="block mt-1.5"><b className="text-white">1.</b> Saldo depois: saldo de hoje em todas as contas menos as contas lançadas até aquela data. As vencidas contam como pagas hoje.</span>
     <span className="block mt-1.5"><b className="text-white">2.</b> + vendas que ainda vão acontecer: para cada dia, a média {janela === 1 ? 'do mês passado' : `dos últimos ${janela} meses`} do <b className="text-white">mesmo dia da semana na mesma semana do mês</b>. Ex.: a 2ª quinta usa a média das 2ªs quintas.</span>
-    <span className="block mt-1.5"><b className="text-white">3.</b> Cada venda entra no dia em que o dinheiro cai na conta, já sem as taxas.</span>
+    <span className="block mt-1.5"><b className="text-white">3.</b> Cada venda conta no dia em que acontece, já sem as taxas.</span>
     <span className="block mt-1.5"><b className="text-white">4.</b> + repasses já informados pelos aplicativos de entrega.</span>
   </>
 );
@@ -114,9 +115,16 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
   const [params, setParams] = useSearchParams();
   const dono = (user?.email ?? '').toLowerCase() === DONO_EMAIL;
   const financeiro = dono || ['admin', 'gerente', 'financeiro'].includes(String(user?.perfil ?? ''));
+  // A aba abre para quem tinha Contas a Pagar, Pagamentos ou Contas Vencidas; a lista completa (criar,
+  // excluir, exportar) continua só com Contas a Pagar, e as fixas com Contas a Pagar ou Pagamentos.
+  const { hasPermissao } = usePermissoes();
+  const podeLista = hasPermissao('fin_pagar');
+  const podeFixas = podeLista || hasPermissao('fin_pagamentos');
 
   // Links antigos: ?abrir=nova|email (Contas a Pagar) abrem a lista completa; ?ver=fixas as contas fixas.
-  const visaoUrl = params.get('abrir') === 'nova' || params.get('abrir') === 'email' || params.get('lista') === '1' ? 'lista' : params.get('ver') === 'fixas' ? 'fixas' : 'contas';
+  // Busca vinda de outra tela (?busca=, às vezes com ?mes=) procura em todos os meses: abre a lista completa.
+  const querLista = (p: URLSearchParams) => p.get('abrir') === 'nova' || p.get('abrir') === 'email' || p.get('lista') === '1' || !!p.get('busca');
+  const visaoUrl = podeLista && querLista(params) ? 'lista' : podeFixas && params.get('ver') === 'fixas' ? 'fixas' : 'contas';
   const [visao, setVisao] = useState<'contas' | 'lista' | 'fixas'>(visaoUrl);
   const [dados, setDados] = useState<DadosPainel | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -124,8 +132,8 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
   const [versao, setVersao] = useState(0);
   const [aba, setAba] = useState<'abertas' | 'pagas'>('abertas');
   const [filtro, setFiltro] = useState<Grupo | null>(params.get('aberto') === 'vencidas' ? 'venc' : params.get('aberto') === 'semana' || params.get('ver') === 'pacote' ? 'sem' : null);
-  const [busca, setBusca] = useState(params.get('busca') ?? '');
-  const [buscaCel, setBuscaCel] = useState(!!params.get('busca'));
+  const [busca, setBusca] = useState('');
+  const [buscaCel, setBuscaCel] = useState(false);
   const [janela, setJanelaSt] = useState<Janela>(lerJanela);
   const setJanela = (j: Janela) => { setJanelaSt(j); try { localStorage.setItem(JANELA_KEY, String(j)); } catch { /* sem storage */ } };
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -135,16 +143,20 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
 
   // Links que chegam depois de a tela abrir (ex.: ?tab=contas-vencidas vira ?tab=pagar&aberto=vencidas):
   useEffect(() => {
-    const ab = params.get('abrir'), v = params.get('ver'), a = params.get('aberto'), b = params.get('busca');
-    if (ab === 'nova' || ab === 'email' || params.get('lista') === '1') setVisao('lista');
-    else if (v === 'fixas') setVisao('fixas');
+    const v = params.get('ver'), a = params.get('aberto');
+    if (podeLista && querLista(params)) setVisao('lista');
+    else if (podeFixas && v === 'fixas') setVisao('fixas');
     if (a === 'vencidas') setFiltro('venc'); else if (a === 'semana' || v === 'pacote') setFiltro('sem');
-    if (b) { setBusca(b); setBuscaCel(true); }
-  }, [params]);
+  }, [params, podeLista, podeFixas]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Troca de loja: descarta resposta atrasada da loja anterior e limpa o que estava marcado/aberto.
+  const lojaAtual = useRef(user?.tenantId);
+  useEffect(() => { lojaAtual.current = user?.tenantId; setSel(new Set()); setAberta(null); setExtrato(null); setFiltro(null); }, [user?.tenantId]);
   const carregar = useCallback(async () => {
-    if (!user?.tenantId) return;
-    const { data, error } = await supabase.rpc('fn_contas_painel', { p_tenant: user.tenantId });
+    const t = user?.tenantId;
+    if (!t) return;
+    const { data, error } = await supabase.rpc('fn_contas_painel', { p_tenant: t });
+    if (lojaAtual.current !== t) return;
     if (error) { setErro(error.message); return; }
     setErro(null); setDados(data as DadosPainel);
   }, [user?.tenantId]);
@@ -190,7 +202,7 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
   if (visao === 'lista') {
     return (
       <div>
-        <div className="px-4 md:px-6 pt-4"><button onClick={() => { setVisao('contas'); const n = new URLSearchParams(params); n.delete('abrir'); n.delete('lista'); setParams(n, { replace: true }); }} className="text-sm font-semibold text-amber-700 flex items-center gap-1"><i className="ri-arrow-left-line" />Voltar para Contas</button></div>
+        <div className="px-4 md:px-6 pt-4"><button onClick={() => { setVisao('contas'); const n = new URLSearchParams(params); n.delete('abrir'); n.delete('lista'); n.delete('busca'); n.delete('mes'); setParams(n, { replace: true }); }} className="text-sm font-semibold text-amber-700 flex items-center gap-1"><i className="ri-arrow-left-line" />Voltar para Contas</button></div>
         <ContasPagarTab onNavigateToCompras={onNavigateToCompras} />
       </div>
     );
@@ -225,8 +237,8 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
       <div className="flex items-center gap-2 mb-3">
         <h2 className="text-lg font-extrabold text-zinc-900">Contas</h2>
         <div className="ml-auto flex items-center gap-2">
-          <button onClick={() => setVisao('fixas')} title="Contas fixas" className="text-xs font-bold text-zinc-600 bg-white border border-zinc-200 rounded-lg px-2.5 py-1.5"><i className="ri-repeat-line" /> <span className="hidden sm:inline">Contas fixas</span></button>
-          <button onClick={() => setVisao('lista')} className="text-xs font-bold text-zinc-600 bg-white border border-zinc-200 rounded-lg px-2.5 py-1.5"><i className="ri-list-check" /> <span className="hidden sm:inline">Lista completa</span></button>
+          {podeFixas && <button onClick={() => setVisao('fixas')} title="Contas fixas" className="text-xs font-bold text-zinc-600 bg-white border border-zinc-200 rounded-lg px-2.5 py-1.5"><i className="ri-repeat-line" /> <span className="hidden sm:inline">Contas fixas</span></button>}
+          {podeLista && <button onClick={() => setVisao('lista')} className="text-xs font-bold text-zinc-600 bg-white border border-zinc-200 rounded-lg px-2.5 py-1.5"><i className="ri-list-check" /> <span className="hidden sm:inline">Lista completa</span></button>}
           <button onClick={() => atualizar(true)} disabled={atualizando} className="text-xs font-extrabold bg-zinc-900 text-white rounded-lg px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-70">
             <i className={`ri-refresh-line ${atualizando ? 'animate-spin' : ''}`} /><span className="hidden sm:inline">{atualizando ? 'Buscando…' : 'Atualizar'}</span>
           </button>
@@ -324,7 +336,7 @@ export default function ContasTab({ onNavigateToCompras }: { onNavigateToCompras
       {aberta && dados && (
         <Gaveta l={aberta} hoje={dados.hoje} tenantId={user?.tenantId ?? ''} dono={dono} financeiro={financeiro}
           onFechar={() => setAberta(null)} onMudou={() => { setAberta(null); recarregar(); }}
-          onExplicar={(e) => { setAberta(null); setExtrato(e); }} irPara={irPara} onLista={(q) => { setAberta(null); const n = new URLSearchParams(params); n.set('busca', q); n.set('lista', '1'); setParams(n, { replace: true }); setVisao('lista'); }} />
+          onExplicar={(e) => { setAberta(null); setExtrato(e); }} irPara={irPara} onLista={podeLista ? (q) => { setAberta(null); const n = new URLSearchParams(params); n.set('busca', q); n.set('lista', '1'); setParams(n, { replace: true }); setVisao('lista'); } : undefined} />
       )}
       {extrato && <LinhaExtratoModal linha={extrato} onClose={() => setExtrato(null)} onChanged={() => recarregar()} />}
     </div>
@@ -366,7 +378,7 @@ function LinhaTabela({ l, s, sel, onSel, onAbrir }: { l: Linha; s?: SaldoLinha; 
 
 function Gaveta({ l, hoje, tenantId, dono, financeiro, onFechar, onMudou, onExplicar, irPara, onLista }: {
   l: Linha; hoje: string; tenantId: string; dono: boolean; financeiro: boolean; onFechar: () => void; onMudou: () => void;
-  onExplicar: (e: { id: string; transaction_date: string; bank_account_id?: string | null }) => void; irPara: (r: string) => void; onLista: (q: string) => void;
+  onExplicar: (e: { id: string; transaction_date: string; bank_account_id?: string | null }) => void; irPara: (r: string) => void; onLista?: (q: string) => void;
 }) {
   const c = l.conta, p = l.paga;
   const passos: { p: Passo; t: string; d: string; link?: { t: string; r: string } }[] = [];
@@ -410,7 +422,7 @@ function Gaveta({ l, hoje, tenantId, dono, financeiro, onFechar, onMudou, onExpl
             <>
               {(l.passos[1] === 'esp' || l.passos[1] === 'no') && c.compra_id && <button onClick={() => irPara(`/receber?abrir=compra:${c.compra_id}`)} className="bg-orange-600 text-white font-extrabold rounded-xl py-3 text-sm">Chegou: conferir agora</button>}
               {!l.cartao && <AcoesPagar tenantId={tenantId} billId={c.id} dono={dono} financeiro={financeiro} onMudou={onMudou} rotuloPagar="Pagar com PIN" />}
-              <button onClick={() => onLista(c.nome)} className="text-xs font-semibold text-zinc-500 py-1">Abrir na lista completa (editar, excluir)</button>
+              {onLista && <button onClick={() => onLista(c.nome)} className="text-xs font-semibold text-zinc-500 py-1">Abrir na lista completa (editar, excluir)</button>}
             </>
           )}
           {l.tipo === 'paga' && <div className="text-xs text-zinc-500">Paga e {p?.banco ? 'conferida no extrato.' : 'sem linha do extrato ligada.'}</div>}

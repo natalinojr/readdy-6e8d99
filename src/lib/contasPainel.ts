@@ -121,7 +121,7 @@ export function linhaPaga(p: ContaPaga, hoje: string): Linha {
 /** Todas as linhas em aberto (contas a pagar de verdade + notas com boleto sem conta + saídas sem explicação). */
 export function linhasAbertas(d: DadosPainel): Linha[] {
   const contas = d.abertas.filter((c) => !c.ja_paga && Number(c.valor) > 0.005).map((c) => linhaConta(c, d.hoje));
-  const notas = d.notas_sem_conta.map((n) => linhaNota(n, d.hoje));
+  const notas = d.notas_sem_conta.filter((n) => !!n.vencimento).map((n) => linhaNota(n, d.hoje));
   const saidas = d.extrato_pendente.filter((e) => e.tipo === 'debit').map((e) => linhaSaida(e, d.hoje));
   return [...saidas, ...notas, ...contas];
 }
