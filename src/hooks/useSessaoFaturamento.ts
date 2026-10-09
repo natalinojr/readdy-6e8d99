@@ -53,6 +53,7 @@ export function useSessaoFaturamento() {
         .eq('session_id', sessao.id)
         .eq('is_training', false)
         .eq('is_draft', false)
+        .is('ifood_order_id', null) // pedido do iFood fica fora: a venda dele já vem somada pelo iFood
         .not('status', 'in', '(cancelled,draft)');
 
       if (error) {

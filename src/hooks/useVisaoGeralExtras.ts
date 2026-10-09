@@ -24,7 +24,7 @@ export interface ItemRevenue {
 export interface VisaoGeralExtrasData {
   by_category: CategoryRevenue[];
   by_hour: HourlyRevenue[];
-  /** Itens mais vendidos (por quantidade) — pedidos do sistema; o iFood não traz os itens. */
+  /** Itens mais vendidos (por quantidade) — pedidos do sistema, sem os do iFood (ifood_repasse). */
   by_item: ItemRevenue[];
 }
 
@@ -63,6 +63,9 @@ export function useVisaoGeralExtras(periodo: string, intervalo?: { from: string;
         .not('status', 'in', '(cancelled,draft)')
         .eq('is_training', false)
         .eq('is_draft', false)
+        // Pedido do iFood pago pelo repasse: a venda é contada pelo iFood (faturamento, card iFood),
+        // não aqui. Sem isso, categorias e "Mais vendidos (sem iFood)" somavam os itens do iFood.
+        .eq('ifood_repasse', false)
         .gte('created_at', fromTs)
         .lte('created_at', toTs);
 

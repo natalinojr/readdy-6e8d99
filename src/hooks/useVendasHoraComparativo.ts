@@ -84,6 +84,7 @@ async function vendasDoDia(tenantId: string, dia: string, regra: RegraVendasHora
         .not('status', 'in', '(cancelled,draft)')
         .eq('is_training', false)
         .eq('is_draft', false)
+        .is('ifood_order_id', null) // pedido do iFood fica fora: a venda dele já vem somada pelo iFood
         .gte('created_at', from)
         .lte('created_at', to)
         .order('created_at', { ascending: true })
