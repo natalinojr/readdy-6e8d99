@@ -164,7 +164,7 @@ interface PDVContextData {
   /** Taxa de entrega do destino delivery (0 nos demais destinos) — já somada no total */
   valorTaxaEntrega: number;
   total: number;
-  finalizarPedido: (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; customerName?: string; customerPhone?: string; paymentGroupId?: string | null; paymentGroupSize?: number | null }, cortesiaOverride?: { autorizadoPor?: string | null; destinatario?: string | null; motivo?: string | null }, extraDiscount?: { amount?: number; authorizedBy?: string | null }) => Promise<FinalizarResult>;
+  finalizarPedido: (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; customerName?: string; customerPhone?: string; paymentGroupId?: string | null; paymentGroupSize?: number | null; loyaltyCustomerId?: string | null }, cortesiaOverride?: { autorizadoPor?: string | null; destinatario?: string | null; motivo?: string | null }, extraDiscount?: { amount?: number; authorizedBy?: string | null }) => Promise<FinalizarResult>;
   enviarParaCozinha: (destinoOverride?: DestinoInfo | null) => Promise<FinalizarResult>;
 }
 
@@ -428,7 +428,7 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
     });
   }, [carrinho, destino]);
 
-  const finalizarPedido = useCallback(async (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; customerName?: string; customerPhone?: string; paymentGroupId?: string | null; paymentGroupSize?: number | null }, cortesiaOverride?: { autorizadoPor?: string | null; destinatario?: string | null; motivo?: string | null }, extraDiscount?: { amount?: number; authorizedBy?: string | null }): Promise<FinalizarResult> => {
+  const finalizarPedido = useCallback(async (pagamentos: PagamentoItem[], customerData?: { customerCpf?: string; customerEmail?: string; customerName?: string; customerPhone?: string; paymentGroupId?: string | null; paymentGroupSize?: number | null; loyaltyCustomerId?: string | null }, cortesiaOverride?: { autorizadoPor?: string | null; destinatario?: string | null; motivo?: string | null }, extraDiscount?: { amount?: number; authorizedBy?: string | null }): Promise<FinalizarResult> => {
     const freshSession = await ensureFreshSession();
     if (!freshSession) {
       throw new Error('Sessao de autenticacao expirada. Por favor, faca login novamente.');
@@ -517,6 +517,8 @@ function PDVProviderInner({ children }: { children: ReactNode }) {
       is_training: user.modoTreino,
       customer_cpf: customerData?.customerCpf ?? null,
       customer_email: customerData?.customerEmail ?? null,
+      // Clube (CPF do cliente no Finalizar Pedido): cortesia não soma pontos, então nem liga.
+      ...(customerData?.loyaltyCustomerId && !cortesiaAtiva ? { loyalty_customer_id: customerData.loyaltyCustomerId } : {}),
       table_number: destino?.tipo === 'mesa' ? destino.mesaNumero ?? null : null,
       // Nome digitado no box de dados do cliente tem prioridade; fallback = nome da mesa
       customer_name: (customerData?.customerName?.trim() || ((destino?.tipo === 'mesa' || isDelivery) ? destino?.nomeCliente : null)) ?? null,

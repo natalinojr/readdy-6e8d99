@@ -6,6 +6,10 @@
 // O desconto que a tela mostra vem do SERVIDOR (fidelidade › clube_aplicar_pedido
 // com simular=true, pelos itens do pedido). Quem grava é o modal ao confirmar
 // (aplicarClubeNoPedido) — antes dos pagamentos.
+//
+// Sem orderId (PDV Caixa › Finalizar Pedido: o pedido ainda não existe) o cartão só
+// identifica: o modal manda o customer_id no create_order (loyalty_customer_id) e os
+// prêmios ficam para quando o pedido já estiver lançado.
 import { useEffect, useRef, useState } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
 import { cpfValido, formatarCpf, rotuloPremio, type ClubeResumo, type ClubeReserva } from '@/lib/fidelidade';
@@ -32,7 +36,8 @@ export async function aplicarClubeNoPedido(tenantId: string, orderId: string, se
 
 export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas }: {
   tenantId: string | undefined;
-  orderId: string;
+  /** null: pedido ainda não lançado — só identifica o cliente (sem usar prêmio). */
+  orderId: string | null;
   onChange: (sel: ClubeCaixaSel) => void;
   /** true depois que o pagamento foi confirmado: fechar a tela não devolve os prêmios. */
   manterReservas: boolean;
@@ -62,7 +67,7 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
       const on = !!st.ativo && !st.error;
       if (!vivo) return;
       setAtivo(on);
-      if (!on) return;
+      if (!on || !orderId) return;
       // CPF que o cliente já deu no pedido (tablet: clube ou CPF na nota) vem preenchido;
       // se ele é do clube, o cartão já aparece.
       const r = await chamar<{ cpf?: string | null; na_nota?: boolean; encontrado?: boolean; resumo?: ClubeResumo }>(tenantId, { action: 'clube_do_pedido', order_id: orderId });
@@ -92,7 +97,7 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
   };
 
   const simular = async (r: ClubeResumo, rs: ClubeReserva[]) => {
-    if (!tenantId) return;
+    if (!tenantId || !orderId) return;
     if (rs.length === 0) { setDesconto(0); avisarPai(r, rs, 0); return; }
     const s = await chamar<{ desconto: number }>(tenantId, { action: 'clube_aplicar_pedido', simular: true, customer_id: r.customer_id, order_id: orderId, hold_ids: rs.map((x) => x.hold_id) });
     const d = s.error ? 0 : Number(s.desconto ?? 0);
@@ -153,7 +158,7 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
     avisarPai(null, [], 0);
   };
 
-  const usaveis = resumo ? [
+  const usaveis = resumo && orderId ? [
     ...resumo.beneficios.map((b) => ({ key: `b_${b.id}`, nome: rotuloPremio(b.reward), detalhe: b.reward.motivo ?? 'Prêmio', alvo: { beneficio_id: b.id } })),
     ...resumo.recompensas.filter((w) => w.nivel_ok && w.falta <= 0).map((w) => ({ key: `r_${w.id}`, nome: rotuloPremio(w), detalhe: `${pts(w.custo_pontos)} pts`, alvo: { recompensa_id: w.id } })),
   ] : [];
@@ -182,6 +187,9 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
                 {resumo.nivel ? <><b style={{ color: resumo.nivel.cor }}>{resumo.nivel.emoji} {resumo.nivel.nome}</b> · </> : null}
                 {resumo.compras_janela} compras{resumo.proximo ? ` · faltam ${resumo.faltam_compras} ${resumo.faltam_compras === 1 ? 'compra' : 'compras'} para ${resumo.proximo.nome}` : ''}. Este pedido soma pontos quando for pago.
               </p>
+              {!orderId && (resumo.beneficios.length > 0 || resumo.recompensas.some((w) => w.nivel_ok && w.falta <= 0)) && (
+                <p className="text-[11px] text-amber-700">Tem prêmio para usar: lance o pedido e cobre pelos Pedidos/Pagamento rápido para aplicar.</p>
+              )}
               {reservas.map((r) => (
                 <div key={r.hold_id} className="flex items-center gap-2 text-xs bg-white border border-emerald-200 rounded-lg px-2.5 py-1.5">
                   <span className="flex-1"><b>🎁 {rotuloPremio(r.reward)}</b></span>

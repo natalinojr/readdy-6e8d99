@@ -17,6 +17,7 @@ import AutorizacaoGerenteModal from '@/components/feature/AutorizacaoGerenteModa
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { descontoDoVinculado, descontoQueFecha, aplicarDescontoEmPedidoExistente } from '@/lib/descontoVinculados';
 import CortesiaDetalhesModal from './CortesiaDetalhesModal';
+import ClubeCaixa from '@/components/fidelidade/ClubeCaixa';
 import type { KDSPedido } from '@/types/kds';
 
 interface VoucherAplicado {
@@ -145,6 +146,8 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
   const [customerPhone, setCustomerPhone] = useState('');
   const [customerCpf, setCustomerCpf] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
+  // Clube de fidelidade: cliente achado pelo CPF — o pedido nasce no nome dele (pontos ao pagar)
+  const [clubeCustomerId, setClubeCustomerId] = useState<string | null>(null);
 
   // ── Desconto manual (com autorização de gerente/admin) ──────────────────────
   // Desconto / voucher / dados do cliente abrem numa janelinha por cima (não empurram a tela)
@@ -696,6 +699,7 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
             customerPhone: customerPhone || undefined,
             paymentGroupId,
             paymentGroupSize: paymentGroupId ? totalPedidosPagando : null,
+            loyaltyCustomerId: clubeCustomerId,
           },
           undefined,
           (descontoManualCarrinho > 0 || desconto > 0)
@@ -1289,6 +1293,21 @@ export default function PagamentoModal({ onClose, onSuccess }: Props) {
                 <span className="truncate">{temDadosCliente ? 'Cliente salvo' : 'CPF / Cliente'}</span>
               </button>
             </div>
+
+            {/* Clube de fidelidade (só aparece se a loja tem o clube ligado) */}
+            {carrinho.length > 0 && (
+              <div className="shrink-0">
+                <ClubeCaixa
+                  tenantId={user?.tenantId}
+                  orderId={null}
+                  manterReservas
+                  onChange={(sel) => {
+                    setClubeCustomerId(sel.customerId);
+                    if (sel.cpf && !customerCpf.trim()) setCustomerCpf(sel.cpf);
+                  }}
+                />
+              </div>
+            )}
           </div>
 
           {/* ── Direita: pagamento ─────────────────────────────────────────── */}

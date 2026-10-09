@@ -79,6 +79,8 @@ export interface CreateOrderPayload {
   /** UUID de idempotência — gerado pelo frontend uma única vez por finalização.
    *  Garante que retries de rede não criem pedidos duplicados (BUG-06). */
   client_request_id?: string | null;
+  /** Clube de fidelidade: cliente identificado pelo CPF (pontos quando o pedido for pago). */
+  loyalty_customer_id?: string | null;
 }
 
 export interface OrderSubmitResult {
