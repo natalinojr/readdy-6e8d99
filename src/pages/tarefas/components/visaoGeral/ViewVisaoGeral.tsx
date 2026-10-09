@@ -16,6 +16,7 @@ import { chaveDia, diaLocal, somarDias } from '../../lib/carga';
 import { responsaveis } from '../../lib/responsaveis';
 import { formatarHoras } from '../../lib/tempo';
 import AvataresResponsaveis from '../AvataresResponsaveis';
+import MuralPasta from './MuralPasta';
 import { iniciais, rotuloVencimento } from '../TaskCard';
 
 /**
@@ -267,6 +268,9 @@ export default function ViewVisaoGeral({
 
   return (
     <div className="space-y-3 md:space-y-4 max-w-[1400px]">
+      {/* Mural primeiro: é o que a pessoa abre a pasta para pegar (links, combinados, arquivos). */}
+      <MuralPasta listId={raiz.id} />
+
       {(filtrandoPessoas.length > 0 || outrosFiltros) && (
         <div className="flex flex-wrap items-center gap-2 text-xs">
           {filtrandoPessoas.length > 0 && (
