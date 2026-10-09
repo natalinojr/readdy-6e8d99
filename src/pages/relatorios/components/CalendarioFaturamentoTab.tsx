@@ -120,6 +120,7 @@ export default function CalendarioFaturamentoTab() {
         .eq('status', 'delivered')
         .eq('is_training', false)
         .eq('is_draft', false)
+        .is('ifood_order_id', null) // pedido do iFood fica fora: a venda dele já vem somada pelo iFood
         .gte('created_at', fromStr)
         .lte('created_at', toStr);
 
@@ -524,6 +525,7 @@ function HeatmapCanais({ tenantId, year, month }: { tenantId?: string; year: num
               .not('status', 'in', '(cancelled,draft)')
               .eq('is_training', false)
               .eq('is_draft', false)
+              .is('ifood_order_id', null) // pedido do iFood fica fora: a venda dele já vem somada pelo iFood
               .gte('created_at', from)
               .lte('created_at', to)
               .order('created_at')
