@@ -1,7 +1,8 @@
 // Clube de fidelidade no PDV Caixa (Pagamento rápido): o operador busca o cliente
 // pelo CPF, vê nível/pontos/prêmios e usa prêmio (o cliente diz os 4 últimos
 // números do celular). Só identificar já vale: o pedido fica no nome dele e soma
-// pontos quando for pago.
+// pontos quando for pago. CPF que não é do clube → cadastro ali mesmo (nome, celular,
+// aniversário e o aceite do cliente), pela mesma regra do tablet (clube_cadastrar).
 //
 // O desconto que a tela mostra vem do SERVIDOR (fidelidade › clube_aplicar_pedido
 // com simular=true, pelos itens do pedido). Quem grava é o modal ao confirmar
@@ -12,6 +13,7 @@
 // prêmios ficam para quando o pedido já estiver lançado.
 import { useEffect, useRef, useState } from 'react';
 import { invokeWithAuth } from '@/lib/supabase';
+import SeletorDataNascimento from '@/components/base/SeletorDataNascimento';
 import { cpfValido, formatarCpf, rotuloPremio, type ClubeResumo, type ClubeReserva } from '@/lib/fidelidade';
 
 export interface ClubeCaixaSel { customerId: string | null; holdIds: string[]; desconto: number; nomes: string[]; cpf: string | null }
@@ -53,6 +55,16 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
   const [erro, setErro] = useState('');
   const [aviso, setAviso] = useState('');
   const [ocupado, setOcupado] = useState(false);
+  // CPF fora do clube: formulário de cadastro. O aceite começa DESMARCADO — o operador
+  // marca depois de perguntar ao cliente (LGPD: digitar o CPF não inscreve ninguém).
+  const [cadastro, setCadastro] = useState(false);
+  const [nome, setNome] = useState('');
+  const [celular, setCelular] = useState('');
+  const [nascimento, setNascimento] = useState('');
+  const [aceita, setAceita] = useState(false);
+  const [ofertas, setOfertas] = useState(false);
+  const [bonus, setBonus] = useState(0);
+  const [novo, setNovo] = useState(false);
 
   const estado = useRef({ resumo, reservas, manterReservas });
   // CPF que veio do cadastro do clube (não do "CPF na nota" do pedido) não vai para a nota.
@@ -63,10 +75,11 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
     if (!tenantId) return;
     let vivo = true;
     void (async () => {
-      const st = await chamar<{ ativo: boolean }>(tenantId, { action: 'clube_status' });
+      const st = await chamar<{ ativo: boolean; bonus_cadastro?: number }>(tenantId, { action: 'clube_status' });
       const on = !!st.ativo && !st.error;
       if (!vivo) return;
       setAtivo(on);
+      setBonus(Number(st.bonus_cadastro ?? 0));
       if (!on || !orderId) return;
       // CPF que o cliente já deu no pedido (tablet: clube ou CPF na nota) vem preenchido;
       // se ele é do clube, o cartão já aparece.
@@ -118,10 +131,29 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
     const r = await chamar<{ encontrado?: boolean; resumo?: ClubeResumo }>(tenantId, { action: 'clube_buscar', cpf: d });
     setOcupado(false);
     if (r.error) { setErro(r.message || 'Não consegui buscar.'); return; }
-    if (!r.encontrado || !r.resumo) { setErro('CPF não está no clube. O cliente pode entrar pelo tablet ou pelo QR do clube.'); return; }
+    if (!r.encontrado || !r.resumo) { setCadastro(true); return; }
     setResumo(r.resumo);
     setReservas([]);
     setDesconto(0);
+    avisarPai(r.resumo, [], 0);
+  };
+
+  const cadastrar = async () => {
+    setErro('');
+    if (nome.trim().length < 2) { setErro('Digite o nome do cliente.'); return; }
+    const cel = celular.replace(/\D/g, '');
+    if (cel.length < 10 || cel.length > 11) { setErro('Digite o celular com DDD.'); return; }
+    if (!aceita) { setErro('Pergunte ao cliente e marque que ele aceita participar do clube.'); return; }
+    setOcupado(true);
+    const r = await chamar<{ resumo?: ClubeResumo }>(tenantId, {
+      action: 'clube_cadastrar', cpf: cpf.replace(/\D/g, ''), nome: nome.trim(), celular: cel,
+      nascimento: nascimento || null, aceita_termos: true, aceita_ofertas: ofertas,
+    });
+    setOcupado(false);
+    if (r.error || !r.resumo) { setErro(r.message || 'Não consegui cadastrar.'); return; }
+    cpfNaNota.current = true;
+    setCadastro(false); setNovo(true);
+    setResumo(r.resumo); setReservas([]); setDesconto(0);
     avisarPai(r.resumo, [], 0);
   };
 
@@ -155,6 +187,7 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
   const trocarCliente = async () => {
     if (resumo && reservas.length) await chamar(tenantId, { action: 'clube_liberar', customer_id: resumo.customer_id, hold_ids: reservas.map((x) => x.hold_id) });
     setResumo(null); setReservas([]); setDesconto(0); setCpf(''); setErro(''); setAviso('');
+    setCadastro(false); setNovo(false); setNome(''); setCelular(''); setNascimento(''); setAceita(false); setOfertas(false);
     avisarPai(null, [], 0);
   };
 
@@ -173,7 +206,34 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
       </button>
       {aberto && (
         <div className="px-3 pb-3 space-y-2">
-          {!resumo ? (
+          {!resumo && cadastro ? (
+            <div className="space-y-2">
+              <p className="text-xs text-zinc-600">CPF <b className="tabular-nums">{formatarCpf(cpf)}</b> não está no clube. Cadastre agora{bonus > 0 ? <> — ganha <b className="text-amber-700">{pts(bonus)} pts</b> de boas-vindas</> : null}:</p>
+              <input value={nome} onChange={(e) => setNome(e.target.value)} maxLength={80} autoComplete="off" placeholder="Nome do cliente"
+                className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg bg-white focus:outline-none focus:border-amber-400" />
+              <input value={celular} onChange={(e) => setCelular(e.target.value.replace(/[^\d() -]/g, '').slice(0, 16))} inputMode="numeric" autoComplete="off" placeholder="Celular com DDD"
+                className="w-full px-3 py-2 text-sm border border-zinc-200 rounded-lg bg-white focus:outline-none focus:border-amber-400" />
+              <div>
+                <span className="text-[11px] text-zinc-500">Aniversário (opcional)</span>
+                <SeletorDataNascimento value={nascimento} onChange={setNascimento}
+                  selectClassName="w-full px-2 py-2 text-sm border border-zinc-200 rounded-lg bg-white focus:outline-none focus:border-amber-400 cursor-pointer" />
+              </div>
+              <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer">
+                <input type="checkbox" checked={aceita} onChange={(e) => setAceita(e.target.checked)} className="mt-0.5 w-4 h-4 accent-amber-500" />
+                <span>O cliente <b>aceita participar do clube</b> (CPF e celular usados só para somar pontos e liberar prêmios).</span>
+              </label>
+              <label className="flex items-start gap-2 text-xs text-zinc-700 cursor-pointer">
+                <input type="checkbox" checked={ofertas} onChange={(e) => setOfertas(e.target.checked)} className="mt-0.5 w-4 h-4 accent-amber-500" />
+                <span>Aceita receber novidades e ofertas no WhatsApp.</span>
+              </label>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => { setCadastro(false); setErro(''); }} className="px-3 py-2 text-sm text-zinc-500 cursor-pointer">Voltar</button>
+                <button type="button" onClick={() => { void cadastrar(); }} disabled={ocupado} className="flex-1 py-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-sm font-bold rounded-lg cursor-pointer disabled:opacity-50">
+                  {ocupado ? 'Cadastrando…' : 'Cadastrar no clube'}
+                </button>
+              </div>
+            </div>
+          ) : !resumo ? (
             <div className="flex gap-2">
               <input value={formatarCpf(cpf)} onChange={(e) => setCpf(e.target.value.replace(/\D/g, '').slice(0, 11))} inputMode="numeric" placeholder="CPF do cliente"
                 onKeyDown={(e) => { if (e.key === 'Enter') void buscar(); }}
@@ -182,6 +242,7 @@ export default function ClubeCaixa({ tenantId, orderId, onChange, manterReservas
             </div>
           ) : (
             <>
+              {novo && <p className="text-xs font-semibold text-emerald-700">🎉 Cadastrado no clube{bonus > 0 ? ` — ganhou ${pts(bonus)} pts de boas-vindas` : ''}.</p>}
               {cpfValido(cpf) && <p className="text-xs text-zinc-500">CPF <b className="text-zinc-700 tabular-nums">{formatarCpf(cpf)}</b></p>}
               <p className="text-xs text-zinc-600">
                 {resumo.nivel ? <><b style={{ color: resumo.nivel.cor }}>{resumo.nivel.emoji} {resumo.nivel.nome}</b> · </> : null}
