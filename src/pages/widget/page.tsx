@@ -357,24 +357,49 @@ function LojaSeletor() {
     });
     return () => { vivo = false; };
   }, [canSwitchTenant, user?.id]);
+  const [aberto, setAberto] = useState(false);
+  const caixa = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!aberto) return;
+    const fora = (e: MouseEvent) => { if (!caixa.current?.contains(e.target as Node)) setAberto(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setAberto(false); };
+    document.addEventListener('mousedown', fora);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', fora); document.removeEventListener('keydown', esc); };
+  }, [aberto]);
   if (!user) return null;
   if (!canSwitchTenant || !lojas || lojas.length < 2) return <p className="truncate text-[11px] text-zinc-500">{user.loja}</p>;
+  const trocar = async (id: string) => {
+    setAberto(false);
+    if (id === user.tenantId) return;
+    setTrocando(true);
+    try { await selectTenant(id); } finally { setTrocando(false); }
+  };
   return (
-    <label className="relative flex max-w-full cursor-pointer items-center gap-0.5 text-[11px] font-semibold text-amber-700 hover:text-amber-800">
-      <span className="truncate">{trocando ? 'Trocando…' : user.loja}</span>
-      <i className="ri-arrow-down-s-line flex-shrink-0" />
-      <select
-        aria-label="Trocar de loja"
-        value={user.tenantId}
-        disabled={trocando}
-        onChange={async (e) => {
-          setTrocando(true);
-          try { await selectTenant(e.target.value); } finally { setTrocando(false); }
-        }}
-        className="absolute inset-0 cursor-pointer opacity-0"
-      >
-        {lojas.map((l) => <option key={l.id} value={l.id}>{l.nome}</option>)}
-      </select>
-    </label>
+    <div ref={caixa} className="relative">
+      <button type="button" onClick={() => setAberto((a) => !a)} disabled={trocando} aria-haspopup="listbox" aria-expanded={aberto}
+        className="flex max-w-full cursor-pointer items-center gap-0.5 text-[11px] font-semibold text-amber-700 hover:text-amber-800">
+        <span className="truncate">{trocando ? 'Trocando…' : user.loja}</span>
+        <i className={`ri-arrow-down-s-line flex-shrink-0 transition-transform ${aberto ? 'rotate-180' : ''}`} />
+      </button>
+      {aberto && (
+        <div role="listbox" className="absolute left-0 top-full z-30 mt-1.5 max-h-80 w-64 overflow-y-auto rounded-xl border border-zinc-200 bg-white p-1 shadow-xl">
+          <p className="px-2.5 pb-1 pt-1.5 text-[10px] font-bold uppercase tracking-wide text-zinc-400">Trocar de loja</p>
+          {lojas.map((l) => {
+            const atual = l.id === user.tenantId;
+            return (
+              <button key={l.id} type="button" role="option" aria-selected={atual} onClick={() => trocar(l.id)}
+                className={`flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[13px] ${atual ? 'bg-amber-50 font-semibold text-amber-800' : 'text-zinc-700 hover:bg-zinc-50'}`}>
+                <span className={`flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg ${atual ? 'bg-amber-100 text-amber-600' : 'bg-zinc-100 text-zinc-500'}`}>
+                  <i className="ri-store-2-line text-sm" />
+                </span>
+                <span className="min-w-0 flex-1 truncate">{l.nome}</span>
+                {atual && <i className="ri-check-line text-amber-600" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
