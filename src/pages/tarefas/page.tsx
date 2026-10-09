@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { Plus, Pin, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, Send, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing, FileText, Cloud, ChartGantt, Settings, CalendarRange, LayoutDashboard } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
@@ -376,6 +376,14 @@ export default function TarefasPage() {
   useEffect(() => {
     if (display === 'visao' && !loading && !pastaRaiz) setDisplay('lista');
   }, [display, loading, pastaRaiz]);
+  // Ao entrar no módulo, o computador já abre a primeira pasta: se ela é pasta-mãe,
+  // começa pela Visão geral, igual a clicar nela. Só na primeira carga.
+  const inicioDecidido = useRef(false);
+  useEffect(() => {
+    if (loading || inicioDecidido.current) return;
+    inicioDecidido.current = true;
+    if (origem === 'pasta' && !selectedListId && display === 'lista' && pastaRaiz) setDisplay('visao');
+  }, [loading, origem, selectedListId, display, pastaRaiz]);
 
   // Selo da aba "Minhas": não lidas + atrasadas
   const pendencias = useMemo(() => {
@@ -456,8 +464,13 @@ export default function TarefasPage() {
   // Celular: tocou em Relatórios sem pasta aberta → a próxima pasta escolhida abre nos relatórios.
   const [relatoriosAoEscolher, setRelatoriosAoEscolher] = useState(false);
   const irParaPasta = (id: string, extra: Partial<EstadoNav> = {}) => {
+    // Pasta-mãe abre na Visão geral; subpasta sai dela (a Visão geral só existe na mãe)
+    // e, fora isso, mantém a visão em que a pessoa estava (Kanban, Calendário…).
+    const ehRaiz = arvorePastas.some((n) => n.id === id);
+    const displayAoAbrir: Display | null = ehRaiz ? 'visao' : display === 'visao' ? 'lista' : null;
     navegar({
       relatorioAberto: null, selectedListId: id, origem: 'pasta',
+      ...(displayAoAbrir ? { display: displayAoAbrir } : {}),
       ...(relatoriosAoEscolher ? { display: 'relatorios' as Display } : {}),
       ...extra,
     });
