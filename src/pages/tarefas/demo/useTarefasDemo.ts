@@ -230,7 +230,7 @@ export function useTarefasDemo() {
             if (!e.checklist.some((c) => c.id === itemId)) continue;
             const checklist = action === 'delete_checklist_item'
               ? e.checklist.filter((c) => c.id !== itemId)
-              : e.checklist.map((c) => (c.id === itemId ? { ...c, is_done: Boolean(p.is_done) } : c));
+              : e.checklist.map((c) => (c.id === itemId ? { ...c, ...(p.is_done !== undefined && { is_done: Boolean(p.is_done) }), ...(p.title !== undefined && { title: String(p.title) }) } : c));
             novo[tid] = { ...e, checklist };
             mudarTarefa(tid, (t) => ({ ...t, checklist_total: checklist.length, checklist_done: checklist.filter((c) => c.is_done).length }));
           }

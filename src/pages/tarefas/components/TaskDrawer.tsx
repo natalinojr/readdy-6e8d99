@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react';
 import {
   X, Plus, Trash2, Flag, CalendarDays, CalendarClock, User as UserIcon, Tag, CircleDot, Clock, Repeat, GitBranch,
@@ -145,6 +145,8 @@ export default function TaskDrawer({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [newChecklistItem, setNewChecklistItem] = useState('');
+  const [editandoItem, setEditandoItem] = useState<{ id: string; texto: string } | null>(null);
+  const itemCancelado = useRef(false);
   const [newSubtask, setNewSubtask] = useState('');
   const [saving, setSaving] = useState(false);
   const [enviandoAnexo, setEnviandoAnexo] = useState(false);
@@ -560,7 +562,34 @@ export default function TaskDrawer({
                     >
                       {item.is_done && <Check size={12} className="text-white" />}
                     </button>
-                    <span className={`text-sm flex-1 ${item.is_done ? 'line-through text-slate-400' : 'text-slate-700'}`}>{item.title}</span>
+                    {editandoItem?.id === item.id ? (
+                      <input
+                        autoFocus
+                        value={editandoItem.texto}
+                        onChange={(e) => setEditandoItem({ id: item.id, texto: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') e.currentTarget.blur();
+                          if (e.key === 'Escape') { itemCancelado.current = true; setEditandoItem(null); }
+                        }}
+                        onBlur={async () => {
+                          const texto = editandoItem.texto.trim();
+                          setEditandoItem(null);
+                          if (itemCancelado.current) { itemCancelado.current = false; return; }
+                          if (!texto || texto === item.title) return;
+                          await write('update_checklist_item', { item_id: item.id, title: texto });
+                          load();
+                        }}
+                        className="flex-1 text-sm max-md:text-base bg-white border border-indigo-300 rounded px-1.5 py-0.5 -my-0.5 outline-none"
+                      />
+                    ) : (
+                      <span
+                        onClick={() => { itemCancelado.current = false; setEditandoItem({ id: item.id, texto: item.title }); }}
+                        title="Clique para editar"
+                        className={`text-sm flex-1 cursor-text ${item.is_done ? 'line-through text-slate-400' : 'text-slate-700'}`}
+                      >
+                        {item.title}
+                      </span>
+                    )}
                     <button
                       onClick={() => write('delete_checklist_item', { item_id: item.id }).then(load)}
                       className="opacity-0 group-hover:opacity-100 p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50"
