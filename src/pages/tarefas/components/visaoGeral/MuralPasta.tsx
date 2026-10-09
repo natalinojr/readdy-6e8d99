@@ -349,7 +349,7 @@ function CartaoItem({ item, podeEditar, onVer, onEditar, onFixar, onMover, onExc
   onExcluir: () => void;
 }) {
   const [menu, setMenu] = useState(false);
-  const base = 'w-full h-[72px] sm:h-20 rounded-xl border text-left flex items-stretch overflow-hidden transition hover:shadow-sm';
+  const base = 'w-full h-[72px] sm:h-20 rounded-xl border text-left flex overflow-hidden transition hover:shadow-sm';
   let conteudo: ReactNode;
 
   if (item.kind === 'note') {
