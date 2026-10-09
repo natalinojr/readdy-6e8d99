@@ -20,7 +20,7 @@
 //   insumos / fornecedores         listas para "sem nota"
 //   confirmar    { tipo, id, itens, pagamento?, forma?, recebido_em, obs? }
 //   lancar       { origem: 'cupom'|'sem_nota', fornecedor, itens, pagamento, ... }
-//   aguardando_nota { fornecedor, descricao, obs? }   pendência para o financeiro (não lança nada)
+//   aguardando_nota { fornecedor, descricao, valor?, numero?, obs? } pendência para o financeiro (não lança nada)
 //
 // "Paguei do meu bolso" (2026-09-24): lancar com pagamento 'reembolso' + reembolso { nome, pix_chave, comprovante? }
 // lança a compra (CMV + estoque, como sempre) SEM conta a pagar e abre um pedido de reembolso ligado a ela
@@ -687,13 +687,20 @@ async function aguardandoNota(ctx: Ctx, body: Record<string, any>) {
   const descricao = String(body.descricao ?? '').trim().slice(0, 1000);
   if (!fornecedor || !descricao) return erro('Informe o fornecedor e o que chegou');
   const obs = String(body.obs ?? '').trim().slice(0, 500);
-  const quando = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 16).replace('T', ' ');
+  // Valor e nº da nota (2026-10-09): sem eles o financeiro não acha a nota nem a conta depois.
+  const valorN = Number(body.valor);
+  const valor = Number.isFinite(valorN) && valorN > 0 ? round2(valorN) : null;
+  const numero = onlyDigits(body.numero).slice(0, 12) || null;
+  const quando = new Date(Date.now() - 3 * 3600_000).toISOString().slice(0, 16).replace(/^(\d{4})-(\d{2})-(\d{2})T/, '$3/$2/$1 ');
+  const quem = await nomeDoUsuario(ctx.admin, ctx.userId, ctx.email);
+  const valorTxt = valor ? `Valor: R$ ${valor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'Valor: não informado';
   const { data, error } = await ctx.admin.rpc('fn_pendencia_upsert', {
     p_tenant: ctx.tenantId, p_kind: 'recebimento_sem_nota', p_ref: REF_OK.test(String(body.ref ?? '')) ? String(body.ref) : crypto.randomUUID(),
     p_titulo: `Chegou mercadoria de ${fornecedor} sem nota no sistema`,
-    p_detalhe: [`O que chegou: ${descricao}`, obs ? `Obs.: ${obs}` : null, `Recebido em ${quando}${ctx.email ? ` por ${ctx.email}` : ''}`,
+    p_detalhe: [[valorTxt, numero ? `NF nº ${numero}` : null].filter(Boolean).join(' · '),
+      `O que chegou: ${descricao}`, obs ? `Obs.: ${obs}` : null, `Recebido em ${quando} por ${quem}`,
       'Estoque ainda NÃO entrou: quando a nota aparecer em Notas de entrada, confirme o recebimento pelo celular (Receber mercadoria).'].filter(Boolean).join('\n'),
-    p_payload: { fornecedor, descricao, obs, email: ctx.email }, p_rota: '/financeiro?tab=notas-entrada',
+    p_payload: { fornecedor, descricao, obs, email: ctx.email, valor, numero, recebido_por: quem }, p_rota: '/financeiro?tab=notas-entrada',
     p_urgencia: 'normal', p_acao_requerida: true, p_origem: 'app', p_reabrir: false,
   });
   if (error) return erro(`Não consegui avisar o financeiro: ${error.message}`, 500);

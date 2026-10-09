@@ -17,6 +17,7 @@ interface Boleto {
 interface Detalhe {
   id: string; from_email: string | null; from_name: string | null; subject: string | null; status: string; reason: string | null;
   encaminhado_por: string | null; avisos: string[]; boletos: Boleto[]; anexos: Array<{ nome: string; tipo: string; url: string | null }>;
+  remetente_cadastrado?: boolean; fornecedor_do_cnpj?: { nome: string; tem_email: boolean } | null;
 }
 type Conta = { id: string; description: string; supplier: string | null; due_date: string };
 
@@ -31,8 +32,12 @@ async function chamar<T>(tenantId: string, action: string, extra: Record<string,
   return data as T;
 }
 
-export default function BoletoEmailDecisao({ tenantId, mailId, onFeito }: {
+export default function BoletoEmailDecisao({ tenantId, mailId, onFeito, guiado, onDepois }: {
   tenantId: string; mailId: string; onFeito: (msg: string) => void;
+  /** Tela Hoje (2026-10-09): começa por uma pergunta com as respostas como botões; o resto fica em "Ver tudo". */
+  guiado?: boolean;
+  /** "Ainda não conferi": fecha sem decidir (o cartão continua). */
+  onDepois?: () => void;
 }) {
   const [d, setD] = useState<Detalhe | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -40,6 +45,7 @@ export default function BoletoEmailDecisao({ tenantId, mailId, onFeito }: {
   const [confirmar, setConfirmar] = useState(false);
   const [ambiguo, setAmbiguo] = useState<{ indice: number; contas: Conta[]; boleto: string } | null>(null);
   const [motivo, setMotivo] = useState<string | null>(null);
+  const [verTudo, setVerTudo] = useState(!guiado);
 
   const carregar = () => chamar<{ mail: Detalhe }>(tenantId, 'detalhe', { mail_id: mailId }).then((r) => setD(r.mail)).catch((e) => setErro(e.message));
   useEffect(() => { carregar(); }, [mailId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -51,8 +57,10 @@ export default function BoletoEmailDecisao({ tenantId, mailId, onFeito }: {
       if (r.ambiguo) { setAmbiguo({ indice: r.indice ?? 0, contas: r.ambiguo, boleto: r.boleto ?? '' }); return; }
       setAmbiguo(null);
       const criou = (r.contas ?? []).some((c) => /criada/.test(c.acao ?? ''));
-      if (r.lancado) onFeito(criou ? 'Conta lançada em Contas a Pagar com o boleto guardado. O pagamento continua esperando sua aprovação.'
-        : 'Boleto guardado na conta que já existia. O pagamento continua esperando sua aprovação.');
+      const lembrou = (r as { lembrou?: string | null }).lembrou;
+      const aviso = lembrou ? ` O e-mail ficou guardado em ${lembrou}: o próximo boleto dele entra sozinho.` : '';
+      if (r.lancado) onFeito((criou ? 'Conta lançada em Contas a Pagar com o boleto guardado. O pagamento continua esperando sua aprovação.'
+        : 'Boleto guardado na conta que já existia. O pagamento continua esperando sua aprovação.') + aviso);
       else await carregar();
     } catch (e) { setErro((e as Error).message); } finally { setBusy(null); setConfirmar(false); }
   };
@@ -80,6 +88,75 @@ export default function BoletoEmailDecisao({ tenantId, mailId, onFeito }: {
   // Um boleto só e já se sabe a conta: o botão diz isso ("Guardar na conta da NF 801213"), não "Lançar conta".
   const destinoUnico = abertos.length === 1 ? abertos[0].destino : undefined;
   const guardar = !!destinoUnico?.rotulo;
+
+  // ── Modo guiado: uma pergunta, as respostas são os botões ──
+  const b0 = abertos[0];
+  const forn = d.fornecedor_do_cnpj;
+  const remetenteNovo = !d.remetente_cadastrado && !!forn && !alerta;
+  const quemPaga = b0 ? (b0.beneficiario ?? forn?.nome ?? 'beneficiário não lido') : '';
+  const resumo = b0 ? `${quemPaga} · ${b0.valor != null ? formatCurrency(Number(b0.valor)) : 'sem valor'}${b0.vencimento ? ` · vence ${dia(b0.vencimento)}` : ''}` : '';
+  const pergunta = !b0 ? null
+    : alerta ? {
+      texto: <>O boleto paga uma empresa <b>diferente</b> de quem mandou o e-mail — é o jeito do golpe do boleto falso. Você confirmou <b>por telefone</b> com o fornecedor que esse boleto é deles?</>,
+      sim: 'Sim, confirmei — lançar', simExtra: {}, cor: 'bg-red-600 hover:bg-red-500 text-white', depois: 'Ainda não — vou ligar',
+    }
+    : remetenteNovo ? {
+      texto: <>Chegou um boleto de <b>{forn!.nome}</b> mandado por <b>{d.from_email ?? 'e-mail desconhecido'}</b>, que não está no cadastro. Esse e-mail é mesmo da {forn!.nome}?</>,
+      sim: forn!.tem_email ? 'Sim, é deles — lançar' : 'Sim, é deles — lançar e lembrar o e-mail', simExtra: forn!.tem_email ? {} : { lembrar_remetente: true },
+      cor: 'bg-amber-500 hover:bg-amber-400 text-zinc-900', depois: 'Não sei — vou conferir',
+    }
+    : {
+      texto: <>{b0.motivo ? `${b0.motivo} ` : ''}Esse boleto é uma conta a pagar da loja?</>,
+      sim: guardar ? destinoUnico!.rotulo! : 'Sim — lançar a conta', simExtra: {}, cor: 'bg-amber-500 hover:bg-amber-400 text-zinc-900', depois: null as string | null,
+    };
+
+  if (guiado && !verTudo && pergunta && !fechado && !ambiguo) {
+    return (
+      <div className="mt-2 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-[13px] text-zinc-700 space-y-2">
+        <p className="leading-snug">{pergunta.texto}</p>
+        <p className="text-[12px] text-zinc-500">
+          {resumo}
+          {b0?.destino && <><br /><i className="ri-arrow-right-line" /> {b0.destino.conta ? `Vai para a conta ${b0.destino.conta.description}` : b0.destino.tipo === 'ambiguo' ? 'Há mais de uma conta com esse valor: você escolhe em qual entra.' : 'Vai virar uma conta nova em Contas a Pagar.'}</>}
+        </p>
+        {d.anexos.some((a) => a.url) && (
+          <div className="flex flex-wrap gap-1.5">
+            {d.anexos.filter((a) => a.url).map((a, i) => (
+              <a key={i} href={a.url as string} target="_blank" rel="noreferrer"
+                className="inline-flex items-center gap-1 h-8 px-2.5 rounded-lg border border-zinc-200 bg-white text-[12px] font-semibold text-zinc-700 hover:bg-zinc-50">
+                <i className={/pdf/i.test(a.tipo) ? 'ri-file-pdf-2-line text-red-500' : 'ri-image-line'} /> Ver o boleto
+              </a>
+            ))}
+          </div>
+        )}
+        {erro && <p className="text-[12px] text-red-600">{erro}</p>}
+        {motivo !== null ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <input autoFocus value={motivo} onChange={(e) => setMotivo(e.target.value)} placeholder="O que é? (golpe, propaganda, já pago…)"
+              className="flex-1 min-w-[160px] h-9 border border-zinc-200 rounded-lg px-2.5 text-[13px] focus:outline-none focus:ring-2 focus:ring-amber-300" />
+            <button onClick={ignorar} disabled={!!busy} className="h-9 px-3 rounded-lg bg-zinc-800 text-white text-[13px] font-semibold cursor-pointer disabled:opacity-50">
+              {busy === 'ignorar' ? 'Descartando…' : 'Descartar'}
+            </button>
+            <button onClick={() => setMotivo(null)} className="h-9 px-2 text-[13px] text-zinc-500 cursor-pointer">Voltar</button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button onClick={() => (confirmar || !alerta ? lancar(pergunta.simExtra) : setConfirmar(true))} disabled={!!busy}
+              className={`h-9 px-3 rounded-lg text-[13px] font-bold cursor-pointer disabled:opacity-50 ${pergunta.cor}`}>
+              {busy === 'lancar' ? 'Lançando…' : confirmar ? 'Confirmar: conferi com o fornecedor' : pergunta.sim}
+            </button>
+            <button onClick={() => setMotivo('')} disabled={!!busy}
+              className="h-9 px-3 rounded-lg border border-zinc-200 bg-white text-[13px] font-semibold text-zinc-700 cursor-pointer disabled:opacity-50">
+              {alerta || remetenteNovo ? 'Não é deles / golpe' : 'Não é conta'}
+            </button>
+            {pergunta.depois && onDepois && (
+              <button onClick={onDepois} className="h-9 px-2 text-[12px] font-semibold text-zinc-500 hover:text-zinc-700 cursor-pointer">{pergunta.depois}</button>
+            )}
+            <button onClick={() => setVerTudo(true)} className="h-9 px-2 text-[12px] font-semibold text-zinc-400 hover:text-zinc-600 cursor-pointer">Ver tudo</button>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="mt-2 space-y-2 text-xs text-zinc-700">

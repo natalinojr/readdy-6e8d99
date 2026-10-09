@@ -107,7 +107,7 @@ export function LigarSangria({ call, pendId, onFeito }: { call: Call; pendId: st
 }
 
 /** Mercadoria que chegou sem nota: as notas de entrada novas do período, a do fornecedor primeiro. */
-export function ProcurarNota({ call, pendId, onAchou }: { call: Call; pendId: string; onAchou: (documentId: string) => void }) {
+export function ProcurarNota({ call, pendId, onAchou, valor, numero }: { call: Call; pendId: string; onAchou: (documentId: string) => void; valor?: number | null; numero?: string | null }) {
   const [notas, setNotas] = useState<Array<{ id: string; emitente_nome: string | null; valor_total: number; emitted_at: string; numero: number | null; parecida: boolean }> | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [abrindo, setAbrindo] = useState<string | null>(null);
@@ -120,19 +120,23 @@ export function ProcurarNota({ call, pendId, onAchou }: { call: Call; pendId: st
     catch (e) { setErro(erroTxt(e)); setAbrindo(null); }
   };
   if (!notas && !erro) return <Carregando />;
+  // Valor e nº informados no recebimento (2026-10-09): a nota que bate sobe e ganha o selo.
+  const bate = (n: NonNullable<typeof notas>[number]) => (numero && n.numero != null && String(n.numero) === String(Number(numero)) ? 2 : 0)
+    + (valor && Math.abs(Number(n.valor_total) - valor) < 0.01 ? 2 : 0) + (n.parecida ? 1 : 0);
+  const lista = notas ? [...notas].sort((a, b) => bate(b) - bate(a)) : null;
   return (
     <div className="mt-2 rounded-lg border border-zinc-200 bg-white">
       <p className="px-2.5 pt-2 pb-1 text-[11px] text-zinc-500">Notas de entrada ainda não lançadas (últimos 15 dias):</p>
       {erro && <p className="px-2.5 pb-2 text-[11px] text-red-600">{erro}</p>}
       {notas && !notas.length && <p className="px-2.5 pb-2 text-[11px] text-zinc-400">Nenhuma nota nova. Ela pode demorar alguns dias para aparecer na SEFAZ.</p>}
-      {notas?.map((n) => (
+      {lista?.map((n) => (
         <div key={n.id} className="flex items-center gap-2 px-2.5 py-1.5 border-t border-zinc-100 text-xs">
           <span className="flex-1 min-w-0">
             <span className="block truncate font-semibold text-zinc-800">{n.emitente_nome ?? 'Emitente'}</span>
-            <span className="text-[11px] text-zinc-500">{n.numero ? `NF ${n.numero} · ` : ''}{dia(n.emitted_at)} · {brl(n.valor_total)}{n.parecida ? ' · mesmo fornecedor' : ''}</span>
+            <span className="text-[11px] text-zinc-500">{n.numero ? `NF ${n.numero} · ` : ''}{dia(n.emitted_at)} · {brl(n.valor_total)}{valor && Math.abs(Number(n.valor_total) - valor) < 0.01 ? ' · mesmo valor' : ''}{n.parecida ? ' · mesmo fornecedor' : ''}</span>
           </span>
           <button onClick={() => escolher(n.id)} disabled={!!abrindo}
-            className={`h-7 px-2.5 rounded-lg text-[11px] font-semibold cursor-pointer disabled:opacity-50 ${n.parecida ? 'bg-violet-600 text-white' : 'border border-violet-200 text-violet-700'}`}>
+            className={`h-7 px-2.5 rounded-lg text-[11px] font-semibold cursor-pointer disabled:opacity-50 ${bate(n) > 0 ? 'bg-violet-600 text-white' : 'border border-violet-200 text-violet-700'}`}>
             {abrindo === n.id ? 'Abrindo…' : 'É esta'}
           </button>
         </div>

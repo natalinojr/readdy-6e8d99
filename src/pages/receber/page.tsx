@@ -23,7 +23,7 @@ import SemNota from './components/SemNota';
 import ScannerQR from './components/ScannerQR';
 import JaChegaram from './components/JaChegaram';
 import {
-  brl, chamar, dataBR, hojeISO, lerCupom, memorizarCupom, normalizar, qtd, somaDias, un,
+  brl, chamar, dataBR, hojeISO, lerCupom, lerNumeroBR, memorizarCupom, normalizar, qtd, somaDias, un,
   type Aberto, type Insumo, type Pendente, type Resultado, type ScanResult,
 } from './api';
 import { deAberto, deCupom, novoSemNota, precisaPagamento, type Rascunho } from './rascunho';
@@ -66,7 +66,7 @@ export default function ReceberPage() {
   const [busca, setBusca] = useState<Busca | null>(null);
   const [chaveNaoAchada, setChaveNaoAchada] = useState('');
   const [fornecedores, setFornecedores] = useState<{ id: string; nome: string }[]>([]);
-  const [aguardando, setAguardando] = useState({ fornecedor: '', descricao: '', obs: '', ref: '' });
+  const [aguardando, setAguardando] = useState({ fornecedor: '', descricao: '', obs: '', ref: '', valor: '', numero: '', semValor: false });
   const [parecidas, setParecidas] = useState<CompraParecida[]>([]);
   const [digitado, setDigitado] = useState('');
   const inputCupom = useRef<HTMLInputElement>(null);
@@ -138,7 +138,7 @@ export default function ReceberPage() {
     reembolso: { nome: ctxPed?.ultimo_reembolso?.nome ?? ctxPed?.nome ?? '', pix: ctxPed?.ultimo_reembolso?.pix_chave ?? '', foto: x.origem === 'cupom' ? fotoCupom.current : null },
   } : x);
 
-  const novoAguardando = (obs = '') => ({ fornecedor: '', descricao: '', obs, ref: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 12)}` });
+  const novoAguardando = (obs = '') => ({ fornecedor: '', descricao: '', obs, valor: '', numero: '', semValor: false, ref: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2, 12)}` });
 
   const carregando = (msg: string) => { setErro(null); setMsgCarregando(msg); setTela('carregando'); };
   const voltarInicio = () => { setErro(null); setR(null); setTela('inicio'); modoReembolso.current = false; };
@@ -275,7 +275,8 @@ export default function ReceberPage() {
 
   const enviarAguardando = async () => {
     carregando('Avisando o financeiro…');
-    const { erro: e } = await chamar('aguardando_nota', tenantId, aguardando);
+    const { semValor, valor, ...resto } = aguardando;
+    const { erro: e } = await chamar('aguardando_nota', tenantId, { ...resto, valor: semValor ? null : lerNumeroBR(valor) });
     if (e) { setErro(e); setTela('aguardando'); return; }
     setResultado(null);
     setTela('feito');
@@ -655,9 +656,18 @@ export default function ReceberPage() {
           <div className="px-4 pt-4 space-y-4 pb-10">
             <Campo label="Fornecedor" valor={aguardando.fornecedor} onValor={(v) => setAguardando((a) => ({ ...a, fornecedor: v }))} placeholder="Quem entregou?" />
             <Campo label="O que chegou" valor={aguardando.descricao} onValor={(v) => setAguardando((a) => ({ ...a, descricao: v }))} placeholder="Ex.: 3 cx de mussarela, 2 fardos de refri" multilinha />
+            <div>
+              <Campo label="Valor total" valor={aguardando.semValor ? '' : aguardando.valor} decimal
+                onValor={(v) => setAguardando((a) => ({ ...a, valor: v.replace(/[^0-9,.]/g, ''), semValor: false }))} placeholder="R$ — do pedido, boleto ou romaneio" />
+              <label className="mt-2 flex items-center gap-2 px-1 text-sm text-zinc-600">
+                <input type="checkbox" checked={aguardando.semValor} onChange={(e) => setAguardando((a) => ({ ...a, semValor: e.target.checked, valor: '' }))} className="w-4 h-4 accent-amber-500" />
+                Não sei o valor
+              </label>
+            </div>
+            <Campo label="Nº da nota (se souber)" valor={aguardando.numero} onValor={(v) => setAguardando((a) => ({ ...a, numero: v.replace(/\D/g, '').slice(0, 12) }))} placeholder="Ex.: 3902" numerico />
             <Campo label="Observação (opcional)" valor={aguardando.obs} onValor={(v) => setAguardando((a) => ({ ...a, obs: v }))} placeholder="Ex.: entregador disse que a nota vai por e-mail" multilinha />
             <p className="text-xs text-zinc-500 px-1">O estoque só entra quando a nota aparecer em "Esperando chegar" e você confirmar.</p>
-            <BotaoPrincipal onClick={enviarAguardando} disabled={!aguardando.fornecedor.trim() || !aguardando.descricao.trim()}>Avisar o financeiro</BotaoPrincipal>
+            <BotaoPrincipal onClick={enviarAguardando} disabled={!aguardando.fornecedor.trim() || !aguardando.descricao.trim() || (!aguardando.semValor && !(lerNumeroBR(aguardando.valor) > 0))}>Avisar o financeiro</BotaoPrincipal>
           </div>
         )}
 
@@ -746,14 +756,14 @@ function ItemBusca({ titulo, sub, aviso, onClick }: { titulo: string; sub: strin
   );
 }
 
-function Campo({ label, valor, onValor, placeholder, multilinha }: { label: string; valor: string; onValor: (v: string) => void; placeholder?: string; multilinha?: boolean }) {
+function Campo({ label, valor, onValor, placeholder, multilinha, decimal, numerico }: { label: string; valor: string; onValor: (v: string) => void; placeholder?: string; multilinha?: boolean; decimal?: boolean; numerico?: boolean }) {
   const cls = 'mt-1.5 w-full bg-white border-2 border-zinc-100 focus:border-amber-400 rounded-2xl px-4 py-3.5 text-base outline-none';
   return (
     <div>
       <label className="text-sm font-semibold text-zinc-700 px-1">{label}</label>
       {multilinha
         ? <textarea rows={3} value={valor} onChange={(e) => onValor(e.target.value)} placeholder={placeholder} className={cls} />
-        : <input value={valor} onChange={(e) => onValor(e.target.value)} placeholder={placeholder} className={cls} />}
+        : <input value={valor} onChange={(e) => onValor(e.target.value)} placeholder={placeholder} className={cls} inputMode={decimal ? 'decimal' : numerico ? 'numeric' : undefined} />}
     </div>
   );
 }

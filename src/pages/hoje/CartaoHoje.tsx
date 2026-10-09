@@ -9,6 +9,8 @@ import { pedirAoChat } from '@/lib/assistenteFoco';
 import { chamarAssistente } from '@/lib/assistenteApp';
 import ItensClassificarCard from '@/components/feature/assistente/ItensClassificarCard';
 import BoletoPorFoto from '@/components/feature/assistente/BoletoPorFoto';
+import { ProcurarNota } from '@/components/feature/assistente/PendenciaDireta';
+import BoletoEmailDecisao from '@/pages/financeiro/components/BoletoEmailDecisao';
 import { BaixaDaConta, ContasAtrasadasInline, ContasDreInline } from '@/components/feature/assistente/PendenciasChat';
 import LinhaSituacao from '@/components/feature/assistente/LinhaSituacao';
 import type { SituacaoConta } from '@/lib/situacaoConta';
@@ -82,6 +84,9 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
   const [erro, setErro] = useState<string | null>(null);
   const [lerTudo, setLerTudo] = useState(false);
   const [verContas, setVerContas] = useState(false);
+  const [avisoFeito, setAvisoFeito] = useState<string | null>(null);
+  // Boleto por e-mail: a pergunta já vem aberta no cartão (2026-10-09); "vou conferir" recolhe.
+  const [boletoAberto, setBoletoAberto] = useState(true);
   // "N contas atrasadas": a data das contas juntadas não é a mais antiga de todas (a agregada não diz) — só o selo.
   const agregadas = item.agregadas ?? [p];
   const temAtrasada = agregadas.some((a) => a.kind === 'conta_atrasada');
@@ -186,6 +191,18 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
     add('nota', <button onClick={() => abrir(t, `/financeiro?tab=notas-entrada&nota=${encodeURIComponent(p.payload?.document_id as string)}`)} className={PRINCIPAL}>
       <i className="ri-file-check-line" /> Conferir e lançar a nota
     </button>);
+  } else if (p.kind === 'recebimento_sem_nota') {
+    // Mercadoria que chegou sem nota (2026-10-09): o cartão guia — achar a nota, já lançou, ou não vai ter nota.
+    // A lista de notas vem do assistente-app (só o dono); os demais procuram na tela de Notas de entrada.
+    if (dono) add('achar', <button onClick={() => alternar('nota')} className={aberto === 'nota' ? SECUNDARIO : PRINCIPAL}>
+      <i className={aberto === 'nota' ? 'ri-arrow-up-s-line' : 'ri-search-line'} /> {aberto === 'nota' ? 'Fechar' : 'A nota já chegou? Procurar'}
+    </button>);
+    else add('achar', <button onClick={() => abrir(t, '/financeiro?tab=notas-entrada')} className={PRINCIPAL}>
+      <i className="ri-search-line" /> Procurar em Notas de entrada
+    </button>);
+    add('lancei', <button onClick={() => alternar('fechar')} className={SECUNDARIO}><i className="ri-check-double-line" /> Já resolvi</button>);
+  } else if (p.kind === 'boleto_email' && typeof p.payload?.mail_id === 'string') {
+    if (!boletoAberto) add('ver', <button onClick={() => setBoletoAberto(true)} className={PRINCIPAL}><i className="ri-question-answer-line" /> Responder</button>);
   } else if (p.kind === 'estoque_critico') {
     if (p.rota) add('ver', <button onClick={() => abrir(t, p.rota as string)} className={PRINCIPAL}><i className="ri-archive-line" /> Ver o estoque</button>);
   } else if (p.kind === 'vendas_abaixo_ritmo') {
@@ -253,6 +270,7 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
       ? `${item.juntas.length} ${item.juntas.length === 1 ? 'delas está' : 'delas estão'} sem boleto no sistema. Se já pagou, é só dar baixa.`
       : p.kind === 'pagamento_grupo' && /^Não consegui preparar sozinho:\s*/.test(item.detalhe ?? '')
         ? `O assistente não conseguiu preparar o Pix sozinho e precisa de uma resposta sua. ${(item.detalhe ?? '').replace(/^Não consegui preparar sozinho:\s*/, '')}`
+        : p.kind === 'boleto_email' && boletoAberto && typeof p.payload?.mail_id === 'string' ? null // a pergunta abaixo já explica
         : item.detalhe;
   const longo = (porQue?.length ?? 0) > 150;
   // Uma conta: os selos direto no cartão. Várias (parcelas da compra, contas do fornecedor): atrás de um toque.
@@ -344,6 +362,39 @@ export default function CartaoHoje({ item, hoje, dono, papel, meuNome, mostrarLo
             onFeito={() => rodar(async () => { setAberto(null); await marcar(p.id, 'resolvida', 'conta paga (baixa pela tela Hoje)'); })} />
         </div>
       )}
+      {aberto === 'nota' && (
+        <div className="sm:pl-12">
+          <ProcurarNota call={chamarAssistente} pendId={p.id} valor={typeof p.payload?.valor === 'number' ? p.payload.valor : null}
+            numero={typeof p.payload?.numero === 'string' ? p.payload.numero : null}
+            onAchou={(doc) => { setAberto(null); onMudou(); abrir(t, `/financeiro?tab=notas-entrada&nota=${encodeURIComponent(doc)}`); }} />
+          <p className="mt-1.5 text-[12px] text-zinc-400">Não está na lista? A SEFAZ pode demorar uns dias — o cartão espera aqui.</p>
+        </div>
+      )}
+      {aberto === 'fechar' && (
+        <div className="sm:pl-12 mt-2 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5">
+          <p className="text-[13px] text-zinc-700">O que aconteceu com essa mercadoria?</p>
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            {([
+              ['ri-file-check-line', 'A nota já foi lançada', 'nota já lançada'],
+              ['ri-shopping-bag-3-line', 'Lancei como compra sem nota', 'lançada como compra sem nota'],
+              ['ri-arrow-go-back-line', 'Foi devolvida / não era nossa', 'mercadoria devolvida ou não era da loja'],
+            ] as const).map(([icone, rotulo, motivoTxt]) => (
+              <button key={rotulo} disabled={ocupado} onClick={() => rodar(async () => { await marcar(p.id, 'resolvida', `${motivoTxt} (tela Hoje)`); setAberto(null); })}
+                className={SECUNDARIO}><i className={icone} /> {rotulo}</button>
+            ))}
+          </div>
+          <p className="mt-2 text-[12px] text-zinc-500">Ainda não lançou e não vai ter nota?{' '}
+            <button onClick={() => abrir(t, '/receber')} className="font-semibold text-amber-700 hover:text-amber-800 cursor-pointer">Lançar sem nota pelo Receber mercadoria</button>
+            {' '}e volte aqui.</p>
+        </div>
+      )}
+      {p.kind === 'boleto_email' && boletoAberto && typeof p.payload?.mail_id === 'string' && (
+        <div className="sm:pl-12">
+          <BoletoEmailDecisao guiado tenantId={t} mailId={p.payload.mail_id} onDepois={() => setBoletoAberto(false)}
+            onFeito={(msg) => { setAvisoFeito(msg); onMudou(); }} />
+        </div>
+      )}
+      {avisoFeito && <p className="sm:pl-12 mt-2 text-[12px] text-emerald-700"><i className="ri-check-line" /> {avisoFeito}</p>}
       {aberto === 'baixas' && (
         <div className="sm:pl-12 mt-2 space-y-2">
           {item.juntas.map((j) => <BaixaJunta key={j.id} p={j} hoje={hoje} marcar={marcar} onMudou={onMudou} />)}

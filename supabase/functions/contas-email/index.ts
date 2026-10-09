@@ -518,9 +518,18 @@ Deno.serve(async (req: Request) => {
           : d.tipo === 'ja' ? 'Já está guardado: marcar como feito' : null;
         comDestino.push({ ...b, destino: { tipo: d.tipo, conta, rotulo, contas: d.tipo === 'ambiguo' ? d.lista.length : undefined } });
       }
+      // Para o cartão perguntar (2026-10-09): "esse e-mail é mesmo da X?" só faz sentido com remetente
+      // desconhecido e o CNPJ do boleto de um fornecedor cadastrado; sem e-mail nele, dá para lembrar.
+      let fornecedor_do_cnpj: { nome: string; tem_email: boolean } | null = null;
+      if (aberto && !m.supplier_id) {
+        const { porCnpj } = await fornecedores(admin, tenantId, '', boletos.map((b) => b.cnpj).filter(Boolean) as string[]);
+        const f = Object.values(porCnpj)[0];
+        if (f) fornecedor_do_cnpj = { nome: f.name, tem_email: !!String(f.email ?? '').trim() };
+      }
       return json({
         success: true,
-        mail: { ...resto, encaminhado_por: raw?.encaminhado_por ?? null, avisos: raw?.avisos ?? [], boletos: comDestino, anexos, texto: String(raw?.texto ?? '').slice(0, 3000) },
+        mail: { ...resto, encaminhado_por: raw?.encaminhado_por ?? null, avisos: raw?.avisos ?? [], boletos: comDestino, anexos, texto: String(raw?.texto ?? '').slice(0, 3000),
+          remetente_cadastrado: !!m.supplier_id, fornecedor_do_cnpj },
       });
     }
 
@@ -553,9 +562,23 @@ Deno.serve(async (req: Request) => {
         reason: boletos.map((b) => `${resumoBoleto(b)}: ${b.conta_id ? b.acao : 'falta lançar'}`).join(' · '),
         raw: { ...m.raw, boletos, lancado_por: u.user.id }, processed_at: new Date().toISOString(),
       }).eq('id', m.id);
-      if (todos) await resolverPendencia('conta lançada');
+      // "Sim, o e-mail é deles" (2026-10-09): guarda o remetente no fornecedor dono do CNPJ — só se ele
+      // ainda não tem e-mail (não troca um e-mail cadastrado). O próximo boleto desse e-mail lança sozinho.
+      let lembrou: string | null = null;
+      if (body.lembrar_remetente === true && !m.supplier_id && m.from_email) {
+        const { porCnpj } = await fornecedores(admin, tenantId, '', boletos.map((b) => b.cnpj).filter(Boolean) as string[]);
+        const f = Object.values(porCnpj)[0];
+        if (f && !String(f.email ?? '').trim()) {
+          const { error: ef } = await admin.from('fin_suppliers').update({ email: String(m.from_email).toLowerCase() }).eq('id', f.id).eq('tenant_id', tenantId);
+          if (!ef) {
+            lembrou = f.name;
+            await admin.from('fin_mail_messages').update({ supplier_id: f.id }).eq('id', m.id);
+          }
+        }
+      }
+      if (todos) await resolverPendencia(lembrou ? `conta lançada; e-mail guardado em ${lembrou}` : 'conta lançada');
       log('INFO', 'lancar', 'ok', { mailId: m.id, by: u.user.id, boletos: boletos.length });
-      return json({ success: true, lancado: todos, contas: boletos.map((b) => ({ conta_id: b.conta_id, acao: b.acao })) });
+      return json({ success: true, lancado: todos, lembrou, contas: boletos.map((b) => ({ conta_id: b.conta_id, acao: b.acao })) });
     }
 
     if (action === 'ignorar') {
