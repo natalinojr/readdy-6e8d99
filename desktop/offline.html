@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>ERPOS</title>
+<style>
+  body { margin: 0; height: 100vh; display: flex; align-items: center; justify-content: center; background: #fff;
+    font: 15px/1.5 "Segoe UI", sans-serif; color: #374151; text-align: center; }
+  img { width: 56px; height: 56px; border-radius: 12px; }
+  h1 { font-size: 18px; margin: 12px 0 4px; }
+  button { margin-top: 14px; padding: 8px 18px; border: 0; border-radius: 8px; background: #f59e0b; color: #fff;
+    font: 600 14px "Segoe UI", sans-serif; cursor: pointer; }
+  small { display: block; margin-top: 8px; color: #9ca3af; }
+</style>
+</head>
+<body>
+  <div>
+    <img src="icon.png" alt="">
+    <h1>Sem conexão com o ERPOS</h1>
+    <div>Confira a internet. Tentando de novo sozinho…</div>
+    <button id="t">Tentar agora</button>
+    <small id="s"></small>
+  </div>
+<script>
+  const volta = new URLSearchParams(location.search).get('volta') || 'https://erpos.vercel.app/';
+  const ir = () => { location.href = volta; };
+  document.getElementById('t').onclick = ir;
+  let seg = 30;
+  const s = document.getElementById('s');
+  setInterval(() => { seg -= 1; s.textContent = `nova tentativa em ${seg}s`; if (seg <= 0) ir(); }, 1000);
+  window.addEventListener('online', ir);
+</script>
+</body>
+</html>

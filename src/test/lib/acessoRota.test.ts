@@ -19,6 +19,8 @@ describe('rotaForcada', () => {
     expect(rotaForcada('gestor_entregas', '/gestor-entregas')).toBe(null);
     expect(rotaForcada('tarefas', '/dashboard')).toBe('/tarefas');
     expect(rotaForcada('tarefas', '/tarefas/123')).toBe(null);
+    expect(rotaForcada('tarefas', '/widget')).toBe(null);
+    expect(rotaForcada('financeiro', '/widget')).toBe(null);
   });
 
   it('prende a contabilidade no Financeiro', () => {

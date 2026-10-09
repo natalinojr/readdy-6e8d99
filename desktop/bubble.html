@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+  html, body { margin: 0; width: 64px; height: 64px; background: transparent; overflow: hidden; user-select: none; }
+  .b {
+    position: absolute; left: 6px; top: 6px; width: 52px; height: 52px; border-radius: 50%;
+    background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.28); cursor: pointer;
+    display: flex; align-items: center; justify-content: center; transition: transform .12s;
+    border: 2px solid #f59e0b; box-sizing: border-box;
+  }
+  .b:hover { transform: scale(1.06); }
+  .b.arrastando { cursor: grabbing; transform: scale(1.1); }
+  .b img { width: 34px; height: 34px; border-radius: 8px; pointer-events: none; }
+  .n {
+    position: absolute; right: 2px; top: 2px; min-width: 20px; height: 20px; padding: 0 5px; box-sizing: border-box;
+    border-radius: 10px; background: #dc2626; color: #fff; font: 700 12px/20px "Segoe UI", sans-serif; text-align: center;
+    box-shadow: 0 1px 3px rgba(0,0,0,.3); display: none; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+  <div class="b" id="b" title="ERPOS — clique para o painel, arraste para mover, botão direito para opções"><img src="icon.png" alt=""></div>
+  <div class="n" id="n"></div>
+<script>
+  const b = document.getElementById('b');
+  const n = document.getElementById('n');
+  let desce = null;
+  let moveu = false;
+
+  b.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    desce = { x: e.screenX, y: e.screenY };
+    moveu = false;
+    b.setPointerCapture(e.pointerId);
+    window.bolinha.dragStart();
+  });
+  b.addEventListener('pointermove', (e) => {
+    if (!desce) return;
+    if (!moveu && Math.hypot(e.screenX - desce.x, e.screenY - desce.y) < 4) return;
+    moveu = true;
+    b.classList.add('arrastando');
+    window.bolinha.dragMove();
+  });
+  b.addEventListener('pointerup', (e) => {
+    if (!desce) return;
+    b.releasePointerCapture(e.pointerId);
+    b.classList.remove('arrastando');
+    window.bolinha.dragEnd();
+    if (!moveu) window.bolinha.click();
+    desce = null;
+  });
+  b.addEventListener('contextmenu', (e) => { e.preventDefault(); window.bolinha.menu(); });
+
+  window.bolinha.onBadge((qtd) => {
+    n.textContent = qtd > 99 ? '99+' : String(qtd);
+    n.style.display = qtd > 0 ? 'block' : 'none';
+  });
+</script>
+</body>
+</html>

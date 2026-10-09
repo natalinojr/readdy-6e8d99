@@ -30,9 +30,9 @@ const PUBLIC_ROUTES = ['/login', '/onboarding', '/invite', '/autoatendimento', '
 // /lojas (Comparar lojas) é de várias lojas: fica fora do menu da loja ativa, como /modulos.
 const FULL_SCREEN_PROTECTED = ['/modulos', '/lojas'];
 // Terminais — full-screen com UI propria
-const TERMINAL_ROUTES = ['/pdv/', '/kds', '/gestor-pedidos', '/gestor-entregas', '/tarefas', '/receber', '/lancar'];
+const TERMINAL_ROUTES = ['/pdv/', '/kds', '/gestor-pedidos', '/gestor-entregas', '/tarefas', '/receber', '/lancar', '/widget'];
 // Usuário sem loja com acesso só a módulo (user_module_access): rotas que funcionam sem tenant
-const NO_TENANT_ROUTES = ['/contratacao', '/notas-servico', '/tarefas'];
+const NO_TENANT_ROUTES = ['/contratacao', '/notas-servico', '/tarefas', '/widget'];
 
 export default function AppLayout() {
   const { isAuthenticated, needsTenantSelection, loading, hasNoTenants, logout, user } = useAuth();

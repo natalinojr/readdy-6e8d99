@@ -64,6 +64,7 @@ const EmprestimosPage = lazy(() => import('@/pages/receber/emprestimos/page'));
 const HojePage = lazy(() => import('@/pages/hoje/page'));
 const PilotoPage = lazy(() => import('@/pages/hoje/piloto'));
 const RotinaConfigPage = lazy(() => import('@/pages/hoje/rotina/ConfigRotina'));
+const WidgetPage = lazy(() => import('@/pages/widget/page'));
 const InicioPorPerfil = lazy(() => import('@/pages/hoje/InicioPorPerfil'));
 const LancarPage = lazy(() => import('@/pages/lancar/page'));
 
@@ -118,6 +119,8 @@ const routes: RouteObject[] = [
       { path: 'hoje', element: <HojePage /> },
       { path: 'hoje/piloto', element: <PilotoPage /> },
       { path: 'hoje/rotina', element: <RotinaConfigPage /> },
+      // Painel rápido da bolinha do app Windows (desktop/); abre também no navegador.
+      { path: 'widget', element: <WidgetPage /> },
       { path: 'modulos', element: <ModulosPage /> },
       { path: 'lojas', element: <LojasPage /> },
       { path: 'suas-lojas', element: <SuasLojasPage /> },

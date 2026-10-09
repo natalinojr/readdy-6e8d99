@@ -11,6 +11,8 @@ export const PAPEIS_PRESOS: Record<string, string> = {
 
 export function rotaForcada(perfil: string | undefined | null, pathname: string): string | null {
   if (!perfil) return null;
+  // Painel rápido do app Windows: cada um vê só o que é seu (tarefas, o "Agora" do papel).
+  if (pathname.startsWith('/widget')) return null;
   const destino = PAPEIS_PRESOS[perfil];
   if (!destino) return null;
   return pathname.startsWith(destino) ? null : destino;

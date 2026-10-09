@@ -23,7 +23,7 @@ const ICONE: Record<TaskNotificacao['type'], typeof AtSign> = {
 };
 
 /** "Vence em 1h", "Vence agora"… a partir do payload gravado pela edge task-lembretes. */
-function textoVencimento(p: Record<string, unknown>): string {
+export function textoVencimento(p: Record<string, unknown>): string {
   const m = Number(p.minutos_antes ?? 0);
   if (m === 0) return p.due_has_time ? 'Vence agora' : 'Vence hoje';
   if (m % 1440 === 0) return m === 1440 ? 'Vence amanhã' : `Vence em ${m / 1440} dias`;
@@ -32,7 +32,7 @@ function textoVencimento(p: Record<string, unknown>): string {
 }
 
 /** "Ana está com 130% de carga nos próximos 7 dias" — payload da edge task-sobrecarga. */
-function textoSobrecarga(p: Record<string, unknown>): string {
+export function textoSobrecarga(p: Record<string, unknown>): string {
   const pct = typeof p.pct === 'number' ? ` (${p.pct}%)` : '';
   return p.propria
     ? `Seus próximos 7 dias estão acima do que cabe${pct}`
