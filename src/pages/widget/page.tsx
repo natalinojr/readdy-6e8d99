@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 import { usePermissoes } from '@/hooks/usePermissoes';
 import { useModuleAccess } from '@/hooks/useModuleAccess';
 import { useDashboardMetrics } from '@/hooks/useDashboardMetrics';
@@ -159,7 +160,7 @@ export default function WidgetPage() {
         <img src="/icon-192.png" alt="" className="h-7 w-7 rounded-lg" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-bold leading-tight">{tf.eu.nome ? `Olá, ${tf.eu.nome.split(' ')[0]}` : 'ERPOS'}</p>
-          {user?.loja && <p className="truncate text-[11px] text-zinc-500">{user.loja}</p>}
+          {user?.loja && <LojaSeletor />}
         </div>
         {atualizadoEm && (
           <span className="text-[11px] tabular-nums text-zinc-400" title="Última atualização">
@@ -338,5 +339,42 @@ function VendasLinha({ onAbrir }: { onAbrir: () => void }) {
         </>
       )}
     </button>
+  );
+}
+
+/** Nome da loja no topo; quem tem mais de uma troca por aqui (só neste painel — a janela principal fica na dela). */
+function LojaSeletor() {
+  const { user, canSwitchTenant, selectTenant } = useAuth();
+  const [lojas, setLojas] = useState<{ id: string; nome: string }[] | null>(null);
+  const [trocando, setTrocando] = useState(false);
+  useEffect(() => {
+    if (!canSwitchTenant || !user?.id) return;
+    let vivo = true;
+    supabase.rpc('get_user_tenants', { p_user_id: user.id }).then(({ data }) => {
+      if (!vivo) return;
+      const l = ((data as { tenant_id: string; tenant_name: string }[]) ?? []).map((t) => ({ id: t.tenant_id, nome: t.tenant_name }));
+      setLojas(l.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR')));
+    });
+    return () => { vivo = false; };
+  }, [canSwitchTenant, user?.id]);
+  if (!user) return null;
+  if (!canSwitchTenant || !lojas || lojas.length < 2) return <p className="truncate text-[11px] text-zinc-500">{user.loja}</p>;
+  return (
+    <label className="relative flex max-w-full cursor-pointer items-center gap-0.5 text-[11px] font-semibold text-amber-700 hover:text-amber-800">
+      <span className="truncate">{trocando ? 'Trocando…' : user.loja}</span>
+      <i className="ri-arrow-down-s-line flex-shrink-0" />
+      <select
+        aria-label="Trocar de loja"
+        value={user.tenantId}
+        disabled={trocando}
+        onChange={async (e) => {
+          setTrocando(true);
+          try { await selectTenant(e.target.value); } finally { setTrocando(false); }
+        }}
+        className="absolute inset-0 cursor-pointer opacity-0"
+      >
+        {lojas.map((l) => <option key={l.id} value={l.id}>{l.nome}</option>)}
+      </select>
+    </label>
   );
 }
