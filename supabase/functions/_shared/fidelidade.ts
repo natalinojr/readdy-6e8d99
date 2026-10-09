@@ -105,6 +105,8 @@ export interface FidelidadeConfig {
     giro_validade_dias: number;
     /** O 1º giro de cada cliente sempre dá um prêmio de verdade (nunca "Não foi dessa vez"). */
     primeiro_giro_garantido: boolean;
+    /** Prêmio fixo do 1º giro garantido (id de um prêmio da roleta). null = sorteio entre os prêmios de verdade. */
+    primeiro_giro_premio_id: string | null;
     premios: Premio[];
   };
   /** Indique e ganhe: quem indicou ganha quando o indicado entra no clube pelo link e faz a 1ª compra paga. */
@@ -169,6 +171,7 @@ export function configPadrao(): FidelidadeConfig {
       aniversario: true,
       giro_validade_dias: 30,
       primeiro_giro_garantido: false,
+      primeiro_giro_premio_id: null,
       premios: [
         { id: 'pz_nada', nome: 'Não foi dessa vez', tipo: 'nada', valor: 0, recompensa_id: null, peso: 42, custo_loja: 0, limite_dia: 0, cor: '#94a3b8' },
         { id: 'pz_20pts', nome: '+20 pontos', tipo: 'pontos', valor: 20, recompensa_id: null, peso: 30, custo_loja: 0, limite_dia: 0, cor: '#f59e0b' },
@@ -277,6 +280,7 @@ export function normalizarConfig(bruto: unknown): FidelidadeConfig {
       aniversario: bool(ro.aniversario, p.roleta.aniversario),
       giro_validade_dias: Math.round(num(ro.giro_validade_dias, p.roleta.giro_validade_dias, 1, 365)),
       primeiro_giro_garantido: bool(ro.primeiro_giro_garantido, p.roleta.primeiro_giro_garantido),
+      primeiro_giro_premio_id: premios.some((z) => z.id === ro.primeiro_giro_premio_id && z.tipo !== 'nada') ? String(ro.primeiro_giro_premio_id) : null,
       premios,
     },
     indicacao: {

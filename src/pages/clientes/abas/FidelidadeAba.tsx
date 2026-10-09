@@ -1042,6 +1042,17 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
                   <label className="flex items-center gap-2 text-sm text-zinc-700"><input type="checkbox" className="accent-amber-500" disabled={ro} checked={cfg.roleta.ao_subir_nivel} onChange={(e) => mudar((c) => ({ ...c, roleta: { ...c.roleta, ao_subir_nivel: e.target.checked } }))} /> Ao subir de nível</label>
                   <label className="flex items-center gap-2 text-sm text-zinc-700"><input type="checkbox" className="accent-amber-500" disabled={ro} checked={cfg.roleta.aniversario} onChange={(e) => mudar((c) => ({ ...c, roleta: { ...c.roleta, aniversario: e.target.checked } }))} /> No aniversário</label>
                   <label className="flex items-start gap-2 text-sm text-zinc-700" title="O primeiro giro de cada cliente só sorteia entre os prêmios de verdade (nunca “Não foi dessa vez”)."><input type="checkbox" className="accent-amber-500 mt-1" disabled={ro} checked={cfg.roleta.primeiro_giro_garantido} onChange={(e) => mudar((c) => ({ ...c, roleta: { ...c.roleta, primeiro_giro_garantido: e.target.checked } }))} /> 1º giro sempre dá prêmio</label>
+                  {cfg.roleta.primeiro_giro_garantido && (
+                    <label className="block text-xs text-zinc-600 pl-6">
+                      <span className="block font-semibold mb-1">Prêmio do 1º giro</span>
+                      <select value={cfg.roleta.primeiro_giro_premio_id ?? ''} disabled={ro} className={INPUT}
+                        onChange={(e) => mudar((c) => ({ ...c, roleta: { ...c.roleta, primeiro_giro_premio_id: e.target.value || null } }))}>
+                        <option value="">Sorteio entre os prêmios (sem “Não foi dessa vez”)</option>
+                        {cfg.roleta.premios.filter((p) => p.tipo !== 'nada').map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                      </select>
+                      <span className="block text-[11px] text-zinc-400 mt-1">Vale para quem já tem compra paga. Se o prêmio bater o limite do dia, sai o sorteio.</span>
+                    </label>
+                  )}
                 </div>
               </div>
             </Cartao>
