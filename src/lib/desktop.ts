@@ -15,6 +15,8 @@ export interface ErposDesktop {
   notify: (n: NotificacaoDesktop) => void;
   openInMain: (path: string) => void;
   closePanel: () => void;
+  /** casca 1.0.1+; a 1.0.0 não tem */
+  fixar?: (sim: boolean) => void;
   info: () => Promise<{ version: string; autoStart: boolean }>;
   onPanelShown: (cb: () => void) => () => void;
 }

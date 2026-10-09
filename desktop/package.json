@@ -1,7 +1,7 @@
 {
   "name": "erpos-desktop",
   "productName": "ERPOS",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "ERPOS para Windows — o sistema inteiro numa janela + bolinha flutuante com o painel rápido",
   "author": "ERPOS",
   "private": true,

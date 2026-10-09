@@ -17,6 +17,7 @@ import { textoSobrecarga, textoVencimento } from '@/pages/tarefas/components/Not
 import { rotuloPrazo } from '@/components/feature/assistente/acoes/tarefas/comum';
 import { usePendenciasHoje } from '@/pages/hoje/hojeStore';
 import type { ItemHoje } from '@/pages/hoje/organizar';
+import { OQueAconteceu } from '@/components/feature/lancar';
 import { useWidgetTarefas } from './useWidgetTarefas';
 
 const brl = (n: number) => Number(n ?? 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
@@ -62,6 +63,14 @@ export default function WidgetPage() {
   const { itens, recarregar: recarregarHoje } = usePendenciasHoje();
   const agora = (itens ?? []).filter((i) => i.bloco === 'agora');
   const verVendas = !!user && (user.perfil === 'admin' || hasPermissao('gestao_dashboard'));
+
+  // Lançar acontece dentro do painel; o resto abre na janela principal.
+  const [tela, setTela] = useState<'painel' | 'lancar'>('painel');
+  useEffect(() => { app?.fixar?.(tela === 'lancar'); }, [app, tela]);
+  // Hora da última leitura: a das tarefas, ou a das pendências para quem não tem Tarefas.
+  const [hojeLidoEm, setHojeLidoEm] = useState<Date | null>(null);
+  useEffect(() => { if (itens !== null) setHojeLidoEm(new Date()); }, [itens]);
+  const atualizadoEm = comTarefas ? tf.atualizadoEm : hojeLidoEm;
 
   const abrir = (caminho: string) => {
     if (app) app.openInMain(caminho); else navigate(caminho);
@@ -129,6 +138,19 @@ export default function WidgetPage() {
   }, [avisos, agoraChaves, itens === null]);
 
   const naoLidas = tf.notificacoes.filter((n) => !n.is_read);
+
+  if (tela === 'lancar') {
+    return (
+      <div className="h-screen overflow-hidden bg-white">
+        <OQueAconteceu
+          telaCheia
+          onFechar={() => undefined}
+          onNavegar={(rota) => { setTela('painel'); abrir(rota); }}
+          onSair={() => setTela('painel')}
+        />
+      </div>
+    );
+  }
   const nada = !agora.length && !nTarefas && !tf.grupos.amanha.length && !naoLidas.length;
 
   return (
@@ -139,8 +161,13 @@ export default function WidgetPage() {
           <p className="truncate text-sm font-bold leading-tight">{tf.eu.nome ? `Olá, ${tf.eu.nome.split(' ')[0]}` : 'ERPOS'}</p>
           {user?.loja && <p className="truncate text-[11px] text-zinc-500">{user.loja}</p>}
         </div>
+        {atualizadoEm && (
+          <span className="text-[11px] tabular-nums text-zinc-400" title="Última atualização">
+            {atualizadoEm.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+          </span>
+        )}
         <button onClick={() => { tf.recarregar(); recarregarHoje(); }} title="Atualizar" className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100">
-          <i className="ri-refresh-line" />
+          <i className={`ri-refresh-line ${tf.atualizando ? 'animate-spin' : ''}`} />
         </button>
         <button onClick={() => abrir('/hoje')} title="Abrir o ERPOS" className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100">
           <i className="ri-external-link-line" />
@@ -207,7 +234,7 @@ export default function WidgetPage() {
       </main>
 
       <footer className="grid grid-cols-3 gap-2 border-t border-zinc-200 bg-white p-3">
-        {user && <Atalho icone="ri-flashlight-line" texto="Lançar" onClick={() => abrir('/lancar')} />}
+        {user && <Atalho icone="ri-flashlight-line" texto="Lançar" onClick={() => setTela('lancar')} />}
         {comTarefas && <Atalho icone="ri-task-line" texto="Tarefas" onClick={() => abrir('/tarefas')} />}
         {user && <Atalho icone="ri-sun-line" texto="Hoje" onClick={() => abrir('/hoje')} />}
       </footer>

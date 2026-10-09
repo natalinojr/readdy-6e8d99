@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('erposDesktop', {
   /** abre um caminho do ERPOS na janela principal (ex.: '/tarefas?task=…') */
   openInMain: (path) => ipcRenderer.send('erpos:open', path),
   closePanel: () => ipcRenderer.send('erpos:close-panel'),
+  /** painel não some ao clicar fora (ex.: no meio de um lançamento) */
+  fixar: (sim) => ipcRenderer.send('erpos:fixar', sim),
   info: () => ipcRenderer.invoke('erpos:info'),
   onPanelShown: (cb) => {
     const h = () => cb();

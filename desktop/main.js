@@ -212,7 +212,7 @@ function criarPainel() {
   panelWin.loadURL(BASE_URL + '/widget');
   panelWin.on('blur', () => {
     // clicou fora: some (a não ser durante o arrasto da bolinha)
-    if (!arrasto && panelWin.isVisible()) { panelWin.hide(); escondidoPorBlurEm = Date.now(); }
+    if (!arrasto && !painelFixo && panelWin.isVisible()) { panelWin.hide(); escondidoPorBlurEm = Date.now(); }
   });
   panelWin.on('close', (e) => { if (!quitting) { e.preventDefault(); panelWin.hide(); } });
 }
@@ -230,6 +230,9 @@ function posicionarPainel() {
 }
 
 let escondidoPorBlurEm = 0;
+// Lançando pelo painel (seletor de arquivo, câmera): perder o foco não esconde.
+let painelFixo = false;
+ipcMain.on('erpos:fixar', (_e, sim) => { painelFixo = !!sim; });
 function alternarPainel(forcar) {
   if (!panelWin) criarPainel();
   // clicar na bolinha com o painel aberto: o blur já fechou; não reabrir no mesmo clique

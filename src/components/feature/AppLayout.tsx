@@ -1,6 +1,7 @@
 import { Navigate, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useState, useEffect, Suspense } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { getLojaAtiva } from '../../lib/lojaAtiva';
 import { useModoTreino } from '../../contexts/ModoTreinoContext';
 import { useAppMode } from '../../contexts/AppModeContext';
 import Sidebar from './Sidebar';
@@ -87,6 +88,8 @@ export default function AppLayout() {
 
   // 4. Selecao de loja obrigatoria — bloqueia TUDO ate escolher
   if (needsTenantSelection) {
+    // Painel da bolinha (app Windows): não pergunta a loja — entra na última usada ou na primeira.
+    if (location.pathname.startsWith('/widget')) return <EntrarNaLojaDoWidget />;
     return <SelecionarLojaPage />;
   }
 
@@ -233,4 +236,17 @@ export default function AppLayout() {
       <ConviteAvisos />
     </div>
   );
+}
+
+/** /widget sem loja escolhida: escolhe sozinho (a tela de escolher loja não cabe no painel). */
+function EntrarNaLojaDoWidget() {
+  const { availableTenants, selectTenant } = useAuth();
+  useEffect(() => {
+    if (!availableTenants.length) return;
+    const guardada = getLojaAtiva();
+    const alvo = availableTenants.find((t) => t.tenantId === guardada) ?? availableTenants[0];
+    selectTenant(alvo.tenantId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availableTenants]);
+  return <PageLoader />;
 }

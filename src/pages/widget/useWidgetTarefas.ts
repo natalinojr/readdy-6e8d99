@@ -21,11 +21,14 @@ export function useWidgetTarefas(ativo: boolean) {
   const [notificacoes, setNotificacoes] = useState<TaskNotificacao[]>([]);
   const [erro, setErro] = useState<string | null>(null);
   const [hoje, setHoje] = useState(todayBrasilia());
+  const [atualizadoEm, setAtualizadoEm] = useState<Date | null>(null);
+  const [atualizando, setAtualizando] = useState(false);
   const ocupado = useRef(false);
 
   const carregar = useCallback(async () => {
     if (!ativo || !eu.pronto || !eu.id || ocupado.current) return;
     ocupado.current = true;
+    setAtualizando(true);
     try {
       const [{ tarefas: abertas, erro: e }, notif] = await Promise.all([
         carregarTarefas(eu.tenantId),
@@ -36,8 +39,10 @@ export function useWidgetTarefas(ativo: boolean) {
       setErro(null);
       setTarefas(ordenarPorPrazo(abertas.filter((t) => minhaNoWidget(t, eu.id!))));
       if (!notif.error) setNotificacoes((notif.data as TaskNotificacao[]) ?? []);
+      setAtualizadoEm(new Date());
     } finally {
       ocupado.current = false;
+      setAtualizando(false);
     }
   }, [ativo, eu.pronto, eu.id, eu.tenantId]);
 
@@ -96,7 +101,7 @@ export function useWidgetTarefas(ativo: boolean) {
   }, [eu.tenantId]);
 
   return {
-    eu, tarefas, grupos, notificacoes, erro, hoje,
+    eu, tarefas, grupos, notificacoes, erro, hoje, atualizadoEm, atualizando,
     carregando: ativo && tarefas === null && !erro,
     recarregar: carregar, concluir, adiarParaAmanha, marcarLida,
   };
