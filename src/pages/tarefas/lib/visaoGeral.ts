@@ -59,6 +59,8 @@ export interface ResumoSubpasta {
   direta: boolean;
   /** Quantas pastas há dentro desta (a conta já soma todas). */
   subpastas: number;
+  /** Dá para abrir a pasta? (Tarefa atribuída a mim numa pasta de outra pessoa: não.) */
+  abrivel: boolean;
   total: number;
   concluidas: number;
   andamento: number;
@@ -145,6 +147,8 @@ export interface VisaoGeral {
   sairam4: number;
   previsao: Previsao | null;
   status: FatiaStatus[];
+  /** Só as em aberto — o "onde estão" das visões de várias pastas (Minhas, Que atribuí). */
+  statusAbertas: FatiaStatus[];
   prioridades: Array<{ value: number; qtd: number }>;
   eventos: Evento[];
 }
@@ -157,14 +161,73 @@ interface Opcoes {
   todas: TaskRow[];
   dependencias: Dependencia[];
   lists: TaskList[];
+  /** Sem pasta-mãe (Minhas, Que atribuí): árvore de pastas para agrupar por pasta-mãe. */
+  arvore?: NoPasta[];
+}
+
+type BaseResumo = Omit<ResumoSubpasta, 'total' | 'concluidas' | 'andamento' | 'aFazer' | 'atrasadas' | 'proximoPrazo' | 'ultimoPrazo' | 'pessoas'>;
+
+/** Progresso, atrasadas, próximo prazo e pessoas de um grupo de tarefas (uma subpasta, uma pasta). */
+function resumirGrupo(lista: TaskRow[], base: BaseResumo, agora: Date): ResumoSubpasta {
+  const ab = lista.filter(aberta);
+  const prazosEmDia = ab.filter((t) => !atrasada(t, agora)).map(diaDoPrazo).filter((d): d is string => !!d).sort();
+  const prazos = ab.map(diaDoPrazo).filter((d): d is string => !!d).sort();
+  const contagem = new Map<string, { r: Responsavel; n: number }>();
+  for (const t of ab) for (const r of responsaveis(t)) {
+    const c = contagem.get(r.id);
+    if (c) c.n++; else contagem.set(r.id, { r, n: 1 });
+  }
+  return {
+    ...base,
+    total: lista.length,
+    concluidas: lista.filter((t) => t.status_category === 'done').length,
+    andamento: ab.filter((t) => t.status_category === 'in_progress').length,
+    aFazer: ab.filter((t) => t.status_category !== 'in_progress').length,
+    atrasadas: ab.filter((t) => atrasada(t, agora)).length,
+    proximoPrazo: prazosEmDia[0] ?? null,
+    ultimoPrazo: prazos[prazos.length - 1] ?? null,
+    pessoas: [...contagem.values()].sort((a, b) => b.n - a.n).map((c) => c.r),
+  };
 }
 
 /**
- * Painel da pasta-mãe. `tarefas` = as da subárvore (já filtradas pela barra de
- * filtros, SEM esconder concluídas — o progresso precisa delas). Conta só tarefas
- * principais (subtarefa entra pela tarefa-mãe) e ignora as canceladas.
+ * Tarefas de várias pastas agrupadas pela pasta-mãe de cada uma (a subárvore inteira
+ * conta para a mãe). Tarefa numa pasta que eu não enxergo (atribuída a mim por outra
+ * pessoa) fica no grupo da própria pasta, sem abrir. Só grupos com tarefa em aberto,
+ * os com atraso primeiro.
  */
-export function calcularVisaoGeral(tarefas: TaskRow[], raiz: NoPasta, op: Opcoes): VisaoGeral {
+export function resumoPorPasta(principais: TaskRow[], arvore: NoPasta[], agora: Date): ResumoSubpasta[] {
+  const raizDe = new Map<string, NoPasta>();
+  for (const raiz of arvore) for (const id of idsSubarvore(raiz)) raizDe.set(id, raiz);
+  const grupos = new Map<string, { base: BaseResumo; tarefas: TaskRow[] }>();
+  for (const t of principais) {
+    const raiz = raizDe.get(t.list_id);
+    const id = raiz?.id ?? t.list_id;
+    let g = grupos.get(id);
+    if (!g) {
+      g = {
+        base: raiz
+          ? { id, nome: raiz.name, cor: raiz.color, direta: false, subpastas: idsSubarvore(raiz).size - 1, abrivel: true }
+          : { id, nome: t.list_name ?? 'Pasta', cor: t.list_color ?? '#94a3b8', direta: false, subpastas: 0, abrivel: false },
+        tarefas: [],
+      };
+      grupos.set(id, g);
+    }
+    g.tarefas.push(t);
+  }
+  return [...grupos.values()]
+    .map((g) => resumirGrupo(g.tarefas, g.base, agora))
+    .filter((r) => r.total - r.concluidas > 0)
+    .sort((a, b) => b.atrasadas - a.atrasadas || (b.total - b.concluidas) - (a.total - a.concluidas) || a.nome.localeCompare(b.nome, 'pt-BR'));
+}
+
+/**
+ * Painel da pasta-mãe (ou de Minhas / Que atribuí, com `raiz` null). `tarefas` = as da
+ * subárvore ou do recorte (já filtradas pela barra de filtros, SEM esconder concluídas —
+ * o progresso precisa delas). Conta só tarefas principais (subtarefa entra pela
+ * tarefa-mãe) e ignora as canceladas. Sem raiz, `subpastas` vira o resumo por pasta-mãe.
+ */
+export function calcularVisaoGeral(tarefas: TaskRow[], raiz: NoPasta | null, op: Opcoes): VisaoGeral {
   const { agora } = op;
   const hoje = chaveDia(agora);
   const daquiASeis = chaveDia(somarDias(agora, 6));
@@ -198,37 +261,21 @@ export function calcularVisaoGeral(tarefas: TaskRow[], raiz: NoPasta, op: Opcoes
   const concluidas7Antes = concluidas.filter((t) => { const d = diaConclusao(t); return !!d && d >= ha14 && d < ha7; }).length;
 
   // ── Subpastas: cada filha direta soma a subárvore dela; tarefas soltas na mãe viram uma linha à parte.
-  const resumir = (lista: TaskRow[], base: Omit<ResumoSubpasta, 'total' | 'concluidas' | 'andamento' | 'aFazer' | 'atrasadas' | 'proximoPrazo' | 'ultimoPrazo' | 'pessoas'>): ResumoSubpasta => {
-    const ab = lista.filter(aberta);
-    const prazosEmDia = ab.filter((t) => !atrasada(t, agora)).map(diaDoPrazo).filter((d): d is string => !!d).sort();
-    const prazos = ab.map(diaDoPrazo).filter((d): d is string => !!d).sort();
-    const contagem = new Map<string, { r: Responsavel; n: number }>();
-    for (const t of ab) for (const r of responsaveis(t)) {
-      const c = contagem.get(r.id);
-      if (c) c.n++; else contagem.set(r.id, { r, n: 1 });
-    }
-    return {
-      ...base,
-      total: lista.length,
-      concluidas: lista.filter((t) => t.status_category === 'done').length,
-      andamento: ab.filter((t) => t.status_category === 'in_progress').length,
-      aFazer: ab.filter((t) => t.status_category !== 'in_progress').length,
-      atrasadas: ab.filter((t) => atrasada(t, agora)).length,
-      proximoPrazo: prazosEmDia[0] ?? null,
-      ultimoPrazo: prazos[prazos.length - 1] ?? null,
-      pessoas: [...contagem.values()].sort((a, b) => b.n - a.n).map((c) => c.r),
-    };
-  };
+  //    Sem pasta-mãe (Minhas, Que atribuí): uma linha por pasta-mãe.
   const subpastas: ResumoSubpasta[] = [];
-  const diretas = principais.filter((t) => t.list_id === raiz.id);
-  if (diretas.length) {
-    subpastas.push(resumir(diretas, { id: raiz.id, nome: raiz.name, cor: raiz.color, direta: true, subpastas: 0 }));
-  }
-  for (const filha of raiz.filhas) {
-    const ids = idsSubarvore(filha);
-    subpastas.push(resumir(principais.filter((t) => ids.has(t.list_id)), {
-      id: filha.id, nome: filha.name, cor: filha.color, direta: false, subpastas: ids.size - 1,
-    }));
+  if (raiz) {
+    const diretas = principais.filter((t) => t.list_id === raiz.id);
+    if (diretas.length) {
+      subpastas.push(resumirGrupo(diretas, { id: raiz.id, nome: raiz.name, cor: raiz.color, direta: true, subpastas: 0, abrivel: true }, agora));
+    }
+    for (const filha of raiz.filhas) {
+      const ids = idsSubarvore(filha);
+      subpastas.push(resumirGrupo(principais.filter((t) => ids.has(t.list_id)), {
+        id: filha.id, nome: filha.name, cor: filha.color, direta: false, subpastas: ids.size - 1, abrivel: true,
+      }, agora));
+    }
+  } else {
+    subpastas.push(...resumoPorPasta(principais, op.arvore ?? [], agora));
   }
 
   // ── Por pessoa: tarefa com vários responsáveis conta para cada um; o tempo se divide.
@@ -308,6 +355,7 @@ export function calcularVisaoGeral(tarefas: TaskRow[], raiz: NoPasta, op: Opcoes
     else fatias.set(chave, { chave, nome, cor: s?.color ?? generica.color, categoria: s?.category ?? generica.key, qtd: 1 });
   }
   const status = [...fatias.values()].sort((a, b) => ORDEM_CATEGORIA[a.categoria] - ORDEM_CATEGORIA[b.categoria]);
+  const statusAbertas = status.filter((f) => f.categoria !== 'done' && f.categoria !== 'cancelled');
 
   const prioridades = [4, 3, 2, 1, 0].map((value) => ({ value, qtd: abertas.filter((t) => (t.priority ?? 0) === value).length }));
 
@@ -337,6 +385,7 @@ export function calcularVisaoGeral(tarefas: TaskRow[], raiz: NoPasta, op: Opcoes
     sairam4,
     previsao,
     status,
+    statusAbertas,
     prioridades,
     eventos,
   };

@@ -19,12 +19,21 @@ vi.mock('@/pages/tarefas/hooks/useTarefas', async (orig) => ({
   ...(await orig<object>()),
   useTarefas: () => ({
     lists: [lista('A', 'Pasta A'), lista('B', 'Pasta B')], tasks: [], tags: [], campos: [], notificacoes: [],
-    views: [], templates: [], loading: false, error: null, reload: vi.fn(), write: vi.fn(),
+    views: [], templates: [], dependencias: [], loading: false, error: null, reload: vi.fn(), write: vi.fn(),
     fetchDetail: vi.fn(), fetchAnexos: vi.fn(), enviarAnexo: vi.fn(), abrirAnexo: vi.fn(),
   }),
 }));
+// O mural da Visão geral fala com a Edge; aqui não interessa.
+vi.mock('@/pages/tarefas/components/visaoGeral/muralApi', async (orig) => ({
+  ...(await orig<object>()),
+  listarMural: async () => ({ ok: true, data: { items: [], can_edit: false } }),
+}));
 
 import TarefasPage from '@/pages/tarefas/page';
+
+/** Pasta-mãe e as origens Minhas/Que atribuí abrem (ou ficam) na Visão geral: estes testes são da Lista. */
+const abrirLista = () => fireEvent.click(screen.getAllByRole('button').find((b) => b.textContent?.trim() === 'Lista')!);
+const abrirPasta = (nome: string) => { fireEvent.click(screen.getAllByText(nome)[0]); abrirLista(); };
 
 describe('Agrupamento por pasta', () => {
   beforeEach(() => {
@@ -36,17 +45,17 @@ describe('Agrupamento por pasta', () => {
     render(<MemoryRouter><TarefasPage /></MemoryRouter>);
     const agrupar = () => screen.getAllByTitle(/^Agrupar por/)[0] as HTMLSelectElement;
 
-    fireEvent.click(screen.getAllByText('Pasta A')[0]);
+    abrirPasta('Pasta A');
     fireEvent.change(agrupar(), { target: { value: 'priority' } });
     expect(agrupar().value).toBe('priority');
 
-    fireEvent.click(screen.getAllByText('Pasta B')[0]);
+    abrirPasta('Pasta B');
     expect(agrupar().value).toBe('status'); // a B não herdou o da A
 
     fireEvent.change(agrupar(), { target: { value: 'assignee' } });
-    fireEvent.click(screen.getAllByText('Pasta A')[0]);
+    abrirPasta('Pasta A');
     expect(agrupar().value).toBe('priority'); // a A voltou como estava
-    fireEvent.click(screen.getAllByText('Pasta B')[0]);
+    abrirPasta('Pasta B');
     expect(agrupar().value).toBe('assignee');
   });
 });
@@ -54,11 +63,33 @@ describe('Agrupamento por pasta', () => {
 describe('Responsável: eu sempre na lista', () => {
   it('o filtro de responsável oferece o próprio usuário mesmo sem vir da equipe da loja', () => {
     render(<MemoryRouter><TarefasPage /></MemoryRouter>);
-    fireEvent.click(screen.getAllByText('Pasta A')[0]);
+    abrirPasta('Pasta A');
     fireEvent.change(screen.getAllByTitle(/^Agrupar por/)[0], { target: { value: 'assignee' } });
     // Sem nenhuma tarefa não há grupo; o que importa é o nome estar entre as opções do filtro.
     fireEvent.click(screen.getAllByRole('button', { name: /Filtr/ })[0]);
     expect(screen.getAllByText('Natalino').length).toBeGreaterThan(0);
+  });
+});
+
+describe('Visão geral', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    window.matchMedia = ((q: string) => ({ matches: false, media: q, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} })) as unknown as typeof window.matchMedia;
+  });
+
+  it('pasta-mãe abre na Visão geral; Minhas tarefas também tem a aba; Todas não', () => {
+    render(<MemoryRouter><TarefasPage /></MemoryRouter>);
+    const ativa = () => screen.getAllByRole('button').find((b) => b.className.includes('bg-white border border-slate-200 text-indigo-600'))?.textContent?.trim();
+    expect(ativa()).toBe('Visão geral'); // a primeira pasta (mãe) já abre nela
+    fireEvent.click(screen.getAllByText('Pasta B')[0]);
+    expect(ativa()).toBe('Visão geral');
+    expect(screen.getByText('Mural da pasta')).toBeTruthy();
+    fireEvent.click(screen.getAllByText('Minhas tarefas')[0].closest('button')!);
+    expect(ativa()).toBe('Visão geral');
+    expect(screen.getByText('Minha carga')).toBeTruthy();
+    expect(screen.queryByText('Mural da pasta')).toBeNull();
+    fireEvent.click(screen.getAllByText('Todas as tarefas')[0].closest('button')!);
+    expect(ativa()).toBe('Lista'); // Todas não tem Visão geral
   });
 });
 
@@ -73,7 +104,7 @@ describe('Tarefas que atribuí', () => {
       time_estimate_minutes: null, time_tracked_seconds: 0, timer_started_at: null, ...extra,
     });
     vi.spyOn(mod, 'useTarefas').mockReturnValue({
-      lists: [lista('A', 'Pasta A')], tags: [], campos: [], notificacoes: [], views: [], templates: [],
+      lists: [lista('A', 'Pasta A')], tags: [], campos: [], notificacoes: [], views: [], templates: [], dependencias: [],
       loading: false, error: null, reload: vi.fn(), write: vi.fn(), fetchDetail: vi.fn(), fetchAnexos: vi.fn(),
       enviarAnexo: vi.fn(), abrirAnexo: vi.fn(),
       tasks: [
@@ -86,6 +117,7 @@ describe('Tarefas que atribuí', () => {
     const botao = screen.getAllByText('Tarefas que atribuí')[0].closest('button')!;
     expect(botao.textContent).toContain('1'); // 1 em aberto (e atrasada)
     fireEvent.click(botao);
+    abrirLista();
     expect(screen.getByText('T delegada')).toBeTruthy();
     expect(screen.queryByText('T minha')).toBeNull();
     expect(screen.queryByText('T dos-outros')).toBeNull();

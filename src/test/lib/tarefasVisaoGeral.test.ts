@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calcularVisaoGeral, resumoEmFrases, SEM_PESSOA, inicioSemana } from '@/pages/tarefas/lib/visaoGeral';
+import { calcularVisaoGeral, resumoEmFrases, resumoPorPasta, SEM_PESSOA, inicioSemana } from '@/pages/tarefas/lib/visaoGeral';
 import { montarArvorePastas } from '@/pages/tarefas/lib/pastas';
 import type { TaskList, TaskRow } from '@/pages/tarefas/hooks/useTarefas';
 
@@ -20,7 +20,8 @@ const pasta = (id: string, parent: string | null): TaskList => ({
   ],
 });
 const LISTS = [pasta('mae', null), pasta('a', 'mae'), pasta('a1', 'a'), pasta('b', 'mae'), pasta('outra', null)];
-const RAIZ = montarArvorePastas(LISTS).find((n) => n.id === 'mae')!;
+const ARVORE = montarArvorePastas(LISTS);
+const RAIZ = ARVORE.find((n) => n.id === 'mae')!;
 
 let seq = 0;
 const t = (p: Partial<TaskRow> & { list_id: string }): TaskRow => {
@@ -137,5 +138,30 @@ describe('Visão geral da pasta-mãe', () => {
     expect(r.frases[1]).toBe('Nos próximos 6 dias vence mais 1.');
     const vazio = calcularVisaoGeral([], RAIZ, { agora: AGORA, todas: [], dependencias: [], lists: LISTS });
     expect(resumoEmFrases(vazio).frases).toEqual(['Ainda não há tarefas aqui.']);
+  });
+  it('sem pasta-mãe (Minhas / Que atribuí): agrupa pela pasta-mãe, só com tarefa aberta', () => {
+    const tarefas = [
+      t({ list_id: 'a1', due_date: prazo(-1) }),                                   // conta para "mae"
+      t({ list_id: 'b' }),                                                          // conta para "mae"
+      t({ list_id: 'outra', status_category: 'done', completed_at: `${dia(-1)}T12:00:00Z` }), // só concluída: some
+      t({ list_id: 'alheia', list_name: 'Pasta do Beto', list_color: '#123456' }), // pasta que não enxergo
+    ];
+    const grupos = resumoPorPasta(tarefas, ARVORE, AGORA);
+    expect(grupos.map((g) => g.id)).toEqual(['mae', 'alheia']);
+    expect(grupos[0]).toMatchObject({ total: 2, atrasadas: 1, abrivel: true, subpastas: 3 });
+    expect(grupos[1]).toMatchObject({ nome: 'Pasta do Beto', abrivel: false });
+    const v = calcularVisaoGeral(tarefas, null, { agora: AGORA, todas: tarefas, dependencias: [], lists: LISTS, arvore: ARVORE });
+    expect(v.subpastas.map((g) => g.id)).toEqual(['mae', 'alheia']);
+  });
+
+  it('status das abertas não conta concluídas', () => {
+    const tarefas = [
+      t({ list_id: 'a' }),
+      t({ list_id: 'a', status_category: 'in_progress' }),
+      t({ list_id: 'a', status_category: 'done', completed_at: `${dia(-1)}T12:00:00Z` }),
+    ];
+    const v = calcularVisaoGeral(tarefas, null, { agora: AGORA, todas: tarefas, dependencias: [], lists: LISTS, arvore: ARVORE });
+    expect(v.statusAbertas.map((f) => [f.nome, f.qtd])).toEqual([['A fazer', 1], ['Em andamento', 1]]);
+    expect(v.status.reduce((s, f) => s + f.qtd, 0)).toBe(3);
   });
 });

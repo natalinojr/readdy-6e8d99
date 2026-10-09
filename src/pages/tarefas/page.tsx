@@ -364,18 +364,25 @@ export default function TarefasPage() {
     return aplicarFiltros(tasks.filter((t) => ids.has(t.list_id)), filtros);
   }, [origem, selectedList, tarefasVisiveis, arvorePastas, tasks, filtros]);
 
-  // Visão geral só existe na pasta-mãe (raiz da minha árvore). Ela soma todas as
-  // subpastas e precisa das concluídas para o progresso — por isso ignora o
+  // Visão geral existe na pasta-mãe (raiz da minha árvore) e em Minhas / Que atribuí.
+  // Ela precisa das concluídas para o progresso e o ritmo — por isso ignora o
   // "ocultar concluídas" da barra (os outros filtros valem).
   const pastaRaiz = origem === 'pasta' && selectedList ? arvorePastas.find((n) => n.id === selectedList.id) ?? null : null;
+  const visaoCruzada = origem === 'minhas' || origem === 'atribuidas';
+  const temVisaoGeral = !!pastaRaiz || visaoCruzada;
   const tarefasVisao = useMemo(() => {
-    if (!pastaRaiz) return [];
-    const ids = idsSubarvore(pastaRaiz);
-    return aplicarFiltros(tasks.filter((t) => ids.has(t.list_id)), { ...filtros, ocultarConcluidas: false });
-  }, [pastaRaiz, tasks, filtros]);
+    let base: TaskRow[];
+    if (pastaRaiz) {
+      const ids = idsSubarvore(pastaRaiz);
+      base = tasks.filter((t) => ids.has(t.list_id));
+    } else if (origem === 'minhas') base = tasks.filter((t) => ehResponsavel(t, meuId));
+    else if (origem === 'atribuidas') base = tasks.filter((t) => t.created_by === meuId && idsResponsaveis(t).some((id) => id !== meuId));
+    else return [];
+    return aplicarFiltros(base, { ...filtros, ocultarConcluidas: false });
+  }, [pastaRaiz, origem, meuId, tasks, filtros]);
   useEffect(() => {
-    if (display === 'visao' && !loading && !pastaRaiz) setDisplay('lista');
-  }, [display, loading, pastaRaiz]);
+    if (display === 'visao' && !loading && !temVisaoGeral) setDisplay('lista');
+  }, [display, loading, temVisaoGeral]);
   // Ao entrar no módulo, o computador já abre a primeira pasta: se ela é pasta-mãe,
   // começa pela Visão geral, igual a clicar nela. Só na primeira carga.
   const inicioDecidido = useRef(false);
@@ -538,8 +545,9 @@ export default function TarefasPage() {
               onCount={contarCaixa}
             />
           )}
-          {celular && pastaRaiz && (display === 'lista' || display === 'visao') && (
-            // No celular a barra de baixo não tem lugar para mais uma aba: na pasta-mãe, Lista e Visão geral dividem a aba Lista.
+          {celular && temVisaoGeral && (display === 'lista' || display === 'visao') && (
+            // No celular a barra de baixo não tem lugar para mais uma aba: Lista e Visão geral dividem a aba
+            // (Lista na pasta-mãe e em Que atribuí; Minhas em Minhas tarefas).
             <div className="flex gap-0.5 bg-slate-200/70 rounded-lg p-0.5 mb-3 text-xs">
               {([['lista', 'Tarefas'], ['visao', 'Visão geral']] as const).map(([id, rotulo]) => (
                 <button
@@ -552,6 +560,27 @@ export default function TarefasPage() {
                 </button>
               ))}
             </div>
+          )}
+          {display === 'visao' && visaoCruzada && (
+            <ViewVisaoGeral
+              key={`visao-${origem}`}
+              modo={origem === 'minhas' ? 'minhas' : 'atribuidas'}
+              raiz={null}
+              arvore={arvorePastas}
+              tasks={tarefasVisao}
+              todas={tasks}
+              lists={lists}
+              dependencias={dependencias}
+              usuarios={usuariosAtivos}
+              filtros={filtros}
+              onFiltros={setFiltros}
+              onOpenTask={setOpenTaskId}
+              onAbrirPasta={(id) => irParaPasta(id)}
+              onIrLista={() => navegar({ display: 'lista' })}
+              meuId={meuId}
+              padraoDe={padraoDe}
+              onIrCarga={() => navegar({ display: 'carga' })}
+            />
           )}
           {display === 'visao' && pastaRaiz && (
             <ViewVisaoGeral
@@ -906,7 +935,7 @@ export default function TarefasPage() {
           {/* Seletor de visualização — vale pra qualquer origem (pasta ou cross-pasta).
               No celular quem faz isso é a barra inferior. */}
           <div className="hidden md:flex items-center gap-1 text-xs">
-            {DISPLAYS.filter(({ id }) => id !== 'visao' || pastaRaiz).map(({ id, label, icon: Icon }) => (
+            {DISPLAYS.filter(({ id }) => id !== 'visao' || temVisaoGeral).map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
                 onClick={() => navegar({ display: id })}
@@ -1026,7 +1055,7 @@ export default function TarefasPage() {
 
       {/* ── Navegação inferior (celular) ── */}
       <BottomNav
-        view={origem === 'minhas' && (display === 'lista' || display === 'kanban') ? 'minhas' : display === 'kanban' || display === 'visao' ? 'lista' : display === 'gantt' || display === 'linha' ? 'calendario' : display}
+        view={origem === 'minhas' && (display === 'lista' || display === 'kanban' || display === 'visao') ? 'minhas' : display === 'kanban' || display === 'visao' ? 'lista' : display === 'gantt' || display === 'linha' ? 'calendario' : display}
         onView={(v) => {
           if (v === 'minhas') navegar({ origem: 'minhas', ...(display === 'carga' || display === 'relatorios' ? { display: 'lista' as Display } : {}) });
           else if (v === 'calendario' && (display === 'linha' || display === 'gantt')) { /* Linha do tempo e Cronograma ficam dentro da aba Agenda */ }

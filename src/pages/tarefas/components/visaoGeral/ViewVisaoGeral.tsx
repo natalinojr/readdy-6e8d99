@@ -17,6 +17,7 @@ import { responsaveis } from '../../lib/responsaveis';
 import { formatarHoras } from '../../lib/tempo';
 import AvataresResponsaveis from '../AvataresResponsaveis';
 import MuralPasta from './MuralPasta';
+import CartaoMinhaCarga from './CartaoMinhaCarga';
 import { iniciais, rotuloVencimento } from '../TaskCard';
 
 /**
@@ -27,9 +28,16 @@ import { iniciais, rotuloVencimento } from '../TaskCard';
  * Tudo é calculado das tarefas já carregadas (lib/visaoGeral.ts), sem banco novo.
  */
 
+/** pasta = Visão geral da pasta-mãe; minhas / atribuidas = das origens de várias pastas. */
+export type ModoVisao = 'pasta' | 'minhas' | 'atribuidas';
+
 interface Props {
-  raiz: NoPasta;
-  /** Tarefas da pasta-mãe e de todas as subpastas, já filtradas (sem esconder concluídas). */
+  modo?: ModoVisao;
+  /** Pasta-mãe (só no modo pasta). */
+  raiz: NoPasta | null;
+  /** Árvore de pastas: nos modos sem pasta, agrupa as tarefas por pasta-mãe. */
+  arvore?: NoPasta[];
+  /** Tarefas da pasta-mãe e de todas as subpastas (ou do recorte), já filtradas (sem esconder concluídas). */
   tasks: TaskRow[];
   todas: TaskRow[];
   lists: TaskList[];
@@ -40,6 +48,10 @@ interface Props {
   onOpenTask: (id: string) => void;
   onAbrirPasta: (id: string) => void;
   onIrLista: () => void;
+  /** Minhas tarefas: cartão "Minha carga". */
+  meuId?: string | null;
+  padraoDe?: (t: TaskRow) => number | null;
+  onIrCarga?: () => void;
 }
 
 type AbaAtencao = 'atrasadas' | 'hoje' | 'bloqueadas' | 'sem';
@@ -158,7 +170,7 @@ function BarraEmpilhada({ partes, altura = 'h-2', titulo }: {
 function LinhaTarefa({ t, lists, raizId, onOpen, detalhe }: {
   t: TaskRow;
   lists: TaskList[];
-  raizId: string;
+  raizId: string | null;
   onOpen: (id: string) => void;
   detalhe?: ReactNode;
 }) {
@@ -221,14 +233,16 @@ function Vazio({ texto }: { texto: string }) {
 // ── Tela ──────────────────────────────────────────────────────────────────────
 
 export default function ViewVisaoGeral({
-  raiz, tasks, todas, lists, dependencias, usuarios, filtros, onFiltros, onOpenTask, onAbrirPasta, onIrLista,
+  modo = 'pasta', raiz, arvore = [], tasks, todas, lists, dependencias, usuarios, filtros, onFiltros, onOpenTask, onAbrirPasta, onIrLista,
+  meuId = null, padraoDe, onIrCarga,
 }: Props) {
+  const raizId = raiz?.id ?? null;
   // Recalcula a cada abertura/mudança das tarefas; "agora" fixo por render evita
   // números diferentes entre cartões.
   const agora = useMemo(() => new Date(), [tasks]);
   const v = useMemo(
-    () => calcularVisaoGeral(tasks, raiz, { agora, todas, dependencias, lists }),
-    [tasks, raiz, agora, todas, dependencias, lists],
+    () => calcularVisaoGeral(tasks, modo === 'pasta' ? raiz : null, { agora, todas, dependencias, lists, arvore }),
+    [tasks, modo, raiz, agora, todas, dependencias, lists, arvore],
   );
   const { tom, frases } = resumoEmFrases(v);
 
@@ -257,6 +271,7 @@ export default function ViewVisaoGeral({
     ?? v.pessoas.find((p) => p.id === id)?.nome ?? 'Pessoa';
 
   const pctConcluido = v.total ? Math.round((v.concluidas / v.total) * 100) : 0;
+  const pessoasComTarefa = v.pessoas.filter((p) => p.id !== SEM_PESSOA && p.abertas > 0).length;
   const diasAtrasoMaisAntiga = (() => {
     const t = v.atrasadas[0];
     if (!t?.due_date) return 0;
@@ -264,12 +279,13 @@ export default function ViewVisaoGeral({
     const h = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate());
     return Math.round((h.getTime() - d.getTime()) / 86400000);
   })();
-  const temSubpastas = raiz.filhas.length > 0;
+  // Pasta-mãe: subpastas dela. Minhas / Que atribuí: uma linha por pasta-mãe (só com tarefa aberta).
+  const temSubpastas = modo === 'pasta' ? !!raiz && raiz.filhas.length > 0 : v.subpastas.length > 0;
 
   return (
     <div className="space-y-3 md:space-y-4 max-w-[1400px]">
       {/* Mural primeiro: é o que a pessoa abre a pasta para pegar (links, combinados, arquivos). */}
-      <MuralPasta listId={raiz.id} />
+      {modo === 'pasta' && raiz && <MuralPasta listId={raiz.id} />}
 
       {(filtrandoPessoas.length > 0 || outrosFiltros) && (
         <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -317,28 +333,33 @@ export default function ViewVisaoGeral({
             </div>
           )}
         </div>
-        <div className="min-w-0">
-          <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-semibold text-slate-800 tabular-nums">{pctConcluido}%</span>
-            <span className="text-xs text-slate-500">concluído · {v.concluidas} de {plural(v.total, 'tarefa', 'tarefas')}</span>
-          </div>
-          <div className="mt-2">
-            <BarraEmpilhada
-              altura="h-2.5"
-              partes={v.status.map((s) => ({ cor: s.cor, qtd: s.qtd, rotulo: s.nome }))}
-            />
-          </div>
-          {v.status.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
-              {v.status.map((s) => (
-                <span key={s.chave} className="flex items-center gap-1.5 whitespace-nowrap">
-                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.cor }} />
-                  {s.nome} <span className="text-slate-700 font-medium tabular-nums">{s.qtd}</span>
-                </span>
-              ))}
+        {modo === 'pasta' ? (
+          <div className="min-w-0">
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-semibold text-slate-800 tabular-nums">{pctConcluido}%</span>
+              <span className="text-xs text-slate-500">concluído · {v.concluidas} de {plural(v.total, 'tarefa', 'tarefas')}</span>
             </div>
-          )}
-        </div>
+            <div className="mt-2">
+              <BarraEmpilhada altura="h-2.5" partes={v.status.map((s) => ({ cor: s.cor, qtd: s.qtd, rotulo: s.nome }))} />
+            </div>
+            <LegendaStatus fatias={v.status} />
+          </div>
+        ) : (
+          // Sem pasta-mãe o "% concluído de todas as tarefas da vida" não diz nada: mostra onde estão as abertas.
+          <div className="min-w-0">
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-semibold text-slate-800 tabular-nums">{v.abertas}</span>
+              <span className="text-xs text-slate-500">
+                {v.abertas === 1 ? 'tarefa em aberto' : 'tarefas em aberto'}
+                {modo === 'atribuidas' && pessoasComTarefa > 0 ? ` com ${plural(pessoasComTarefa, 'pessoa', 'pessoas')}` : ''}
+              </span>
+            </div>
+            <div className="mt-2">
+              <BarraEmpilhada altura="h-2.5" partes={v.statusAbertas.map((s) => ({ cor: s.cor, qtd: s.qtd, rotulo: s.nome }))} />
+            </div>
+            <LegendaStatus fatias={v.statusAbertas} />
+          </div>
+        )}
       </section>
 
       {/* ── Números que importam (clicáveis) ── */}
@@ -396,7 +417,7 @@ export default function ViewVisaoGeral({
               ['hoje', 'Vencem hoje', Clock],
               ['bloqueadas', 'Bloqueadas', Link2],
               ['sem', 'Sem responsável', UserX],
-            ] as const).map(([id, rotulo, Icone]) => (
+            ] as const).filter(([id]) => id !== 'sem' || modo === 'pasta').map(([id, rotulo, Icone]) => (
               <button
                 key={id}
                 type="button"
@@ -423,7 +444,7 @@ export default function ViewVisaoGeral({
                 key={t.id}
                 t={t}
                 lists={lists}
-                raizId={raiz.id}
+                raizId={raizId}
                 onOpen={onOpenTask}
                 detalhe={abaAtencao === 'bloqueadas' ? <EsperaPor t={t} todas={todas} dependencias={dependencias} /> : undefined}
               />
@@ -443,7 +464,7 @@ export default function ViewVisaoGeral({
           v={v}
           agora={agora}
           lists={lists}
-          raizId={raiz.id}
+          raizId={raizId}
           onOpenTask={onOpenTask}
           onAtrasadas={() => irAtencao('atrasadas')}
         />
@@ -451,8 +472,10 @@ export default function ViewVisaoGeral({
         {/* ── Subpastas ── */}
         {temSubpastas && (
           <Cartao
-            titulo="Subpastas"
-            dica="Cada linha soma a subpasta e tudo o que está dentro dela. Clique para abrir a subpasta."
+            titulo={modo === 'pasta' ? 'Subpastas' : 'Por pasta'}
+            dica={modo === 'pasta'
+              ? 'Cada linha soma a subpasta e tudo o que está dentro dela. Clique para abrir a subpasta.'
+              : `${modo === 'minhas' ? 'Suas tarefas' : 'As tarefas que você passou'} agrupadas pela pasta-mãe (a linha soma as subpastas). Só aparecem pastas com tarefa em aberto. Clique para abrir a pasta.`}
             className="lg:col-span-2"
             direita={<div className="hidden sm:block"><Legenda itens={[
               { cor: COR_FEITAS, rotulo: 'Concluídas' },
@@ -461,45 +484,49 @@ export default function ViewVisaoGeral({
             ]} /></div>}
           >
             <div className="hidden md:grid grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_5.5rem_6.5rem_5rem] gap-x-4 px-2 pb-1.5 text-[11px] text-slate-400 border-b border-slate-100">
-              <span>Subpasta</span><span>Progresso</span><span>Atrasadas</span><span>Próximo prazo</span><span>Pessoas</span>
+              <span>{modo === 'pasta' ? 'Subpasta' : 'Pasta'}</span><span>Progresso</span><span>Atrasadas</span><span>Próximo prazo</span><span>Pessoas</span>
             </div>
             <div className="-mx-2 md:mx-0 divide-y divide-slate-50">
               {v.subpastas.map((s) => (
-                <LinhaSubpasta key={s.id} s={s} agora={agora} raizNome={raiz.name} onAbrir={onAbrirPasta} />
+                <LinhaSubpasta key={s.id} s={s} agora={agora} raizNome={raiz?.name ?? ''} onAbrir={onAbrirPasta} />
               ))}
             </div>
           </Cartao>
         )}
 
-        {/* ── Pessoas ── */}
-        <Cartao
-          titulo="Quem está com o quê"
-          dica="Tarefas em aberto por responsável. Tarefa com vários responsáveis conta para cada um; o tempo estimado que falta é dividido entre eles. Clique numa pessoa para o painel mostrar só as tarefas dela."
-          className={temSubpastas ? '' : 'lg:col-span-1'}
-        >
-          <div className="mb-3">
-            <Legenda itens={[
-              { cor: COR_ATRASADAS, rotulo: 'Atrasadas' },
-              { cor: COR_SEMANA, rotulo: 'Próximos 7 dias' },
-              { cor: COR_DEPOIS, rotulo: 'Depois / sem prazo' },
-            ]} />
-          </div>
-          {v.pessoas.length === 0 ? (
-            <Vazio texto="Ninguém com tarefa em aberto." />
-          ) : (
-            <div className="-mx-2 space-y-0.5">
-              {v.pessoas.map((p) => (
-                <LinhaPessoa
-                  key={p.id}
-                  p={p}
-                  max={Math.max(...v.pessoas.map((x) => x.abertas), 1)}
-                  ativo={filtros.assigneeIds.includes(p.id)}
-                  onClick={() => (p.id === SEM_PESSOA ? irAtencao('sem') : alternarPessoa(p.id))}
-                />
-              ))}
+        {/* ── Pessoas (pasta / Que atribuí) ou Minha carga (Minhas) ── */}
+        {modo === 'minhas' ? (
+          <CartaoMinhaCarga tasks={tasks} meuId={meuId} padraoDe={padraoDe} onIrCarga={onIrCarga ?? onIrLista} />
+        ) : (
+          <Cartao
+            titulo="Quem está com o quê"
+            dica="Tarefas em aberto por responsável. Tarefa com vários responsáveis conta para cada um; o tempo estimado que falta é dividido entre eles. Clique numa pessoa para o painel mostrar só as tarefas dela."
+            className={temSubpastas ? '' : 'lg:col-span-1'}
+          >
+            <div className="mb-3">
+              <Legenda itens={[
+                { cor: COR_ATRASADAS, rotulo: 'Atrasadas' },
+                { cor: COR_SEMANA, rotulo: 'Próximos 7 dias' },
+                { cor: COR_DEPOIS, rotulo: 'Depois / sem prazo' },
+              ]} />
             </div>
-          )}
-        </Cartao>
+            {v.pessoas.length === 0 ? (
+              <Vazio texto="Ninguém com tarefa em aberto." />
+            ) : (
+              <div className="-mx-2 space-y-0.5">
+                {v.pessoas.map((p) => (
+                  <LinhaPessoa
+                    key={p.id}
+                    p={p}
+                    max={Math.max(...v.pessoas.map((x) => x.abertas), 1)}
+                    ativo={filtros.assigneeIds.includes(p.id)}
+                    onClick={() => (p.id === SEM_PESSOA ? irAtencao('sem') : alternarPessoa(p.id))}
+                  />
+                ))}
+              </div>
+            )}
+          </Cartao>
+        )}
 
         {/* ── Ritmo ── */}
         <CartaoRitmo v={v} className="lg:col-span-2" />
@@ -527,7 +554,7 @@ export default function ViewVisaoGeral({
                     <span className={`block text-sm truncate ${e.tipo === 'concluida' ? 'text-slate-500' : 'text-slate-700'}`}>{e.tarefa.title}</span>
                     <span className="block text-[11px] text-slate-400 truncate">
                       {e.tipo === 'concluida' ? 'Concluída' : 'Criada'}
-                      {e.tarefa.list_id !== raiz.id && e.tarefa.list_name ? ` · ${e.tarefa.list_name}` : ''}
+                      {e.tarefa.list_id !== raizId && e.tarefa.list_name ? ` · ${e.tarefa.list_name}` : ''}
                       {' · '}{haQuanto(e.quando, agora)}
                     </span>
                   </span>
@@ -537,6 +564,20 @@ export default function ViewVisaoGeral({
           )}
         </Cartao>
       </div>
+    </div>
+  );
+}
+
+function LegendaStatus({ fatias }: { fatias: VisaoGeral['status'] }) {
+  if (!fatias.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+      {fatias.map((s) => (
+        <span key={s.chave} className="flex items-center gap-1.5 whitespace-nowrap">
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.cor }} />
+          {s.nome} <span className="text-slate-700 font-medium tabular-nums">{s.qtd}</span>
+        </span>
+      ))}
     </div>
   );
 }
@@ -601,7 +642,7 @@ function CartaoPrazos({ v, agora, lists, raizId, onOpenTask, onAtrasadas, refEl 
   v: VisaoGeral;
   agora: Date;
   lists: TaskList[];
-  raizId: string;
+  raizId: string | null;
   onOpenTask: (id: string) => void;
   onAtrasadas: () => void;
   refEl: RefObject<HTMLElement | null>;
@@ -701,9 +742,16 @@ function LinhaSubpasta({ s, agora, raizNome, onAbrir }: {
     ? <span className="text-xs text-slate-500 truncate">{rotuloDia(s.proximoPrazo, agora)}</span>
     : <span className="text-xs text-slate-300">—</span>;
   const pessoas = <AvataresResponsaveis pessoas={s.pessoas} tamanho={5} comNome={false} max={3} />;
-  const titulo = s.direta ? `Tarefas soltas direto em ${raizNome}` : `Abrir ${s.nome}`;
+  const titulo = !s.abrivel ? 'Pasta de outra pessoa: aqui aparecem só as tarefas que estão com você'
+    : s.direta ? `Tarefas soltas direto em ${raizNome}` : `Abrir ${s.nome}`;
   return (
-    <button type="button" onClick={() => onAbrir(s.id)} title={titulo} className="w-full text-left rounded-lg hover:bg-slate-50 active:bg-slate-100">
+    <button
+      type="button"
+      onClick={() => onAbrir(s.id)}
+      disabled={!s.abrivel}
+      title={titulo}
+      className="w-full text-left rounded-lg hover:bg-slate-50 active:bg-slate-100 disabled:cursor-default disabled:hover:bg-transparent disabled:active:bg-transparent"
+    >
       {/* celular: nome + fração, barra, detalhes */}
       <span className="md:hidden block px-2 py-2.5 space-y-1.5">
         <span className="flex items-center gap-2">{nome}<span className="ml-auto">{fracao}</span></span>
