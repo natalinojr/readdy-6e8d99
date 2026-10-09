@@ -8,7 +8,7 @@ import { getPeriodDates, getPeriodoAnterior, labelPeriodoAnterior } from '@/lib/
 import { useSalesReport } from '@/hooks/useSalesReport';
 import HeatmapSemanaHora from './HeatmapSemanaHora';
 import {
-  fetchPedidosIfood, fetchOperacaoIfood, fetchCardapioIfood, fetchEntregasSobDemandaErpos, resumir, mediana, motivoCurto, culpaCancelamento,
+  fetchPedidosIfood, fetchPedidosAoVivo, fetchOperacaoIfood, fetchCardapioIfood, fetchEntregasSobDemandaErpos, resumir, mediana, motivoCurto, culpaCancelamento,
   type PedidoIfood, type OperacaoPedido, type MenuLinha, type Logistica, type EntregaErpos,
 } from '@/lib/ifoodDashboard';
 
@@ -31,7 +31,17 @@ const LOGISTICA: Record<Logistica, { label: string; cor: string; dica: string }>
   sob_demanda: { label: 'Sob demanda', cor: '#8b5cf6', dica: 'loja chamou entregador iFood avulso' },
 };
 
-type Dados = { pedidos: PedidoIfood[]; daApi: number; error: string | null };
+type Dados = { pedidos: PedidoIfood[]; daApi: number; aoVivo: number; error: string | null };
+
+// Conciliação + API de Vendas e, por último, os pedidos que ainda estão em andamento (módulo Pedidos do iFood):
+// a API de Vendas só traz o pedido depois que ele termina, e sem isso "Hoje" ficava vazio com pedido na cozinha.
+async function carregarPedidos(tenantId: string, from: string, to: string): Promise<Dados> {
+  const d = await fetchPedidosIfood(tenantId, from, to);
+  if (d.error) return { ...d, aoVivo: 0 };
+  const vivos = await fetchPedidosAoVivo(tenantId, from, to, new Set(d.pedidos.map((p) => p.id))).catch(() => [] as PedidoIfood[]);
+  const pedidos = [...d.pedidos, ...vivos].sort((a, b) => a.at.getTime() - b.at.getTime());
+  return { pedidos, daApi: d.daApi, aoVivo: vivos.length, error: null };
+}
 
 function variacao(atual: number, ant: number): number | null {
   return ant > 0 ? ((atual - ant) / ant) * 100 : null;
@@ -112,8 +122,8 @@ export default function IfoodTab({ periodo }: Props) {
     setAtual(null);
     const ant = getPeriodDates(periodoAnt);
     let sincronizado = false; // a leitura pós-API é a mais nova: a primeira não pode sobrescrever
-    fetchPedidosIfood(tenantId, from, to).then((d) => { if (vivo && !sincronizado) setAtual(d); });
-    fetchPedidosIfood(tenantId, ant.from, ant.to).then((d) => { if (vivo) setAnterior(d); });
+    carregarPedidos(tenantId, from, to).then((d) => { if (vivo && !sincronizado) setAtual(d); });
+    carregarPedidos(tenantId, ant.from, ant.to).then((d) => { if (vivo) setAnterior(d); });
     fetchOperacaoIfood(tenantId, from, to).then((d) => { if (vivo) setOperacao(d); });
     fetchCardapioIfood(tenantId, from.slice(0, 10), to.slice(0, 10)).then((d) => { if (vivo) setCardapio(d); });
     fetchEntregasSobDemandaErpos(tenantId, from, to).then((d) => { if (vivo) setEntregasErpos(d); });
@@ -125,7 +135,7 @@ export default function IfoodTab({ periodo }: Props) {
         .then(() => {
           if (!vivo) return;
           fetchOperacaoIfood(tenantId, from, to).then((d) => { if (vivo) setOperacao(d); });
-          return fetchPedidosIfood(tenantId, from, to);
+          return carregarPedidos(tenantId, from, to);
         })
         .then((d) => { if (vivo && d) { sincronizado = true; setAtual(d); } });
     }
@@ -416,7 +426,7 @@ export default function IfoodTab({ periodo }: Props) {
           </div>
           <p className="text-sm font-semibold text-zinc-500">{atual.error ? `Erro ao carregar: ${atual.error}` : 'Nenhum pedido do iFood no período'}</p>
           <p className="text-xs text-zinc-400 mt-1 max-w-md">
-            Os dados vêm do relatório de conciliação do iFood (Financeiro › iFood) e, para os pedidos ainda não importados, da API de Vendas do iFood.
+            Os dados vêm do relatório de conciliação do iFood (Financeiro › iFood) e, para os pedidos ainda não importados, da API de Vendas e dos pedidos recebidos do iFood.
             {ultimaFmt ? ` Último pedido importado: ${ultimaFmt}.` : ' Nenhum relatório importado ainda.'}
             {diasPeriodo <= 1 ? ' Experimente o filtro de 30 dias.' : ''}
           </p>
@@ -437,6 +447,7 @@ export default function IfoodTab({ periodo }: Props) {
             Pedidos pela data do pedido, divisão igual ao Portal do Parceiro.
             {ultimaFmt ? <> Conciliação até <b>{ultimaFmt}</b>.</> : null}
             {atual.daApi > 0 ? <> <b>{atual.daApi} pedido{atual.daApi === 1 ? '' : 's'}</b> ainda sem conciliação {atual.daApi === 1 ? 'vem' : 'vêm'} da API do iFood (provisório até importar o relatório).</> : null}
+            {atual.aoVivo > 0 ? <> <b>{atual.aoVivo} pedido{atual.aoVivo === 1 ? '' : 's'} em andamento</b> (ou que o iFood ainda não fechou) {atual.aoVivo === 1 ? 'entra' : 'entram'} pelo valor do pedido, ainda sem comissão e taxas.</> : null}
             {' '}Mensalidade fica de fora (não é de pedido).
           </p>
         </div>

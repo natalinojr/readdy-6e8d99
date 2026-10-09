@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('@/lib/supabase', () => ({ supabase: {} }));
 
-import { montarPedidos, montarPedidosApi, resumir, culpaCancelamento, motivoCurto, montarOperacao, mediana, type EntryRow, type SaleFinRow } from '@/lib/ifoodDashboard';
+import { montarPedidos, montarPedidosApi, montarPedidosAoVivo, resumir, culpaCancelamento, motivoCurto, montarOperacao, mediana, type EntryRow, type SaleFinRow, type PedidoVivoRow } from '@/lib/ifoodDashboard';
 
 const base = { import_id: 'imp1', impacto_repasse: true, metodo_pagamento: null, motivo: null };
 const linha = (order: string, tipo: string, desc: string, valor: number, extra: Partial<EntryRow> = {}): EntryRow => ({
@@ -179,5 +179,51 @@ describe('complemento pela API de Vendas', () => {
     const [p] = montarPedidosApi([{ ...venda, sale_id: 'C2', current_status: 'CANCELLED', billing_entries: [], benefits: null, events: [] }]);
     expect(p.cancelado).toBe(true);
     expect(p.liquido).toBe(0);
+  });
+});
+
+// Pedido real (Vila Leste, 09/10/2026) ainda na cozinha: a API de Vendas não tem, o módulo Pedidos tem.
+describe('pedidos em andamento (módulo Pedidos)', () => {
+  const pedido: PedidoVivoRow = {
+    ifood_order_id: 'V1', merchant_id: 'lojaX', status: 'preparing', delivered_by: 'MERCHANT', ordered_at: '2026-10-09T22:34:45Z',
+    total: { subTotal: 227.96, deliveryFee: 6 },
+    benefits: [{ target: 'ITEM', sponsorshipValues: [{ name: 'MERCHANT', value: 4.07 }, { name: 'IFOOD', value: 0 }] }],
+    payments: { methods: [{ method: 'CREDIT' }] },
+  };
+
+  it('entrega da loja: vendas = itens + entrega, promoção da loja descontada, sem taxas', () => {
+    const [p] = montarPedidosAoVivo([pedido]);
+    expect(p.vendas).toBeCloseTo(233.96);
+    expect(p.promoLoja).toBeCloseTo(4.07);
+    expect(p.liquido).toBeCloseTo(233.96 - 4.07);
+    expect(p.comissao).toBe(0);
+    expect(p.semTaxas).toBe(true);
+    expect(p.loja).toBe('lojaX');
+    expect(p.logistica).toBe('propria');
+    expect(p.pagamento).toBe('Crédito');
+    expect(p.entregaCliente).toBe(6);
+    expect(p.dia).toBe('2026-10-09');
+    expect(p.hora).toBe(19);
+    expect(resumir([p])).toMatchObject({ pedidos: 1, cancelados: 0 });
+  });
+
+  it('entregador do iFood: entrega fora das vendas; promoção do iFood e entrega grátis da loja separadas', () => {
+    const [p] = montarPedidosAoVivo([{
+      ...pedido, delivered_by: 'IFOOD', total: { subTotal: 45.79, deliveryFee: 6.99 },
+      benefits: [
+        { target: 'ITEM', sponsorshipValues: [{ name: 'IFOOD', value: 5.37 }, { name: 'MERCHANT', value: 4.99 }] },
+        { target: 'DELIVERY_FEE', sponsorshipValues: [{ name: 'MERCHANT', value: 6.99 }] },
+      ],
+    }]);
+    expect(p.vendas).toBeCloseTo(45.79); // igual à conciliação do mesmo pedido (teste da API acima)
+    expect(p.promoLoja).toBeCloseTo(11.98);
+    expect(p.promoLojaEntrega).toBeCloseTo(6.99);
+    expect(p.promoIfood).toBeCloseTo(5.37);
+    expect(p.logistica).toBe('ifood');
+  });
+
+  it('cancelado ou sem valor fica de fora', () => {
+    expect(montarPedidosAoVivo([{ ...pedido, status: 'cancelled' }])).toHaveLength(0);
+    expect(montarPedidosAoVivo([{ ...pedido, total: { subTotal: 0, deliveryFee: 0 } }])).toHaveLength(0);
   });
 });

@@ -299,6 +299,93 @@ export async function fetchComplementoApi(tenantId: string, fromISO: string, toI
   return montarPedidosApi(novas.filter((s) => !naConciliacao.has(s.sale_id)));
 }
 
+// ── Pedidos em andamento pelo módulo Pedidos do iFood (2026-10-09) ───────────
+// A API de Vendas só devolve o pedido depois que ele termina: no começo do turno a aba iFood ficava vazia
+// com pedido na cozinha. O módulo Pedidos (ifood_orders) tem o pedido na hora. Mesma conta do "Vendas do dia"
+// (ifoodVendas): vendas = itens (subTotal) + entrega só quando a loja entrega; comissão e taxas ainda não
+// existem (semTaxas). Sai daqui assim que a API de Vendas ou a conciliação trouxer o pedido (casam pelo id).
+
+export interface PedidoVivoRow {
+  ifood_order_id: string;
+  merchant_id: string;
+  status: string;
+  delivered_by: string | null;
+  ordered_at: string | null;
+  total: { subTotal?: number; deliveryFee?: number } | null;
+  benefits: Array<{ target?: string; sponsorshipValues?: Array<{ name?: string; value?: number }> }> | null;
+  payments: { methods?: Array<{ method?: string }> } | null;
+}
+
+/** Pedidos do módulo Pedidos no formato do dashboard (linhas iguais às da conciliação, sem as taxas). */
+export function montarPedidosAoVivo(orders: PedidoVivoRow[]): PedidoIfood[] {
+  const rows: EntryRow[] = [];
+  const extra = new Map<string, { vendas: number; entrega: number; pagamento: string | null }>();
+  for (const o of orders) {
+    if (!o.ordered_at || o.status === 'cancelled') continue;
+    const entrega = Number(o.total?.deliveryFee) || 0;
+    const vendas = r2((Number(o.total?.subTotal) || 0) + (o.delivered_by === 'MERCHANT' ? entrega : 0));
+    if (vendas < 0.005) continue;
+    let lojaItens = 0, lojaEntrega = 0, ifood = 0;
+    for (const b of Array.isArray(o.benefits) ? o.benefits : []) {
+      for (const sp of b.sponsorshipValues ?? []) {
+        const v = Number(sp.value) || 0;
+        if (!/^(MERCHANT|CHAIN)$/i.test(String(sp.name))) ifood += v;
+        else if (String(b.target ?? '') === 'DELIVERY_FEE') lojaEntrega += v;
+        else lojaItens += v;
+      }
+    }
+    const metodo = String(o.payments?.methods?.[0]?.method ?? '').toUpperCase();
+    const pagamento = PAGAMENTO_API[metodo] ?? null;
+    const base = { import_id: o.merchant_id, order_id: o.ifood_order_id, order_created_at: o.ordered_at, impacto_repasse: true, metodo_pagamento: null, motivo: null };
+    // Entrada + subsídios = vendas (o desconto volta como subsídio, igual ao Portal).
+    rows.push({ ...base, tipo_lancamento: 'Entrada Financeira', descricao: 'Entrada Financeira', valor: r2(vendas - lojaItens - lojaEntrega - ifood), metodo_pagamento: pagamento });
+    if (lojaItens >= 0.005) rows.push({ ...base, tipo_lancamento: 'Subsídio', descricao: 'Promoção custeada pela loja', valor: -r2(lojaItens), impacto_repasse: false });
+    if (lojaEntrega >= 0.005) rows.push({ ...base, tipo_lancamento: 'Subsídio', descricao: 'Promoção custeada pela loja no delivery', valor: -r2(lojaEntrega), impacto_repasse: false });
+    if (ifood >= 0.005) rows.push({ ...base, tipo_lancamento: 'Subsídio', descricao: 'Promoção custeada pelo iFood', valor: r2(ifood) });
+    // Entregador do iFood: marca a logística (a retenção da taxa de entrega já está fora das vendas).
+    if (o.delivered_by === 'IFOOD') rows.push({ ...base, tipo_lancamento: 'Retenção', descricao: 'Taxa entrega iFood', valor: 0 });
+    extra.set(o.ifood_order_id, { vendas, entrega, pagamento });
+  }
+  const pedidos = montarPedidos(rows, Object.fromEntries(orders.map((o) => [o.merchant_id, o.merchant_id])));
+  for (const p of pedidos) {
+    const x = extra.get(p.id);
+    if (!x) continue;
+    p.bruto = x.vendas;
+    p.entregaCliente = x.entrega;
+    if (x.pagamento) p.pagamento = x.pagamento;
+    p.semTaxas = true;
+  }
+  return pedidos;
+}
+
+/** Pedidos do módulo Pedidos que nem a conciliação nem a API de Vendas trouxeram ainda (`jaTem` = ids já somados). */
+export async function fetchPedidosAoVivo(tenantId: string, fromISO: string, toISO: string, jaTem: Set<string>): Promise<PedidoIfood[]> {
+  const res = await fetchAllRows<PedidoVivoRow>((from, to) => supabase.from('ifood_orders')
+    .select('ifood_order_id, merchant_id, status, delivered_by, ordered_at, total, benefits, payments')
+    .eq('tenant_id', tenantId)
+    .not('is_test', 'is', true)
+    .neq('status', 'cancelled')
+    .gte('ordered_at', fromISO)
+    .lte('ordered_at', toISO)
+    .order('ordered_at', { ascending: true })
+    .order('id', { ascending: true })
+    .range(from, to));
+  if (res.error) return [];
+  const novos = (res.rows ?? []).filter((o) => o.ifood_order_id && !jaTem.has(o.ifood_order_id));
+  // Pode já estar na conciliação ou na API com data um pouco diferente (fora deste período): confere pelo id.
+  const ja = new Set<string>();
+  for (let i = 0; i < novos.length; i += 150) {
+    const ids = novos.slice(i, i + 150).map((o) => o.ifood_order_id);
+    const [ent, api] = await Promise.all([
+      supabase.from('fin_ifood_entries').select('order_id').eq('tenant_id', tenantId).in('order_id', ids),
+      supabase.from('fin_ifood_sales').select('sale_id').eq('tenant_id', tenantId).in('sale_id', ids),
+    ]);
+    for (const d of (ent.data ?? []) as { order_id: string }[]) ja.add(d.order_id);
+    for (const d of (api.data ?? []) as { sale_id: string }[]) ja.add(d.sale_id);
+  }
+  return montarPedidosAoVivo(novos.filter((o) => !ja.has(o.ifood_order_id)));
+}
+
 export async function fetchPedidosIfood(tenantId: string, fromISO: string, toISO: string) {
   const [ent, imp] = await Promise.all([
     fetchAllRows<EntryRow>((from, to) => supabase
