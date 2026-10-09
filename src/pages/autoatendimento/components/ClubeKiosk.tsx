@@ -9,6 +9,7 @@
 // só se mostra e se pede. Gastar pontos pede os 4 últimos números do celular.
 import { useEffect, useRef, useState } from 'react';
 import QRCodeImport from 'react-qr-code';
+import { useAppClube } from '@/components/fidelidade/ConviteAppClube';
 import RoletaSvg, { rotacaoParaFatia, type FatiaRoleta } from '@/components/fidelidade/RoletaSvg';
 import SeletorDataNascimento from '@/components/base/SeletorDataNascimento';
 // react-qr-code exporta como default em alguns bundles e como named em outros.
@@ -210,8 +211,10 @@ function RoletaModal({ fatias, giros, girar, onFechar }: {
 }
 
 // ── Painel: o que ele pode usar agora ───────────────────────────────────────
-export function ClubePainelKiosk({ status, resumo, reservas, api, onContinuar, textoContinuar = 'Continuar meu pedido', onRecarregar }: {
+export function ClubePainelKiosk({ status, resumo, reservas, api, onContinuar, textoContinuar = 'Continuar meu pedido', onRecarregar, tenantId }: {
   status: ClubeStatus;
+  /** Loja (para saber se o app do clube está ligado e oferecer o download pelo QR). */
+  tenantId?: string | null;
   resumo: ClubeResumo;
   reservas: ClubeReserva[];
   api: ClubeApi;
@@ -222,6 +225,7 @@ export function ClubePainelKiosk({ status, resumo, reservas, api, onContinuar, t
   const [confirmar, setConfirmar] = useState<{ titulo: string; alvo: { recompensa_id?: string; beneficio_id?: string } } | null>(null);
   const [pedindoQr, setPedindoQr] = useState(false);
   const [qrUrl, setQrUrl] = useState<string | null>(null);
+  const appClube = useAppClube(tenantId);
   const [roleta, setRoleta] = useState(false);
   const [aviso, setAviso] = useState('');
 
@@ -327,8 +331,8 @@ export function ClubePainelKiosk({ status, resumo, reservas, api, onContinuar, t
         >
           <span className="text-3xl">📱</span>
           <span className="flex-1">
-            <b className="block text-white text-lg">Ver meu clube no celular</b>
-            <span className="text-zinc-400 text-sm">Pontos, prêmios e extrato — leia o QR com a câmera</span>
+            <b className="block text-white text-lg">{appClube ? `Baixe o app do ${appClube.nome_curto || appClube.nome}` : 'Ver meu clube no celular'}</b>
+            <span className="text-zinc-400 text-sm">{appClube ? 'Leia o QR: o app abre já com a sua conta e mostra como instalar' : 'Pontos, prêmios e extrato — leia o QR com a câmera'}</span>
           </span>
           <i className="ri-qr-code-line text-3xl text-amber-400" />
         </button>
@@ -340,7 +344,7 @@ export function ClubePainelKiosk({ status, resumo, reservas, api, onContinuar, t
 
       {pedindoQr && (
         <ConfirmarCelular
-          titulo="Ver no celular"
+          titulo={appClube ? 'Baixar o app' : 'Ver no celular'}
           onCancelar={() => setPedindoQr(false)}
           onConfirmar={async (final) => {
             const r = await api.link(final);
@@ -355,7 +359,9 @@ export function ClubePainelKiosk({ status, resumo, reservas, api, onContinuar, t
         <div className="fixed inset-0 z-[160] flex items-center justify-center bg-black/85 p-6" onClick={() => setQrUrl(null)}>
           <div className="bg-white rounded-3xl p-6 w-full max-w-sm text-center" onClick={(e) => e.stopPropagation()}>
             <p className="text-zinc-900 text-2xl font-black">Aponte a câmera do celular</p>
-            <p className="text-zinc-500 text-sm mb-4">Abre o seu clube já logado. O QR vale por 10 minutos e uma leitura.</p>
+            <p className="text-zinc-500 text-sm mb-4">{appClube
+              ? 'Abre o app do clube já com a sua conta. Depois é só tocar em Instalar. O QR vale por 10 minutos e uma leitura.'
+              : 'Abre o seu clube já logado. O QR vale por 10 minutos e uma leitura.'}</p>
             <div className="bg-white p-3 inline-block"><QRCode value={qrUrl} size={240} /></div>
             <button onClick={() => setQrUrl(null)} className="w-full mt-4 py-4 bg-zinc-900 text-white font-bold rounded-2xl cursor-pointer">Pronto</button>
           </div>
@@ -376,7 +382,8 @@ export function ClubePainelKiosk({ status, resumo, reservas, api, onContinuar, t
 }
 
 // ── Entrada: CPF → painel ou cadastro ───────────────────────────────────────
-export default function ClubeEntradaKiosk({ status, resumo, reservas, api, onContinuar, onPular }: {
+export default function ClubeEntradaKiosk({ status, resumo, reservas, api, onContinuar, onPular, tenantId }: {
+  tenantId?: string | null;
   status: ClubeStatus;
   resumo: ClubeResumo | null;
   reservas: ClubeReserva[];
@@ -434,7 +441,7 @@ export default function ClubeEntradaKiosk({ status, resumo, reservas, api, onCon
             <p className="text-amber-300 font-semibold">Você ganhou {pts(status.bonus_cadastro)} pontos de boas-vindas.</p>
           </div>
         )}
-        <ClubePainelKiosk status={status} resumo={resumo} reservas={reservas} api={api} onContinuar={onContinuar} />
+        <ClubePainelKiosk status={status} resumo={resumo} reservas={reservas} api={api} onContinuar={onContinuar} tenantId={tenantId} />
       </div>
     );
   }

@@ -7,6 +7,7 @@ import {
   type ConfigJogos, type CredencialJogo, type LinhaRanking,
 } from '@/lib/jogos/api';
 import { clubeChamar, clubeSalvarToken, clubeTokenSalvo } from '@/lib/clubePublico';
+import { clubeApp, nomeDoAparelho } from '@/lib/clubeApp';
 
 // "Jogue enquanto espera": cartão que abre os joguinhos em tela cheia na mesa QR e no
 // acompanhamento do delivery. Regras do dono (2026-09-27): os jogos são SÓ DO CLUBE de
@@ -196,16 +197,18 @@ export default function JogosEspera(props: Props) {
     setTimeout(function () { if (partidaRef.current === minha) setFim(function (f) { return f || base; }); }, 450);
   }
 
-  // Entrar no clube aqui mesmo: CPF + 4 últimos do celular (mesma trava do clube, canal web)
+  // Entrar no clube aqui mesmo: CPF + celular completo (mesma entrada do app do clube, com a
+  // trava do canal web e o aviso de "aparelho novo" nos outros aparelhos do cliente).
   async function entrarNoClube() {
     const cpf = soCpf(formCpf);
-    const fin = soDigitos(formFinal).slice(0, 4);
+    const cel = soDigitos(formFinal).slice(0, 11);
     if (cpf.length !== 11) { setErroClube('Digite o CPF completo.'); return; }
-    if (fin.length !== 4) { setErroClube('Digite os 4 últimos números do seu celular.'); return; }
+    if (cel.length < 10) { setErroClube('Digite o celular com DDD.'); return; }
     setEntrando(true);
     setErroClube(null);
-    const r = await clubeChamar<{ token?: string }>({ action: 'entrar', tenant_id: props.tenantId, cpf, celular_final: fin });
+    const r = await clubeApp<{ token?: string; precisa_cadastro?: boolean }>({ action: 'entrar', tenant_id: props.tenantId, cpf, celular: cel, aparelho: nomeDoAparelho() });
     setEntrando(false);
+    if (r.precisa_cadastro) { setErroClube('Este CPF ainda não é do clube. Entre pela página do clube para participar.'); return; }
     if (r.error || !r.token) { setErroClube(r.message || 'Não foi possível entrar.'); return; }
     clubeSalvarToken(props.tenantId!, r.token);
     setClubeToken(r.token);
@@ -410,12 +413,12 @@ export default function JogosEspera(props: Props) {
                 <div className="max-w-md mx-auto bg-white rounded-3xl p-5">
                   <p className="text-lg font-black text-zinc-800">👑 Jogos do Clube</p>
                   <p className="text-sm text-zinc-500 mt-1">
-                    Os jogos são para quem é do clube{rankingAtivo ? ' — e os 3 melhores da semana ganham prêmio' : ''}. Entre com seu CPF e os 4 últimos números do celular.
+                    Os jogos são para quem é do clube{rankingAtivo ? ' — e os 3 melhores da semana ganham prêmio' : ''}. Entre com seu CPF e o seu celular.
                   </p>
                   <label className="block text-xs font-bold text-zinc-600 mt-4 mb-1">CPF</label>
                   <input value={formCpf} onChange={function (e) { setFormCpf(mascaraCpf(e.target.value)); }} inputMode="numeric" className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 text-sm" placeholder="000.000.000-00" />
-                  <label className="block text-xs font-bold text-zinc-600 mt-3 mb-1">4 últimos números do celular</label>
-                  <input value={formFinal} onChange={function (e) { setFormFinal(soDigitos(e.target.value).slice(0, 4)); }} inputMode="numeric" className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 text-sm tracking-[0.3em]" placeholder="0000" />
+                  <label className="block text-xs font-bold text-zinc-600 mt-3 mb-1">Celular com DDD</label>
+                  <input value={formFinal} onChange={function (e) { setFormFinal(soDigitos(e.target.value).slice(0, 11)); }} inputMode="tel" autoComplete="tel-national" className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 text-sm" placeholder="(41) 99999-9999" />
                   {erroClube ? <p className="text-xs text-red-500 mt-2">{erroClube}</p> : null}
                   <button type="button" disabled={entrando} onClick={entrarNoClube} className="mt-4 w-full py-3 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white font-black text-sm cursor-pointer disabled:opacity-60">
                     {entrando ? 'Entrando...' : 'Entrar e jogar'}

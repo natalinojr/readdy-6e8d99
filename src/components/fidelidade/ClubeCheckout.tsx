@@ -1,6 +1,7 @@
 // Clube de fidelidade dentro de um checkout público (delivery próprio e pedido pela
-// mesa/QR). O cliente entra com CPF + 4 últimos números do celular (ou já está com
-// o cartão do clube no aparelho), vê os pontos e reserva prêmios para ESTE pedido.
+// mesa/QR). O cliente entra com CPF + celular completo (ou já está com o cartão do
+// clube no aparelho), vê os pontos e reserva prêmios para ESTE pedido. Com a digital
+// ligada no app do clube, usar prêmio pede a digital (a reserva é pelo clube-app).
 //
 // O desconto mostrado aqui é só vitrine: quem calcula de verdade é o servidor
 // (delivery-write / mesa-write), com os preços dele. Este componente só avisa o pai
@@ -8,6 +9,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { cpfValido, descontoDasReservas, formatarCpf, rotuloPremio } from '@/lib/fidelidade';
 import { clubeChamar, clubeSalvarToken, clubeTokenSalvo, type ClubeDados, type ClubeReserva, type ClubeResumo } from '@/lib/clubePublico';
+import { assinarComDigital, clubeApp, desbloquearComDigital, nomeDoAparelho } from '@/lib/clubeApp';
+import { ConviteAppLinha } from './ConviteAppClube';
 
 export interface ClubeSelecao { token: string | null; holdIds: string[]; desconto: number; nomes: string[] }
 
@@ -15,10 +18,21 @@ export interface ClubeSelecao { token: string | null; holdIds: string[]; descont
 // (o componente desmonta) não pode "esquecer" um prêmio que está reservado no banco.
 const chaveRes = (tenantId: string) => `clube_reservas:${tenantId}`;
 function lerReservas(tenantId: string, token: string): ClubeReserva[] {
+  let lista: ClubeReserva[] = [];
   try {
     const v = JSON.parse(sessionStorage.getItem(chaveRes(tenantId)) || 'null');
-    return v && v.token === token && Array.isArray(v.reservas) ? v.reservas : [];
-  } catch { return []; }
+    lista = v && v.token === token && Array.isArray(v.reservas) ? v.reservas : [];
+  } catch { /* sem storage */ }
+  // Prêmio reservado no app do clube ("Pedir no delivery com este prêmio"): entra uma vez.
+  try {
+    const chaveApp = `clube_reservas_app:${tenantId}`;
+    const a = JSON.parse(localStorage.getItem(chaveApp) || 'null');
+    localStorage.removeItem(chaveApp);
+    if (a && a.token === token && Array.isArray(a.reservas) && Date.now() - Number(a.em) < 2 * 3_600_000) {
+      for (const r of a.reservas as ClubeReserva[]) if (!lista.some((x) => x.hold_id === r.hold_id)) lista = [...lista, r];
+    }
+  } catch { /* sem storage */ }
+  return lista;
 }
 function gravarReservas(tenantId: string, token: string | null, reservas: ClubeReserva[]) {
   try {
@@ -52,7 +66,8 @@ export default function ClubeCheckout({ tenantId, itens, subtotal, onChange, com
   const [reservas, setReservas] = useState<ClubeReserva[]>([]);
   const [aberto, setAberto] = useState(false);
   const [cpf, setCpf] = useState('');
-  const [final, setFinal] = useState('');
+  const [celular, setCelular] = useState('');
+  const [travado, setTravado] = useState(false);
   const [erro, setErro] = useState('');
   const [ocupado, setOcupado] = useState(false);
   const avisou = useRef('');
@@ -72,6 +87,8 @@ export default function ClubeCheckout({ tenantId, itens, subtotal, onChange, com
       if (!salvo) return;
       const eu = await clubeChamar<ClubeDados>({ action: 'eu', token: salvo });
       if (!vivo) return;
+      // Digital para abrir ligada no app: pede a digital aqui também (não apaga o cartão).
+      if (eu.error === 'bloqueado') { setToken(salvo); setTravado(true); return; }
       if (eu.error) { clubeSalvarToken(tenantId, null); return; }
       setToken(salvo);
       setResumo(eu.resumo);
@@ -102,21 +119,47 @@ export default function ClubeCheckout({ tenantId, itens, subtotal, onChange, com
     setErro('');
     const d = cpf.replace(/\D/g, '');
     if (!cpfValido(d)) { setErro('CPF inválido.'); return; }
-    if (final.length !== 4) { setErro('Digite os 4 últimos números do celular.'); return; }
+    if (celular.length < 10) { setErro('Digite o celular com DDD.'); return; }
     setOcupado(true);
-    const r = await clubeChamar<ClubeDados & { encontrado?: boolean }>({ action: 'entrar', tenant_id: tenantId, cpf: d, celular_final: final });
+    const r = await clubeApp<{ token?: string; precisa_cadastro?: boolean }>({ action: 'entrar', tenant_id: tenantId, cpf: d, celular, aparelho: nomeDoAparelho() });
+    if (r.precisa_cadastro) { setOcupado(false); setErro('CPF não está no clube. Cadastre-se pelo link abaixo.'); return; }
+    if (r.error || !r.token) { setOcupado(false); setErro(r.message || 'Não consegui entrar.'); return; }
+    const eu = await clubeChamar<ClubeDados>({ action: 'eu', token: r.token });
     setOcupado(false);
-    if (r.error) { setErro(r.message || 'Não consegui entrar.'); return; }
-    if (!r.encontrado || !r.token) { setErro('CPF não está no clube. Cadastre-se pelo link abaixo.'); return; }
+    if (eu.error) { setErro(eu.message || 'Não consegui entrar.'); return; }
     clubeSalvarToken(tenantId, r.token);
     setToken(r.token);
-    setResumo(r.resumo);
+    setResumo(eu.resumo);
+  };
+
+  const destravar = async () => {
+    if (!token) return;
+    setErro(''); setOcupado(true);
+    const d = await desbloquearComDigital(token);
+    if (!d.ok) { setOcupado(false); setErro(d.erro ?? 'Não deu para confirmar.'); return; }
+    const eu = await clubeChamar<ClubeDados>({ action: 'eu', token });
+    setOcupado(false);
+    if (eu.error) { setErro(eu.message || 'Não consegui abrir o clube.'); return; }
+    setTravado(false);
+    setResumo(eu.resumo);
+    if (tenantId) setReservas(lerReservas(tenantId, token));
   };
 
   const usar = async (alvo: { recompensa_id?: string; beneficio_id?: string }) => {
     if (!token) return;
     setErro(''); setOcupado(true);
-    const r = await clubeChamar<{ reserva?: ClubeReserva; resumo?: ClubeResumo }>({ action: 'reservar', token, ...alvo });
+    // Pelo clube-app: se a digital estiver ligada para prêmio, ele pede — e aí assinamos.
+    let r = await clubeApp<{ reserva?: ClubeReserva; resumo?: ClubeResumo }>({ action: 'reservar', token, ...alvo });
+    if (r._status === 423) {
+      const d = await desbloquearComDigital(token);
+      if (!d.ok) { setOcupado(false); setErro(d.erro ?? 'Não deu para confirmar.'); return; }
+      r = await clubeApp<{ reserva?: ClubeReserva; resumo?: ClubeResumo }>({ action: 'reservar', token, ...alvo });
+    }
+    if (r.error === 'precisa_digital') {
+      const a = await assinarComDigital(token, 'premio');
+      if (!a.resposta) { setOcupado(false); setErro(a.erro ?? 'Cancelado.'); return; }
+      r = await clubeApp<{ reserva?: ClubeReserva; resumo?: ClubeResumo }>({ action: 'reservar', token, ...alvo, resposta: a.resposta });
+    }
     setOcupado(false);
     if (r.error || !r.reserva) { setErro(r.message || 'Não consegui usar agora.'); return; }
     setReservas((prev) => [...prev, r.reserva!]);
@@ -153,7 +196,7 @@ export default function ClubeCheckout({ tenantId, itens, subtotal, onChange, com
           {resumo ? (
             <><b>{resumo.primeiro_nome}</b> · {resumo.nivel?.nome ?? programaNome} · <b>{pts(resumo.saldo)} pts</b>{desc.total > 0 ? <span className="text-green-700 font-bold"> · −{brl(desc.total)}</span> : usaveis.length > 0 ? <span className="text-amber-700 font-bold"> · {usaveis.length} prêmio{usaveis.length > 1 ? 's' : ''} para usar</span> : null}</>
           ) : (
-            <><b>{programaNome}</b>: entre e ganhe pontos neste pedido</>
+            travado ? <><b>{programaNome}</b>: confirme com a digital</> : <><b>{programaNome}</b>: entre e ganhe pontos neste pedido</>
           )}
         </span>
         <i className={`ri-arrow-${aberto ? 'up' : 'down'}-s-line text-zinc-500`} />
@@ -161,11 +204,15 @@ export default function ClubeCheckout({ tenantId, itens, subtotal, onChange, com
 
       {aberto && (
         <div className="px-3 pb-3 space-y-2">
-          {!resumo ? (
+          {travado ? (
+            <button type="button" onClick={() => { void destravar(); }} disabled={ocupado} className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-black rounded-lg cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5">
+              <i className="ri-fingerprint-line text-base" />{ocupado ? 'Aguarde…' : 'Confirmar com a digital para ver seus pontos'}
+            </button>
+          ) : !resumo ? (
             <>
               <div className="flex gap-2">
                 <input value={formatarCpf(cpf)} onChange={(e) => setCpf(e.target.value.replace(/\D/g, '').slice(0, 11))} inputMode="numeric" placeholder="CPF" className="flex-1 min-w-0 px-3 py-2 text-xs border border-zinc-200 rounded-lg bg-white focus:outline-none focus:border-amber-400" />
-                <input value={final} onChange={(e) => setFinal(e.target.value.replace(/\D/g, '').slice(0, 4))} inputMode="numeric" placeholder="4 últ. cel." className="w-24 px-2 py-2 text-xs border border-zinc-200 rounded-lg bg-white text-center focus:outline-none focus:border-amber-400" />
+                <input value={celular} onChange={(e) => setCelular(e.target.value.replace(/\D/g, '').slice(0, 11))} inputMode="tel" autoComplete="tel-national" placeholder="Celular com DDD" className="w-36 min-w-0 px-2 py-2 text-xs border border-zinc-200 rounded-lg bg-white focus:outline-none focus:border-amber-400" />
               </div>
               <button type="button" onClick={() => { void entrar(); }} disabled={ocupado} className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-black rounded-lg cursor-pointer disabled:opacity-50">
                 {ocupado ? 'Entrando…' : 'Entrar no clube'}
@@ -200,6 +247,7 @@ export default function ClubeCheckout({ tenantId, itens, subtotal, onChange, com
             </>
           )}
           {erro && <p className="text-[11px] text-red-600 font-semibold">{erro}</p>}
+          <ConviteAppLinha tenantId={tenantId} />
         </div>
       )}
     </div>

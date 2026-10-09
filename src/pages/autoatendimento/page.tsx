@@ -1507,6 +1507,7 @@ function AutoatendimentoPageInner() {
       <div className="flex-1 overflow-hidden">
         {etapa === 'clube' && clubeStatus && (
           <ClubeEntradaKiosk
+            tenantId={tenantIdFiscal}
             status={clubeStatus}
             resumo={clube}
             reservas={reservas}
@@ -1607,6 +1608,7 @@ function AutoatendimentoPageInner() {
         {painelClube && clube && clubeStatus && (
           <div className="fixed inset-0 z-[140] bg-zinc-950/95 overflow-y-auto p-4 md:p-6">
             <ClubePainelKiosk
+              tenantId={tenantIdFiscal}
               status={clubeStatus}
               resumo={clube}
               reservas={reservas}

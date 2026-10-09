@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { formatCurrency } from '@/lib/formatters';
 import JogosEspera from '@/components/jogos/JogosEspera';
+import { ConviteAppCartao } from '@/components/fidelidade/ConviteAppClube';
 import type { EtapaPedidoQR } from '../useStatusPedidoQR';
 
 interface CartItem {
@@ -186,6 +187,8 @@ export default function ConfirmacaoMesaQR(props: Props) {
               </p>
             </section>
           ) : null}
+
+          {!aguardando ? <ConviteAppCartao tenantId={props.tenantId} motivo="Os pontos deste pedido aparecem no app. Abre em 1 toque e avisa quando ganhar prêmio." /> : null}
 
           {/* Joguinhos enquanto a comida fica pronta (só depois que o pedido foi para a cozinha) */}
           {!aguardando && !pronto ? (

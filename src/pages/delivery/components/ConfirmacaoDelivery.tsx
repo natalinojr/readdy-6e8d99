@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ConviteAppCartao } from '@/components/fidelidade/ConviteAppClube';
 import { formatCurrency } from '@/lib/formatters';
 import AcompanharPedido from './AcompanharPedido';
 import HistoricoPedidos from './HistoricoPedidos';
@@ -112,6 +113,10 @@ export default function ConfirmacaoDelivery(props: Props) {
             </p>
           </div>
         </div>
+
+        {vendoOriginal && !cancelado ? (
+          <div className="mt-3"><ConviteAppCartao tenantId={tenantId} motivo="Os pontos deste pedido aparecem no app. Abre em 1 toque e avisa quando ganhar prêmio." /></div>
+        ) : null}
 
         {vendoOriginal && resumo && resumo.desconto > 0 ? (
           /* Detalhamento com desconto (cupom/clube) */

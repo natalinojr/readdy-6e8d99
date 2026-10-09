@@ -87,6 +87,9 @@ export interface FidelidadeConfig {
     canais: Canais;
   };
   recompensas: Recompensa[];
+  /** Ordem em que o cliente vê as recompensas: 'pontos' = menos pontos primeiro (padrão);
+   *  'manual' = a ordem da lista da aba Recompensas. */
+  recompensas_ordem: 'pontos' | 'manual';
   trilha: {
     ativo: boolean;
     /** Conta as compras dos últimos N dias (0 = desde sempre). */
@@ -100,7 +103,24 @@ export interface FidelidadeConfig {
     ao_subir_nivel: boolean;
     aniversario: boolean;
     giro_validade_dias: number;
+    /** O 1º giro de cada cliente sempre dá um prêmio de verdade (nunca "Não foi dessa vez"). */
+    primeiro_giro_garantido: boolean;
     premios: Premio[];
+  };
+  /** Indique e ganhe: quem indicou ganha quando o indicado entra no clube pelo link e faz a 1ª compra paga. */
+  indicacao: {
+    ativo: boolean;
+    premio_tipo: 'pontos' | 'recompensa';
+    /** Pontos para quem indicou (premio_tipo = 'pontos'). */
+    pontos: number;
+    /** Recompensa para quem indicou (premio_tipo = 'recompensa'). */
+    recompensa_id: string | null;
+    /** Pontos de presente para quem foi indicado, na 1ª compra (0 = nada). */
+    bonus_indicado: number;
+    /** Máximo de indicações premiadas por pessoa no mês (0 = sem limite). */
+    limite_mes: number;
+    /** Valor mínimo da 1ª compra do indicado para contar (0 = qualquer compra paga). */
+    pedido_minimo: number;
   };
 }
 
@@ -130,6 +150,7 @@ export function configPadrao(): FidelidadeConfig {
       { id: 'rw_10reais', nome: 'R$ 10 de desconto', tipo: 'desconto_valor', valor: 10, produto_id: null, custo_pontos: 200, custo_loja: 10, nivel_minimo: null, ativo: true },
       // "Entrega grátis" (frete_gratis) fica fora do padrão: nenhuma tela aplica esse desconto ainda.
     ],
+    recompensas_ordem: 'pontos',
     trilha: {
       ativo: true,
       janela_dias: 365,
@@ -147,6 +168,7 @@ export function configPadrao(): FidelidadeConfig {
       ao_subir_nivel: true,
       aniversario: true,
       giro_validade_dias: 30,
+      primeiro_giro_garantido: false,
       premios: [
         { id: 'pz_nada', nome: 'Não foi dessa vez', tipo: 'nada', valor: 0, recompensa_id: null, peso: 42, custo_loja: 0, limite_dia: 0, cor: '#94a3b8' },
         { id: 'pz_20pts', nome: '+20 pontos', tipo: 'pontos', valor: 20, recompensa_id: null, peso: 30, custo_loja: 0, limite_dia: 0, cor: '#f59e0b' },
@@ -154,6 +176,7 @@ export function configPadrao(): FidelidadeConfig {
         { id: 'pz_10off', nome: '10% na próxima', tipo: 'desconto_percentual', valor: 10, recompensa_id: null, peso: 10, custo_loja: 5, limite_dia: 0, cor: '#3b82f6' },
       ],
     },
+    indicacao: { ativo: false, premio_tipo: 'pontos', pontos: 50, recompensa_id: null, bonus_indicado: 0, limite_mes: 5, pedido_minimo: 20 },
   };
 }
 
@@ -179,6 +202,7 @@ export function normalizarConfig(bruto: unknown): FidelidadeConfig {
   const pt = c.pontos ?? {};
   const tr = c.trilha ?? {};
   const ro = c.roleta ?? {};
+  const ind = c.indicacao ?? {};
 
   const recompensas: Recompensa[] = (Array.isArray(c.recompensas) ? c.recompensas : p.recompensas).slice(0, 50).map((r: any) => {
     const tipo = um(r?.tipo, ['produto', 'produto_valor', 'desconto_valor', 'desconto_percentual', 'frete_gratis'] as const, 'produto');
@@ -239,6 +263,7 @@ export function normalizarConfig(bruto: unknown): FidelidadeConfig {
       },
     },
     recompensas,
+    recompensas_ordem: um(c.recompensas_ordem, ['pontos', 'manual'] as const, 'pontos'),
     trilha: {
       ativo: bool(tr.ativo, p.trilha.ativo),
       janela_dias: Math.round(num(tr.janela_dias, p.trilha.janela_dias, 0, 3650)),
@@ -251,7 +276,17 @@ export function normalizarConfig(bruto: unknown): FidelidadeConfig {
       ao_subir_nivel: bool(ro.ao_subir_nivel, p.roleta.ao_subir_nivel),
       aniversario: bool(ro.aniversario, p.roleta.aniversario),
       giro_validade_dias: Math.round(num(ro.giro_validade_dias, p.roleta.giro_validade_dias, 1, 365)),
+      primeiro_giro_garantido: bool(ro.primeiro_giro_garantido, p.roleta.primeiro_giro_garantido),
       premios,
+    },
+    indicacao: {
+      ativo: bool(ind.ativo, p.indicacao.ativo),
+      premio_tipo: um(ind.premio_tipo, ['pontos', 'recompensa'] as const, p.indicacao.premio_tipo),
+      pontos: Math.round(num(ind.pontos, p.indicacao.pontos, 0, 100_000)),
+      recompensa_id: idOuNull(ind.recompensa_id),
+      bonus_indicado: Math.round(num(ind.bonus_indicado, p.indicacao.bonus_indicado, 0, 100_000)),
+      limite_mes: Math.round(num(ind.limite_mes, p.indicacao.limite_mes, 0, 1000)),
+      pedido_minimo: num(ind.pedido_minimo, p.indicacao.pedido_minimo, 0, 100_000),
     },
   };
 }
@@ -309,7 +344,7 @@ export function chancesRoleta(premios: { id: string; peso: number; custo_loja?: 
 }
 
 /** Parte da tela (aba Fidelidade) a que o aviso se refere. */
-export type SecaoAviso = 'recompensas' | 'trilha' | 'roleta';
+export type SecaoAviso = 'recompensas' | 'trilha' | 'roleta' | 'indicacao';
 export interface AvisoConfig { secao: SecaoAviso; texto: string }
 
 /** Avisos de configuração que não impedem salvar (rascunho), mas quase sempre são
@@ -336,10 +371,15 @@ export function avisosConfigPorSecao(cfg: FidelidadeConfig): AvisoConfig[] {
     if (cfg.roleta.premios.length > 0 && chancesRoleta(cfg.roleta.premios).soma <= 0) add('roleta', 'Roleta ligada com todos os pesos zero: nenhum prêmio pode sair.');
     if (!cfg.roleta.a_cada_compras && !cfg.roleta.pedido_acima_de && !cfg.roleta.ao_subir_nivel && !cfg.roleta.aniversario) add('roleta', 'Roleta ligada, mas nenhuma regra dá giro ao cliente.');
     if (!cfg.roleta.premios.some((p) => p.tipo === 'nada')) add('roleta', 'Sem "Não foi dessa vez", todo giro custa alguma coisa — confira o custo por giro.');
+    if (cfg.roleta.primeiro_giro_garantido && !cfg.roleta.premios.some((p) => p.tipo !== 'nada' && p.peso > 0)) add('roleta', '1º giro garantido ligado, mas a roleta não tem nenhum prêmio de verdade com chance.');
     for (const p of cfg.roleta.premios) {
       if (p.tipo === 'recompensa' && (!p.recompensa_id || !ids.has(p.recompensa_id))) add('roleta', `Prêmio "${p.nome}" aponta para uma recompensa que não existe.`);
       if (p.tipo === 'desconto_percentual' && p.valor > 100) add('roleta', `Prêmio "${p.nome}" dá mais de 100% de desconto.`);
     }
+  }
+  if (cfg.indicacao.ativo) {
+    if (cfg.indicacao.premio_tipo === 'pontos' && cfg.indicacao.pontos <= 0) add('indicacao', 'Indique e ganhe ligado com prêmio de 0 pontos.');
+    if (cfg.indicacao.premio_tipo === 'recompensa' && (!cfg.indicacao.recompensa_id || !ids.has(cfg.indicacao.recompensa_id))) add('indicacao', 'O prêmio de quem indica aponta para uma recompensa que não existe.');
   }
   return av;
 }
@@ -358,6 +398,7 @@ export function usosDaRecompensa(cfg: FidelidadeConfig, id: string): string[] {
   }
   const premios = cfg.roleta.premios.filter((p) => p.tipo === 'recompensa' && p.recompensa_id === id);
   if (premios.length > 0) usos.push(`Roleta (${premios.map((p) => p.nome).join(', ')})`);
+  if (cfg.indicacao?.premio_tipo === 'recompensa' && cfg.indicacao.recompensa_id === id) usos.push('Indique e ganhe');
   return usos;
 }
 
@@ -480,4 +521,10 @@ export function descontoDasReservas(
     total += v;
   }
   return { porReserva, total: Math.round(total * 100) / 100 };
+}
+
+/** Recompensas na ordem que o cliente vê (mesma regra do fn_fidelidade_resumo). */
+export function recompensasNaOrdem<T extends { custo_pontos: number }>(lista: T[], ordem: 'pontos' | 'manual'): T[] {
+  if (ordem === 'manual') return [...lista];
+  return lista.map((r, i) => ({ r, i })).sort((a, b) => a.r.custo_pontos - b.r.custo_pontos || a.i - b.i).map((x) => x.r);
 }

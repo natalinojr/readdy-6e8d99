@@ -4,6 +4,7 @@
     { "source": "/v/:code", "destination": "https://mdghhjemzdmeuqpzuyzx.supabase.co/functions/v1/canal-publico?go=:code", "permanent": false }
   ],
   "rewrites": [
+    { "source": "/clube-app/manifest/:slug", "destination": "https://mdghhjemzdmeuqpzuyzx.supabase.co/functions/v1/clube-app?manifest=:slug" },
     { "source": "/((?!assets/).*)", "destination": "/index.html" }
   ],
   "headers": [

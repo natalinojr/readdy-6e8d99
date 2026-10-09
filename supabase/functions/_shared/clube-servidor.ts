@@ -23,24 +23,56 @@ export async function programaLigado(admin: any, tenantId: string): Promise<bool
   return data?.enabled === true;
 }
 
+export interface SessaoClube {
+  id: string; customer_id: string; tenant_id: string;
+  /** Nome do aparelho ("Android · Chrome"), quando entrou pelo app. */
+  aparelho: string | null;
+  /** Digital ligada neste aparelho: para abrir o app / para usar prêmio. */
+  digital_abrir: boolean; digital_premio: boolean;
+  /** Até quando a última confirmação com a digital vale. */
+  desbloqueado_ate: string | null;
+}
+
 /** Sessão do "cartão do clube" (token guardado no celular do cliente). */
-export async function sessaoDoClube(admin: any, token: unknown): Promise<{ id: string; customer_id: string; tenant_id: string } | null> {
+export async function sessaoDoClube(admin: any, token: unknown): Promise<SessaoClube | null> {
   const t = String(token ?? "");
   if (!/^[0-9a-f]{64}$/.test(t)) return null;
-  const { data } = await admin.from("loyalty_sessions").select("id, customer_id, tenant_id, last_seen_at")
+  const { data } = await admin.from("loyalty_sessions")
+    .select("id, customer_id, tenant_id, last_seen_at, aparelho, digital_abrir, digital_premio, desbloqueado_ate")
     .eq("token_hash", await sha256Hex(t)).is("revoked_at", null).gt("expires_at", new Date().toISOString()).maybeSingle();
   if (!data) return null;
   if (Date.now() - new Date(data.last_seen_at).getTime() > 3_600_000) {
     await admin.from("loyalty_sessions").update({ last_seen_at: new Date().toISOString() }).eq("id", data.id);
   }
-  return { id: data.id, customer_id: data.customer_id, tenant_id: data.tenant_id };
+  return {
+    id: data.id, customer_id: data.customer_id, tenant_id: data.tenant_id, aparelho: data.aparelho ?? null,
+    digital_abrir: data.digital_abrir === true, digital_premio: data.digital_premio === true, desbloqueado_ate: data.desbloqueado_ate ?? null,
+  };
 }
 
-export async function criarSessao(admin: any, tenantId: string, customerId: string, via: string): Promise<string> {
+export async function criarSessao(admin: any, tenantId: string, customerId: string, via: string, aparelho?: string | null): Promise<string> {
   const token = novoToken();
-  const { error } = await admin.from("loyalty_sessions").insert({ tenant_id: tenantId, customer_id: customerId, token_hash: await sha256Hex(token), criado_via: via });
+  const { error } = await admin.from("loyalty_sessions").insert({
+    tenant_id: tenantId, customer_id: customerId, token_hash: await sha256Hex(token), criado_via: via,
+    ...(aparelho ? { aparelho: String(aparelho).slice(0, 60) } : {}),
+  });
   if (error) throw error;
   return token;
+}
+
+/** Confere o celular COMPLETO (página e app do clube). Mesma trava da página: 5 erros
+ *  = 15 min no canal web, contada no banco (fn_clube_conferir_celular). Devolve a
+ *  mensagem de erro, ou null se conferiu. A mensagem não diz se o CPF é do clube. */
+export async function conferirCelularCompleto(admin: any, customerId: string, celular: unknown): Promise<string | null> {
+  const { data, error } = await admin.rpc("fn_clube_conferir_celular", { p_customer: customerId, p_celular: String(celular ?? "") });
+  if (error) throw error;
+  if (data?.ok) return null;
+  if (data?.motivo === "sem_celular") return "Seu cadastro está sem celular. Fale com o caixa da loja.";
+  if (data?.motivo === "bloqueado") {
+    const min = Math.max(1, Math.ceil((new Date(data.ate).getTime() - Date.now()) / 60000));
+    return `Muitas tentativas. Tente de novo em ${min} min ou fale com o caixa.`;
+  }
+  return "CPF ou celular não conferem.";
 }
 
 /** Confere os 4 últimos dígitos do celular. A conta das tentativas é feita no BANCO

@@ -37,7 +37,7 @@ const LEGADO: Record<string, { aba: Aba; secao?: string }> = {
   vouchers: { aba: 'descontos', secao: 'vouchers' },
 };
 
-const SECOES_CLUBE: SecaoClube[] = ['resumo', 'pontos', 'recompensas', 'trilha', 'roleta', 'jogos', 'membros'];
+const SECOES_CLUBE: SecaoClube[] = ['resumo', 'pontos', 'recompensas', 'trilha', 'roleta', 'indicacao', 'jogos', 'app', 'membros'];
 
 // Mesmo critério da RotaProtegida: só o admin vê tudo; o gerente segue a matriz (2026-10-03).
 const PAPEIS_ADMIN = ['admin'];

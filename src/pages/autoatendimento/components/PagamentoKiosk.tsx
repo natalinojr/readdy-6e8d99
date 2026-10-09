@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { ConviteAppQr } from '@/components/fidelidade/ConviteAppClube';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import QRCodeImport from 'react-qr-code';
 const QRCode = ((QRCodeImport as unknown as { default: typeof QRCodeImport }).default || QRCodeImport) as typeof QRCodeImport;
@@ -72,7 +73,9 @@ function TelaConfirmacao({
   irAoCaixa,
   alertaParcial,
   onNovoPedido,
+  tenantId,
 }: {
+  tenantId?: string | null;
   carrinho: ItemPedidoCliente[];
   total: number;
   modoIdentificacao: string;
@@ -177,6 +180,8 @@ function TelaConfirmacao({
           )}
         </div>
       )}
+
+      <ConviteAppQr tenantId={tenantId} />
 
       {alertaParcial && (
         <div className="w-full max-w-3xl bg-amber-900/40 border border-amber-500/50 rounded-xl px-5 py-4 flex items-start gap-3">
@@ -765,6 +770,7 @@ export default function PagamentoKiosk({
         irAoCaixa={seguradoNoCaixa || pagamentoAntes}
         alertaParcial={alertaParcial}
         onNovoPedido={() => onConcluir()}
+        tenantId={tenantId}
       />
     );
   }

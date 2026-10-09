@@ -7,6 +7,8 @@
 export function registerServiceWorker(): void {
   if (!import.meta.env.PROD) return;
   if (!('serviceWorker' in navigator)) return;
+  // App do clube (cliente): tem service worker próprio (clube-sw.js, escopo da loja).
+  if (location.pathname.startsWith('/clube/')) return;
 
   window.addEventListener('load', () => {
     navigator.serviceWorker

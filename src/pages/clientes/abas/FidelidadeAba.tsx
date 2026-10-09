@@ -15,14 +15,16 @@ import RoletaSvg, { rotacaoParaFatia } from '@/components/fidelidade/RoletaSvg';
 import { avisar, confirmar } from '@/components/base/Dialogos';
 import { formatPhoneBR } from '@/lib/deliveryPhone';
 import JogosAba from './JogosAba';
+import ClubeAppSecao from './ClubeAppSecao';
 import {
   CORES, avisosConfigPorSecao, chancesRoleta, custoPorPonto, distribuirNiveis, ehPremioDeProduto, novoId, pctProduto, retornoPercentual, usosDaRecompensa,
   type AvisoConfig, type FaixaHistograma, type FidelidadeConfig, type Nivel, type Premio, type Recompensa,
   type TipoPremio, type TipoPresente, type TipoRecompensa,
+  recompensasNaOrdem,
 } from '@/lib/fidelidade';
 
 // 'jogos' (2026-10-05): a antiga aba Jogos virou seção do Clube — só membro do clube joga.
-export type SecaoClube = 'resumo' | 'pontos' | 'recompensas' | 'trilha' | 'roleta' | 'jogos' | 'membros';
+export type SecaoClube = 'resumo' | 'pontos' | 'recompensas' | 'trilha' | 'roleta' | 'indicacao' | 'jogos' | 'app' | 'membros';
 type Secao = SecaoClube;
 
 const SECOES: { id: Secao; label: string; icon: string }[] = [
@@ -31,7 +33,9 @@ const SECOES: { id: Secao; label: string; icon: string }[] = [
   { id: 'recompensas', label: 'Recompensas', icon: 'ri-gift-2-line' },
   { id: 'trilha', label: 'Trilha de níveis', icon: 'ri-medal-line' },
   { id: 'roleta', label: 'Roleta', icon: 'ri-donut-chart-line' },
+  { id: 'indicacao', label: 'Indique e ganhe', icon: 'ri-user-shared-line' },
   { id: 'jogos', label: 'Jogos', icon: 'ri-gamepad-line' },
+  { id: 'app', label: 'App do cliente', icon: 'ri-smartphone-line' },
   { id: 'membros', label: 'Membros', icon: 'ri-team-line' },
 ];
 
@@ -283,6 +287,16 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
     setAlterado(true);
     setMsg('');
   };
+
+  /** Ordem "do meu jeito": troca a recompensa de lugar com a vizinha. */
+  const moverRecompensa = (id: string, delta: -1 | 1) => mudar((c) => {
+    const lista = [...c.recompensas];
+    const i = lista.findIndex((r) => r.id === id);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= lista.length) return c;
+    [lista[i], lista[j]] = [lista[j], lista[i]];
+    return { ...c, recompensas: lista };
+  });
 
   // Busca o custo da ficha dos itens que viraram prêmio (só os que ainda não tem).
   useEffect(() => {
@@ -733,8 +747,21 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
           )}
         >
           {cfg.recompensas.length === 0 && <p className="text-sm text-zinc-400 py-6 text-center">Nenhuma recompensa. Adicione a primeira.</p>}
+          {cfg.recompensas.length > 1 && (
+            <div className="flex flex-wrap items-center gap-2 mb-3 text-sm">
+              <span className="font-semibold text-zinc-700">Ordem que o cliente vê:</span>
+              {([['pontos', 'Menos pontos primeiro'], ['manual', 'Do meu jeito']] as const).map(([v, rot]) => (
+                <button key={v} type="button" disabled={ro}
+                  onClick={() => mudar((c) => ({ ...c, recompensas_ordem: v, recompensas: v === 'manual' ? recompensasNaOrdem(c.recompensas, 'pontos') : c.recompensas }))}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer disabled:cursor-default ${cfg.recompensas_ordem === v ? 'bg-amber-500 border-amber-500 text-white' : 'bg-white border-zinc-200 text-zinc-600'}`}>
+                  {rot}
+                </button>
+              ))}
+              {cfg.recompensas_ordem === 'manual' && <span className="text-xs text-zinc-400">Use as setas para mudar a posição. Vale no tablet, no caixa, no delivery, na mesa e no app.</span>}
+            </div>
+          )}
           <div className="space-y-3">
-            {cfg.recompensas.map((r) => {
+            {recompensasNaOrdem(cfg.recompensas, cfg.recompensas_ordem).map((r, posicao, lista) => {
               const produto = ehPremioDeProduto(r.tipo) ? produtos.find((p) => p.id === r.produto_id) : undefined;
               const onde = ondeVale(r);
               const modo = modoDesconto(r);
@@ -758,6 +785,14 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
                   <div className="flex items-center gap-2 px-3 pt-3">
                     <input value={r.nome} disabled={ro} maxLength={80} aria-label="Nome do prêmio" placeholder="Nome do prêmio"
                       onChange={(e) => setRecompensa(r.id, { nome: e.target.value })} className={INPUT + ' font-semibold flex-1 min-w-0'} />
+                    {cfg.recompensas_ordem === 'manual' && !ro && (
+                      <span className="flex flex-col shrink-0">
+                        <button type="button" aria-label="Subir" disabled={posicao === 0} onClick={() => moverRecompensa(r.id, -1)}
+                          className="w-7 h-4 flex items-center justify-center text-zinc-500 hover:text-amber-700 disabled:opacity-25 cursor-pointer disabled:cursor-default"><i className="ri-arrow-up-s-line" /></button>
+                        <button type="button" aria-label="Descer" disabled={posicao === lista.length - 1} onClick={() => moverRecompensa(r.id, 1)}
+                          className="w-7 h-4 flex items-center justify-center text-zinc-500 hover:text-amber-700 disabled:opacity-25 cursor-pointer disabled:cursor-default"><i className="ri-arrow-down-s-line" /></button>
+                      </span>
+                    )}
                     <Chave label="Recompensa ativa" ligado={r.ativo} disabled={ro} onChange={(v) => setRecompensa(r.id, { ativo: v })} />
                     {!ro && (
                       <button
@@ -1006,6 +1041,7 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
                 <div className="flex flex-col justify-end gap-2">
                   <label className="flex items-center gap-2 text-sm text-zinc-700"><input type="checkbox" className="accent-amber-500" disabled={ro} checked={cfg.roleta.ao_subir_nivel} onChange={(e) => mudar((c) => ({ ...c, roleta: { ...c.roleta, ao_subir_nivel: e.target.checked } }))} /> Ao subir de nível</label>
                   <label className="flex items-center gap-2 text-sm text-zinc-700"><input type="checkbox" className="accent-amber-500" disabled={ro} checked={cfg.roleta.aniversario} onChange={(e) => mudar((c) => ({ ...c, roleta: { ...c.roleta, aniversario: e.target.checked } }))} /> No aniversário</label>
+                  <label className="flex items-start gap-2 text-sm text-zinc-700" title="O primeiro giro de cada cliente só sorteia entre os prêmios de verdade (nunca “Não foi dessa vez”)."><input type="checkbox" className="accent-amber-500 mt-1" disabled={ro} checked={cfg.roleta.primeiro_giro_garantido} onChange={(e) => mudar((c) => ({ ...c, roleta: { ...c.roleta, primeiro_giro_garantido: e.target.checked } }))} /> 1º giro sempre dá prêmio</label>
                 </div>
               </div>
             </Cartao>
@@ -1177,11 +1213,63 @@ export default function FidelidadeAba({ secaoInicial }: Props = {}) {
         </Cartao>
       )}
 
+      {/* ── INDIQUE E GANHE ────────────────────────────────────────────────── */}
+      {secao === 'indicacao' && (
+        <>
+        <AvisosDaSecao avisos={avisos.filter((a) => a.secao === 'indicacao')} />
+        <Cartao
+          titulo="Indique e ganhe"
+          desc="O cliente manda o link dele do app do clube para um amigo. Quando o amigo entra no clube por esse link e faz a primeira compra paga, quem indicou ganha o prêmio."
+          acao={<Chave label="Indique e ganhe ligado" ligado={cfg.indicacao.ativo} disabled={ro} onChange={(v) => mudar((c) => ({ ...c, indicacao: { ...c.indicacao, ativo: v } }))} />}
+        >
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Campo label="Quem indica ganha">
+              <select value={cfg.indicacao.premio_tipo} disabled={ro} className={INPUT}
+                onChange={(e) => mudar((c) => ({ ...c, indicacao: { ...c.indicacao, premio_tipo: e.target.value === 'recompensa' ? 'recompensa' : 'pontos' } }))}>
+                <option value="pontos">Pontos</option>
+                <option value="recompensa">Uma recompensa do catálogo</option>
+              </select>
+            </Campo>
+            {cfg.indicacao.premio_tipo === 'pontos' ? (
+              <Campo label="Pontos para quem indica">
+                <Numero value={cfg.indicacao.pontos} disabled={ro} sufixo="pontos" onChange={(v) => mudar((c) => ({ ...c, indicacao: { ...c.indicacao, pontos: v } }))} />
+              </Campo>
+            ) : (
+              <Campo label="Recompensa para quem indica">
+                <select value={cfg.indicacao.recompensa_id ?? ''} disabled={ro} className={INPUT}
+                  onChange={(e) => mudar((c) => ({ ...c, indicacao: { ...c.indicacao, recompensa_id: e.target.value || null } }))}>
+                  <option value="">Escolha…</option>
+                  {cfg.recompensas.filter((r) => r.ativo).map((r) => <option key={r.id} value={r.id}>{r.nome}</option>)}
+                </select>
+              </Campo>
+            )}
+            <Campo label="Presente para quem foi indicado" dica="Pontos na 1ª compra do amigo. 0 = nada.">
+              <Numero value={cfg.indicacao.bonus_indicado} disabled={ro} sufixo="pontos" onChange={(v) => mudar((c) => ({ ...c, indicacao: { ...c.indicacao, bonus_indicado: v } }))} />
+            </Campo>
+            <Campo label="Máximo por cliente no mês" dica="Indicações premiadas por mês. 0 = sem limite.">
+              <Numero value={cfg.indicacao.limite_mes} disabled={ro} sufixo="por mês" onChange={(v) => mudar((c) => ({ ...c, indicacao: { ...c.indicacao, limite_mes: v } }))} />
+            </Campo>
+            <Campo label="Compra mínima do amigo" dica="A 1ª compra precisa ter pelo menos este valor para contar. Evita cadastro só para ganhar.">
+              <Numero value={cfg.indicacao.pedido_minimo} disabled={ro} prefixo="R$" onChange={(v) => mudar((c) => ({ ...c, indicacao: { ...c.indicacao, pedido_minimo: v } }))} />
+            </Campo>
+          </div>
+          <ul className="mt-3 text-xs text-zinc-600 leading-relaxed bg-zinc-50 border border-zinc-100 rounded-lg p-3 space-y-1 list-disc pl-6">
+            <li>O link fica no app do clube, em “Indique e ganhe”.</li>
+            <li>Só conta CPF novo na loja: quem já tinha cadastro (no caixa ou na nota) não vira indicação.</li>
+            <li>O prêmio sai na primeira compra paga do amigo depois de entrar pelo link, e aparece um aviso no app de quem indicou.</li>
+          </ul>
+        </Cartao>
+        </>
+      )}
+
       {/* ── JOGOS (seção do Clube; tem o próprio Salvar) ─────────────────────── */}
       {secao === 'jogos' && <JogosAba />}
 
-      {/* Barra de salvar (a seção Jogos salva sozinha, então a barra some lá) */}
-      {secao === 'jogos' ? null : editavel ? (
+      {/* ── APP DO CLIENTE (tem o próprio Salvar) ───────────────────────────── */}
+      {secao === 'app' && <ClubeAppSecao />}
+
+      {/* Barra de salvar (Jogos e App do cliente salvam sozinhos, então a barra some lá) */}
+      {secao === 'jogos' || secao === 'app' ? null : editavel ? (
         <div className="fixed bottom-0 inset-x-0 md:left-auto md:right-24 md:bottom-4 md:inset-x-auto z-30">
           <div className="bg-white border-t md:border md:rounded-xl border-zinc-200 shadow-lg pl-4 pr-24 md:pr-4 py-3 flex items-center gap-3">
             <div className="flex-1 md:flex-none min-w-0 md:max-w-sm">
