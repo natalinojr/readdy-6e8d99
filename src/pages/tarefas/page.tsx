@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { Plus, Pin, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, Send, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing, FileText, Cloud, ChartGantt, Settings, CalendarRange } from 'lucide-react';
+import { Plus, Pin, ListTodo, LayoutGrid, CalendarDays, ClipboardList, UserCheck, Users, Layers, Send, SlidersHorizontal, ListChecks, Waypoints, ArrowLeft, Gauge, Share2, LayoutTemplate, BellRing, FileText, Cloud, ChartGantt, Settings, CalendarRange, LayoutDashboard } from 'lucide-react';
 import { useToast } from '@/contexts/ToastContext';
 import { useEuTarefas } from './hooks/useEuTarefas';
 import { useAppMode } from '@/contexts/AppModeContext';
@@ -19,6 +19,7 @@ import ViewCalendario from './components/ViewCalendario';
 import ViewCarga from './components/ViewCarga';
 import ViewGantt from './components/ViewGantt';
 import ViewLinhaTempo from './components/linhaTempo/ViewLinhaTempo';
+import ViewVisaoGeral from './components/visaoGeral/ViewVisaoGeral';
 import type { AgruparLinha } from './lib/linhaTempo';
 import TaskDrawer from './components/TaskDrawer';
 import CamposCustomManager from './components/CamposCustomManager';
@@ -70,9 +71,11 @@ const CORES_LISTA = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b
 type Origem = 'pasta' | 'minhas' | 'compartilhadas' | 'atribuidas' | 'todas';
 /** COMO mostrar essas tarefas — independente da origem (pedido do usuário: a
  *  visualização lista/kanban/calendário deve valer pra qualquer origem). */
-type Display = 'lista' | 'kanban' | 'calendario' | 'linha' | 'gantt' | 'carga' | 'relatorios';
+type Display = 'visao' | 'lista' | 'kanban' | 'calendario' | 'linha' | 'gantt' | 'carga' | 'relatorios';
 
 const DISPLAYS: Array<{ id: Display; label: string; icon: typeof ListTodo }> = [
+  // Visão geral: painel da pasta-mãe (subpastas, prazos, pessoas, ritmo) — só aparece numa pasta raiz (2026-10-09).
+  { id: 'visao', label: 'Visão geral', icon: LayoutDashboard },
   { id: 'lista', label: 'Lista', icon: ListTodo },
   { id: 'kanban', label: 'Kanban', icon: LayoutGrid },
   { id: 'calendario', label: 'Calendário', icon: CalendarDays },
@@ -361,6 +364,19 @@ export default function TarefasPage() {
     return aplicarFiltros(tasks.filter((t) => ids.has(t.list_id)), filtros);
   }, [origem, selectedList, tarefasVisiveis, arvorePastas, tasks, filtros]);
 
+  // Visão geral só existe na pasta-mãe (raiz da minha árvore). Ela soma todas as
+  // subpastas e precisa das concluídas para o progresso — por isso ignora o
+  // "ocultar concluídas" da barra (os outros filtros valem).
+  const pastaRaiz = origem === 'pasta' && selectedList ? arvorePastas.find((n) => n.id === selectedList.id) ?? null : null;
+  const tarefasVisao = useMemo(() => {
+    if (!pastaRaiz) return [];
+    const ids = idsSubarvore(pastaRaiz);
+    return aplicarFiltros(tasks.filter((t) => ids.has(t.list_id)), { ...filtros, ocultarConcluidas: false });
+  }, [pastaRaiz, tasks, filtros]);
+  useEffect(() => {
+    if (display === 'visao' && !loading && !pastaRaiz) setDisplay('lista');
+  }, [display, loading, pastaRaiz]);
+
   // Selo da aba "Minhas": não lidas + atrasadas
   const pendencias = useMemo(() => {
     const naoLidas = notificacoes.filter((n) => !n.is_read).length;
@@ -507,6 +523,37 @@ export default function TarefasPage() {
               write={write}
               onOpenTask={setOpenTaskId}
               onCount={contarCaixa}
+            />
+          )}
+          {celular && pastaRaiz && (display === 'lista' || display === 'visao') && (
+            // No celular a barra de baixo não tem lugar para mais uma aba: na pasta-mãe, Lista e Visão geral dividem a aba Lista.
+            <div className="flex gap-0.5 bg-slate-200/70 rounded-lg p-0.5 mb-3 text-xs">
+              {([['lista', 'Tarefas'], ['visao', 'Visão geral']] as const).map(([id, rotulo]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => navegar({ display: id })}
+                  className={`flex-1 py-1.5 rounded-md ${display === id ? 'bg-white text-indigo-600 font-medium shadow-sm' : 'text-slate-500'}`}
+                >
+                  {rotulo}
+                </button>
+              ))}
+            </div>
+          )}
+          {display === 'visao' && pastaRaiz && (
+            <ViewVisaoGeral
+              key={`visao-${pastaRaiz.id}`}
+              raiz={pastaRaiz}
+              tasks={tarefasVisao}
+              todas={tasks}
+              lists={lists}
+              dependencias={dependencias}
+              usuarios={usuariosAtivos}
+              filtros={filtros}
+              onFiltros={setFiltros}
+              onOpenTask={setOpenTaskId}
+              onAbrirPasta={(id) => (id === pastaRaiz.id ? navegar({ display: 'lista' }) : irParaPasta(id, { display: 'lista' }))}
+              onIrLista={() => navegar({ display: 'lista' })}
             />
           )}
           {display === 'lista' && (
@@ -846,7 +893,7 @@ export default function TarefasPage() {
           {/* Seletor de visualização — vale pra qualquer origem (pasta ou cross-pasta).
               No celular quem faz isso é a barra inferior. */}
           <div className="hidden md:flex items-center gap-1 text-xs">
-            {DISPLAYS.map(({ id, label, icon: Icon }) => (
+            {DISPLAYS.filter(({ id }) => id !== 'visao' || pastaRaiz).map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
                 onClick={() => navegar({ display: id })}
@@ -882,8 +929,8 @@ export default function TarefasPage() {
               campos={campos}
               list={listParaView}
             />
-            {/* Views salvas são recurso de gestor — só no desktop */}
-            <div className="hidden md:block">
+            {/* Views salvas são recurso de gestor — só no desktop. A Visão geral não vira view salva. */}
+            <div className={display === 'visao' ? 'hidden' : 'hidden md:block'}>
               <ViewsSalvas
                 views={views}
                 list={listParaView}
@@ -966,7 +1013,7 @@ export default function TarefasPage() {
 
       {/* ── Navegação inferior (celular) ── */}
       <BottomNav
-        view={origem === 'minhas' && (display === 'lista' || display === 'kanban') ? 'minhas' : display === 'kanban' ? 'lista' : display === 'gantt' || display === 'linha' ? 'calendario' : display}
+        view={origem === 'minhas' && (display === 'lista' || display === 'kanban') ? 'minhas' : display === 'kanban' || display === 'visao' ? 'lista' : display === 'gantt' || display === 'linha' ? 'calendario' : display}
         onView={(v) => {
           if (v === 'minhas') navegar({ origem: 'minhas', ...(display === 'carga' || display === 'relatorios' ? { display: 'lista' as Display } : {}) });
           else if (v === 'calendario' && (display === 'linha' || display === 'gantt')) { /* Linha do tempo e Cronograma ficam dentro da aba Agenda */ }

@@ -93,7 +93,27 @@ function inicial(): TaskRow[] {
     tarefa({ id: 't16', list_id: 'manut', title: 'Reforma da fachada', assignee_id: 'demo-carla', start_date: dia(8), due_date: prazo(24), time_estimate_minutes: 1200, priority: 3 }),
     tarefa({ id: 't17', list_id: 'compras', title: 'Testar novo fornecedor de pães', assignee_id: 'demo-ana', start_date: dia(-1) }),
     tarefa({ id: 't18', list_id: 'cozinha', title: 'Organizar o estoque seco', assignee_id: 'demo-eu' }),
-  ];
+    // Histórico da reforma (concluídas em semanas passadas) — dá vida ao ritmo da Visão geral.
+    ...([
+      ['h1', 'Medir o salão', 'demo-eu', -40, -36],
+      ['h2', 'Pedir 3 orçamentos', 'demo-ana', -38, -30],
+      ['h3', 'Escolher as cores', 'demo-carla', -33, -25],
+      ['h4', 'Contratar o pintor', 'demo-bruno', -30, -22],
+      ['h5', 'Comprar lona e fita', 'demo-ana', -24, -16],
+      ['h6', 'Avisar clientes do fechamento', 'demo-eu', -20, -12],
+      ['h7', 'Tirar fotos do antes', 'demo-carla', -15, -9],
+    ] as const).map(([id, title, quem, criada, feita]) => tarefa({
+      id, list_id: 'reforma', title, assignee_id: quem, due_date: prazo(feita), status_id: 'reforma-done', status_category: 'done',
+      created_at: `${dia(criada)}T13:00:00Z`, completed_at: `${dia(feita)}T18:00:00Z`,
+    })),
+  ].map((t, i) => {
+    if (t.id.startsWith('h')) return t;
+    // Criação espalhada nas últimas semanas (antes todas nasciam "agora"); concluída nasce antes de concluir.
+    const criada = t.completed_at
+      ? new Date(new Date(t.completed_at).getTime() - 6 * 86400000).toISOString()
+      : `${dia(-((i * 5) % 30))}T12:00:00Z`;
+    return { ...t, created_at: criada };
+  });
 }
 
 // Funções fixas (mesma referência sempre): a janela da tarefa recarrega quando elas mudam.
