@@ -61,7 +61,8 @@ export const FILTROS_VAZIOS: Filtros = {
   assigneeIds: [],
   prioridades: [],
   tagIds: [],
-  ocultarConcluidas: false,
+  // Padrão: concluídas escondidas. Só conta como filtro ativo quando desmarcado.
+  ocultarConcluidas: true,
 };
 
 export function filtrosAtivos(f: Filtros): number {
@@ -70,7 +71,7 @@ export function filtrosAtivos(f: Filtros): number {
     f.assigneeIds.length +
     f.prioridades.length +
     f.tagIds.length +
-    (f.ocultarConcluidas ? 1 : 0)
+    (f.ocultarConcluidas !== FILTROS_VAZIOS.ocultarConcluidas ? 1 : 0)
   );
 }
 

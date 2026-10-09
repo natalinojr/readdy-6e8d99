@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useIsMobile, useVoltarFecha } from '../lib/mobile';
@@ -26,6 +26,20 @@ export default function FiltrosBar({
 }: FiltrosBarProps) {
   const [aberto, setAberto] = useState(false);
   useVoltarFecha(aberto, () => setAberto(false), 'tarefas-filtros');
+  // Clicar fora fecha. O fundo `fixed` não basta no desktop: o cabeçalho tem
+  // backdrop-blur e prende o `fixed` dentro dele, então só cobria o cabeçalho.
+  const botaoRef = useRef<HTMLDivElement>(null);
+  const painelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!aberto) return;
+    const fora = (e: PointerEvent) => {
+      const alvo = e.target as Node;
+      if (botaoRef.current?.contains(alvo) || painelRef.current?.contains(alvo)) return;
+      setAberto(false);
+    };
+    document.addEventListener('pointerdown', fora);
+    return () => document.removeEventListener('pointerdown', fora);
+  }, [aberto]);
   // No celular a folha de filtros vai direto pro <body>: o cabeçalho tem
   // backdrop-blur, que prende o `fixed` dentro dele (a folha abria fora da tela).
   const celular = useIsMobile();
@@ -68,7 +82,7 @@ export default function FiltrosBar({
       )}
 
       {/* Filtros */}
-      <div className="relative">
+      <div className="relative" ref={botaoRef}>
         <button
           onClick={() => setAberto((v) => !v)}
           className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition ${
@@ -90,7 +104,7 @@ export default function FiltrosBar({
           <>
             <div className="fixed inset-0 z-20 max-md:z-[70] max-md:bg-slate-900/30" onClick={() => setAberto(false)} />
             {/* Celular: folha que sobe de baixo, com toques maiores. */}
-            <div className="absolute right-0 top-full mt-1 z-30 w-64 bg-white rounded-xl border border-slate-200 shadow-lg p-3 space-y-3 max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:top-auto max-md:mt-0 max-md:w-auto max-md:z-[71] max-md:rounded-b-none max-md:rounded-t-2xl max-md:max-h-[80vh] max-md:overflow-y-auto max-md:px-4 max-md:pb-[max(env(safe-area-inset-bottom),16px)] max-md:space-y-4">
+            <div ref={painelRef} className="absolute right-0 top-full mt-1 z-30 w-64 bg-white rounded-xl border border-slate-200 shadow-lg p-3 space-y-3 max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:top-auto max-md:mt-0 max-md:w-auto max-md:z-[71] max-md:rounded-b-none max-md:rounded-t-2xl max-md:max-h-[80vh] max-md:overflow-y-auto max-md:px-4 max-md:pb-[max(env(safe-area-inset-bottom),16px)] max-md:space-y-4">
               <div className="md:hidden mx-auto -mt-1 h-1 w-10 rounded-full bg-slate-200" />
               <div className="flex items-center justify-between">
                 <span className="text-xs max-md:text-base font-semibold text-slate-700">Filtrar tarefas</span>
