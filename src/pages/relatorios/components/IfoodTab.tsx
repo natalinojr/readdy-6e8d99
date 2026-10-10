@@ -395,7 +395,8 @@ export default function IfoodTab({ periodo }: Props) {
     );
   }
 
-  const diasPeriodo = Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86_400_000) + 1;
+  // `to` termina às 23:59:59: "Hoje" = 1 dia (com round dava 2 e o "por dia" saía pela metade).
+  const diasPeriodo = Math.floor((new Date(to).getTime() - new Date(from).getTime()) / 86_400_000) + 1;
   const ultimaFmt = ultimaData ? new Date(ultimaData).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : null;
 
   const filtroLoja = lojas.length > 1 && (

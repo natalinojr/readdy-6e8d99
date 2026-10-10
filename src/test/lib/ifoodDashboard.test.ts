@@ -171,6 +171,15 @@ describe('complemento pela API de Vendas', () => {
     expect(p.pagamento).toBe('Pagamento externo');
   });
 
+  it('pedido ainda sem lançamentos e entregador iFood: vendas = só os itens (a entrega é do iFood)', () => {
+    const base = { ...venda, sale_id: 'L1', gross_bag: 39.92, delivery_fee: 12.99, billing_entries: [], benefits: null };
+    const [ifood] = montarPedidosApi([{ ...base, logistica: 'IFOOD_LOGISTICS' }]);
+    expect(ifood.vendas).toBeCloseTo(39.92);
+    expect(ifood.logistica).toBe('ifood');
+    const [propria] = montarPedidosApi([{ ...base, sale_id: 'L2', logistica: 'MERCHANT' }]);
+    expect(propria.vendas).toBeCloseTo(52.91);
+  });
+
   it('sem nenhum valor na API ainda: fica de fora até a conciliação', () => {
     expect(montarPedidosApi([{ ...venda, sale_id: 'Z1', gross_bag: 0, delivery_fee: 0, billing_entries: [], benefits: null }])).toHaveLength(0);
   });

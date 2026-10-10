@@ -183,6 +183,8 @@ export interface SaleFinRow {
   billing_entries: Array<{ name?: string; value?: number }> | null;
   benefits: { benefits?: Array<{ target?: string; sponsorships?: Array<{ name?: string; value?: number }> }> } | null;
   events: Array<{ metadata?: { cancelCode?: number } | null }> | null;
+  /** raw.delivery.deliveryParameters.logisticProvider: IFOOD_LOGISTICS (entregador iFood) ou MERCHANT (loja) */
+  logistica?: string | null;
 }
 
 // Nome da API → [tipo_lancamento, descricao] da conciliação.
@@ -243,9 +245,14 @@ export function montarPedidosApi(sales: SaleFinRow[]): PedidoIfood[] {
     const temPagamento = (s.billing_entries ?? []).some((b) => b.name === 'ORDER_PAYMENT' && Math.abs(Number(b.value) || 0) >= 0.005);
     if (!cancelado && !temPagamento) {
       if (bruto < 0.005) { rows.length = antes; continue; } // a API ainda não tem nem o valor: espera a conciliação
+      // Entregador do iFood: a taxa de entrega fica com o iFood (Retenção "Taxa entrega iFood" quando o pedido
+      // fecha), então não é venda da loja — sem isto o pedido aberto contava a entrega e "encolhia" ao fechar.
+      const entregaIfood = /IFOOD/i.test(String(s.logistica ?? ''));
+      const vendido = entregaIfood ? (Number(s.gross_bag) || 0) : bruto;
       const jaSomado = montarPedidos(rows.slice(antes), {})[0]?.vendas ?? 0;
       const externo = s.payment_methods?.[0]?.liability === 'MERCHANT' || /^(EXTERNAL|CASH)$/i.test(String(s.payment_methods?.[0]?.method));
-      rows.push({ ...base, tipo_lancamento: 'Entrada Financeira', descricao: 'Entrada Financeira', valor: Math.round((bruto - jaSomado) * 100) / 100, impacto_repasse: !externo });
+      rows.push({ ...base, tipo_lancamento: 'Entrada Financeira', descricao: 'Entrada Financeira', valor: Math.round((vendido - jaSomado) * 100) / 100, impacto_repasse: !externo });
+      if (entregaIfood) rows.push({ ...base, tipo_lancamento: 'Retenção', descricao: 'Taxa entrega iFood', valor: 0 }); // só marca a logística
     }
     const cod = (s.events ?? []).map((e) => Number(e?.metadata?.cancelCode)).find((c) => c > 0) ?? null;
     const metodo = String(s.payment_methods?.[0]?.method ?? '').toUpperCase();
@@ -282,7 +289,7 @@ export function montarPedidosApi(sales: SaleFinRow[]): PedidoIfood[] {
 export async function fetchComplementoApi(tenantId: string, fromISO: string, toISO: string, jaTem: Set<string>) {
   const res = await fetchAllRows<SaleFinRow>((from, to) => supabase
     .from('fin_ifood_sales')
-    .select('sale_id, merchant_id, sale_created_at, current_status, gross_bag, delivery_fee, payment_methods, billing_entries, benefits:raw->benefits, events:raw->orderEvents')
+    .select('sale_id, merchant_id, sale_created_at, current_status, gross_bag, delivery_fee, payment_methods, billing_entries, benefits:raw->benefits, events:raw->orderEvents, logistica:raw->delivery->deliveryParameters->>logisticProvider')
     .eq('tenant_id', tenantId)
     .gte('sale_created_at', fromISO)
     .lte('sale_created_at', toISO)
