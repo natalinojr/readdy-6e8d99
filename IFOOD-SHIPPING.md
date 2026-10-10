@@ -41,6 +41,25 @@ Webhook só existe em app Centralizado; aqui é polling.
    DELIVERY_DROP_CODE_REQUESTED → código de entrega; DELIVERY_ADDRESS_CHANGE_REQUESTED → aceitar/recusar no modal (15 min).
    Entrega encerrada não é reaberta por evento atrasado.
 5. Cancelar: motivos sempre de `/cancellationReasons` (proibido fixar no código).
+6. Código de coleta (`pickupCode`): vem no **detalhe do pedido** (`GET /order/v1.0/orders/{id}` › `delivery.pickupCode`),
+   não nos eventos de entrega. Lido logo depois do `create` e, enquanto faltar, a cada evento da entrega (2026-10-09).
+
+## Entregador do iFood para pedido do iFood (entrega da loja) — 2026-10-09
+
+Cenário 2 do checklist do Shipping ("Pedidos na plataforma iFood"). Pedido do iFood com `delivered_by = MERCHANT`:
+Gestor de Entregas › **Pedidos iFood** › abrir o pedido › bloco **Entregador do iFood**.
+- **Ver preço e prazo** → ação `order_driver_quote` (`GET shipping/v1.0/orders/{orderId}/deliveryAvailabilities`).
+- **Chamar entregador** → `order_driver_request` (`POST .../requestDriver { quoteId }`, 202). Reserva antes do POST
+  (`driver_request.status` quoted→requested) contra 2 cliques; POST uma vez só; 5xx = `uncertain`.
+- **Cancelar chamada** (só antes do entregador aceitar, sem taxa) → `order_driver_cancel` (`POST .../cancelRequestDriver`).
+- Tudo fica em `ifood_orders.driver_request` (jsonb, migration `20261009150000_ifood_order_driver.sql`); os eventos
+  (REQUEST_DRIVER_SUCCESS/FAILED, ASSIGN_DRIVER, DELIVERY_CANCELLATION_REQUEST_*…) chegam pelo polling do pedido e passam
+  por `planDriverEvent` (`order.ts`, testes em `ifoodOrder.test.ts`). Vale em qualquer modo de pedidos (só leitura,
+  operar, funil); contabilidade não chama. O código de coleta já aparecia em "Entrega" do pedido.
+- Testado 09/10 na Testes PDV: o iFood respondeu à cotação (pedido de teste concluído → `OrderStatusInvalid`, ou seja, rota
+  e permissão do Shipping ok). Falta a chamada real num pedido de teste novo (gerar no Developer Portal) — é o vídeo.
+- Em aberto: no funil, o pedido também está no quadro do motoboy da loja; com entregador do iFood chamado ele ainda não
+  some da lista do motoboy (o `motoboy-signal` só olha `ifood_shipping_orders`).
 
 ## Critérios de homologação (resumo da doc do iFood)
 
@@ -77,7 +96,7 @@ no pedido, evento repetido não duplica).
 
 - Se o evento PLACED de pedido Sob Demanda precisa de confirmação: a edge tenta `order/v1.0/orders/{id}/confirm`
   (pode dar 403 sem o módulo Order — ver o log do evento).
-- Onde vem o `pickupCode` (metadata do evento? detalhe do pedido?). Hoje lê `metadata.pickupCode`.
+- ~~Onde vem o `pickupCode`~~ → detalhe do pedido (`delivery.pickupCode`), resolvido em 2026-10-09 (item 6 do Fluxo).
 - Nomes exatos dos campos do entregador na metadata (`workerName`/`workerPhone` assumidos).
 - Se o polling precisa de `categories`/`types` para trazer os eventos de pedidos POS.
 - Financeiro: o custo do iFood (`ifood_fee`) e o dinheiro cobrado pelo entregador entram no repasse; casar com o

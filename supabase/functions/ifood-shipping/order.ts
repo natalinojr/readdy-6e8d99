@@ -122,3 +122,54 @@ export function benefitSponsors(benefits: any[] | null | undefined) {
     sponsors: (b?.sponsorshipValues ?? []).filter((s: any) => Number(s?.value ?? 0) > 0).map((s: any) => ({ name: String(s.name), value: Number(s.value) })),
   }));
 }
+
+// ── Entregador do iFood para pedido do iFood com entrega da loja (Shipping › "Pedidos na plataforma iFood") ──
+// GET /shipping/v1.0/orders/{id}/deliveryAvailabilities → POST requestDriver { quoteId } (202, assíncrono) →
+// eventos REQUEST_DRIVER_SUCCESS/FAILED, ASSIGN_DRIVER… · cancelRequestDriver só antes do aceite do entregador.
+// Fica em ifood_orders.driver_request (jsonb): { status, quote_id, quote, requested_at, by, error, driver, timeline }.
+export const DRIVER_ACTIVE = ['requested', 'allocated', 'going_to_origin', 'arrived_origin', 'in_transit', 'cancel_requested'];
+export const DRIVER_TERMINAL = ['concluded', 'cancelled', 'failed'];
+const DRIVER_RANK: Record<string, number> = { requested: 0, allocated: 1, going_to_origin: 2, arrived_origin: 3, in_transit: 4 };
+
+/**
+ * Efeito de um evento na chamada do entregador (`dr` = driver_request atual). null = nada a mudar
+ * (sem chamada feita pelo ERPOS, ou evento que não é de entrega). Chamada encerrada não reabre.
+ */
+export function planDriverEvent(dr: any | null, e: any): Record<string, unknown> | null {
+  if (!dr || typeof dr !== 'object' || !dr.status || dr.status === 'quoted') return null;
+  const name = orderEventName(e);
+  const meta = e?.metadata ?? {};
+  const at = e?.createdAt ? new Date(e.createdAt).toISOString() : new Date().toISOString();
+  const nameOk = ['REQUEST_DRIVER', 'REQUEST_DRIVER_SUCCESS', 'REQUEST_DRIVER_FAILED', 'ASSIGN_DRIVER', 'GOING_TO_ORIGIN', 'ARRIVED_AT_ORIGIN',
+    'DISPATCHED', 'COLLECTED', 'DELIVERY_IN_TRANSIT', 'ARRIVED_AT_DESTINATION', 'CONCLUDED', 'DELIVERY_CONCLUDED', 'CANCELLED',
+    'DELIVERY_CANCELLATION_REQUESTED', 'DELIVERY_CANCELLATION_REQUEST_ACCEPTED', 'DELIVERY_CANCELLATION_REQUEST_REJECTED'];
+  if (!nameOk.includes(name)) return null;
+  const tl = { ...(dr.timeline ?? {}) };
+  if (!tl[name]) tl[name] = at;
+  const out: Record<string, unknown> = { ...dr, timeline: tl };
+  const nome = meta.workerName ?? meta.driverName ?? null, fone = meta.workerPhone ?? meta.driverPhone ?? null;
+  if (nome || fone) out.driver = { ...(dr.driver ?? {}), ...(nome ? { name: nome } : {}), ...(fone ? { phone: fone } : {}), ...(meta.workerVehicleType ? { vehicle: meta.workerVehicleType } : {}) };
+  if (DRIVER_TERMINAL.includes(dr.status)) return out;
+  const advance = (to: string) => { if ((DRIVER_RANK[to] ?? -1) > (DRIVER_RANK[dr.status] ?? -1)) out.status = to; };
+  switch (name) {
+    case 'REQUEST_DRIVER_SUCCESS': case 'ASSIGN_DRIVER': advance('allocated'); out.error = null; break;
+    case 'GOING_TO_ORIGIN': advance('going_to_origin'); break;
+    case 'ARRIVED_AT_ORIGIN': advance('arrived_origin'); break;
+    case 'DISPATCHED': case 'COLLECTED': case 'DELIVERY_IN_TRANSIT': case 'ARRIVED_AT_DESTINATION': advance('in_transit'); break;
+    case 'CONCLUDED': case 'DELIVERY_CONCLUDED': out.status = 'concluded'; break;
+    case 'CANCELLED': out.status = 'cancelled'; break; // pedido cancelado leva a chamada junto
+    case 'REQUEST_DRIVER_FAILED': {
+      out.status = 'failed';
+      const motivo = meta.reason ?? meta.REASON ?? meta.message ?? meta.description ?? null;
+      out.error = 'O iFood não conseguiu um entregador' + (motivo ? `: ${String(motivo).slice(0, 200)}` : '') + '.';
+      break;
+    }
+    case 'DELIVERY_CANCELLATION_REQUESTED': out.status = 'cancel_requested'; break;
+    case 'DELIVERY_CANCELLATION_REQUEST_ACCEPTED': out.status = 'cancelled'; out.error = null; break;
+    case 'DELIVERY_CANCELLATION_REQUEST_REJECTED':
+      out.status = tl.ARRIVED_AT_ORIGIN ? 'arrived_origin' : tl.GOING_TO_ORIGIN ? 'going_to_origin' : 'allocated';
+      out.error = 'O iFood recusou cancelar a chamada (o entregador já aceitou).';
+      break;
+  }
+  return out;
+}

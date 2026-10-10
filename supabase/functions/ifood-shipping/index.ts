@@ -21,6 +21,8 @@
 //   quote          { order_id, lat, lng }           GET shipping/v1.0/merchants/{m}/deliveryAvailabilities
 //   create         { order_id, quote_id, customer, address, payment, prep_min }
 //   cancel_reasons { shipping_id }                  motivos dinâmicos (proibido fixar no código — homologação)
+//   order_driver_quote / order_driver_request { quote_id } / order_driver_cancel   { order_row_id }
+//                                                   entregador do iFood p/ PEDIDO DO IFOOD com entrega da loja
 //   cancel         { shipping_id, code, reason }
 //   address_change { shipping_id, accept }          aceitar/recusar troca de endereço pedida pelo cliente (15 min)
 //   tracking       { shipping_id }                  posição do entregador + safe delivery score
@@ -34,7 +36,7 @@
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2.57.4';
 import { isContabilidadeRole, isManagerRole } from '../_shared/tenant-auth.ts';
 import { ACTIVE, buildItems as buildItemsPure, cut, eventName, norm, onlyDigits, parseEnderecoPedido, paymentFromNotes, planEvent, round2, splitPhone, type OrderSignal } from './core.ts';
-import { orderEventName, orderItemsFromDetails, orderRowFromDetails, planOrderEvent } from './order.ts';
+import { DRIVER_ACTIVE, orderEventName, orderItemsFromDetails, orderRowFromDetails, planDriverEvent, planOrderEvent } from './order.ts';
 import { montarPedidoErpos, type FichaLinha, type IfoodLink, type MenuInfo } from './funnel.ts';
 import { consultaKpis, corpoHomologacao, mensagemErroKpis, periodoKpis, resumirLinhas, validarCorpoKpis } from './analytics.ts';
 import { deductLooseStockForOrder, deductStockForOrderItem, restockLooseStockForOrder } from '../_shared/stock.ts';
@@ -148,6 +150,7 @@ const ERROS: Record<string, string> = {
   UnavailableFleet: 'Sem entregadores disponíveis agora — tente de novo em alguns minutos.',
   MerchantEasyDeliveryDisabled: 'O iFood Entrega (Sob Demanda) não está ativo para esta loja no iFood.',
   BadRequestCustomer: 'Nome ou telefone do cliente inválido para o iFood.',
+  OrderStatusInvalid: 'O iFood só chama entregador para pedido confirmado que ainda não saiu nem terminou.',
 };
 const msgErro = (r: { status: number; data: any; raw: string }, what: string) => ERROS[errCode(r)] ?? apiError(r, what);
 
@@ -376,6 +379,9 @@ async function applyOrderEvent(admin: Admin, c: Ctx, e: any) {
   const ifoodOrderId = String(e.orderId ?? '');
   const { data: cur } = await admin.from('ifood_orders').select('*').eq('ifood_order_id', ifoodOrderId).maybeSingle();
   const plan = planOrderEvent(cur, e);
+  // Entregador do iFood chamado pelo ERPOS para este pedido (entrega da loja): acompanha pelos mesmos eventos.
+  const dr = planDriverEvent(cur?.driver_request ?? null, e);
+  if (dr) plan.upd.driver_request = dr;
   const now = new Date().toISOString();
   let row = cur;
   if (!row) {
@@ -712,6 +718,16 @@ async function funnelSweep(admin: Admin, cfg: any) {
   }
 }
 
+/** pickupCode do pedido (GET /order/v1.0/orders/{id} › delivery.pickupCode); null se ainda não existe ou falhou. */
+async function lerPickupCode(admin: Admin, c: Ctx, ifoodOrderId: string): Promise<string | null> {
+  try {
+    const r = await call(admin, c, 'GET', `/order/v1.0/orders/${ifoodOrderId}`);
+    const pc = r.ok ? r.data?.delivery?.pickupCode : null;
+    if (!r.ok) log('WARN', 'pickup', 'detalhe do pedido', { ifoodOrderId, status: r.status, body: r.raw.slice(0, 200) });
+    return pc != null && String(pc).trim() ? String(pc).trim() : null;
+  } catch { return null; }
+}
+
 async function applyEvent(admin: Admin, c: Ctx | null, e: any) {
   const ifoodOrderId = String(e.orderId ?? '');
   if (!ifoodOrderId) return;
@@ -726,6 +742,11 @@ async function applyEvent(admin: Admin, c: Ctx | null, e: any) {
     return;
   }
   const plan = planEvent(s, e);
+  // Código de coleta (pickupCode): vem no detalhe do pedido (Order › delivery.pickupCode), não nos eventos de entrega.
+  if (!s.pickup_code && !plan.upd.pickup_code && c) {
+    const pc = await lerPickupCode(admin, c, ifoodOrderId);
+    if (pc) plan.upd.pickup_code = pc;
+  }
   // Pedido Sob Demanda nasce com PLACED; confirma (os dados foram validados antes de enviar). Sem o módulo
   // de pedidos o iFood pode recusar — fica no log.
   if (plan.confirm && c) {
@@ -1140,6 +1161,9 @@ Deno.serve(async (req) => {
       }
       await admin.from('orders').update({ updated_at: now }).eq('id', o.id); // acorda as telas (orders-ping)
       log('INFO', 'create', 'ok', { order: o.id, ifood: r.data.id, tenantId });
+      // Código de coleta já no detalhe do pedido? (senão chega junto do próximo evento)
+      const pc = await lerPickupCode(admin, c, String(r.data.id));
+      if (pc) { await admin.from('ifood_shipping_orders').update({ pickup_code: pc }).eq('id', row.id); ok.pickup_code = pc; }
       return json({ success: true, shipping: ok });
     }
 
@@ -1286,6 +1310,66 @@ Deno.serve(async (req) => {
       await fetchOrderDetails(admin, c, o, o.ifood_order_id);
       return json({ success: true });
     }
+    // Entregador do iFood para pedido do iFood com ENTREGA DA LOJA (Shipping › pedidos na plataforma): cotar, chamar e
+    // cancelar a chamada (só antes do entregador aceitar). Vale em qualquer modo de pedidos — é o módulo Shipping.
+    if (action === 'order_driver_quote' || action === 'order_driver_request' || action === 'order_driver_cancel') {
+      if (isContabilidadeRole(role)) return errResp('Seu perfil não pode chamar entregador.', 403);
+      const o = await getIfoodOrder();
+      if (!o) return errResp('Pedido não encontrado.');
+      const c = await ctxFor(admin, cfg, o.merchant_id);
+      if (!c) return errResp('Loja do iFood sem autorização no app ERPOS PDV.');
+      const dr = o.driver_request ?? null;
+      const ativo = !!dr && DRIVER_ACTIVE.includes(dr.status);
+      const now = new Date().toISOString();
+      const salvar = async (v: unknown) => {
+        const { error } = await admin.from('ifood_orders').update({ driver_request: v, updated_at: new Date().toISOString() }).eq('id', o.id);
+        if (error) throw new Error('Gravar chamada do entregador: ' + error.message);
+      };
+      if (action !== 'order_driver_cancel') {
+        if (o.order_type !== 'DELIVERY' || o.delivered_by === 'IFOOD') return errResp('Só pedido de entrega feita pela loja pode chamar entregador do iFood.');
+        if (['concluded', 'cancelled'].includes(o.status)) return errResp('Esse pedido já terminou.');
+        if (ativo) return errResp('Já tem um entregador do iFood chamado para este pedido.');
+      }
+      if (action === 'order_driver_quote') {
+        const r = await call(admin, c, 'GET', `/shipping/v1.0/orders/${o.ifood_order_id}/deliveryAvailabilities`);
+        if (!r.ok) return errResp(msgErro(r, 'Cotação'), 200, { code: errCode(r) || null });
+        await salvar({ status: 'quoted', quote_id: r.data?.id ?? null, quote: r.data ?? null, quoted_at: now, by: userId });
+        log('INFO', 'driver', 'quote', { order: o.ifood_order_id, quote: r.data?.id ?? null, tenantId });
+        return json({ success: true, quote: r.data });
+      }
+      if (action === 'order_driver_request') {
+        const quoteId = String(body.quote_id ?? '').trim();
+        if (!quoteId || dr?.quote_id !== quoteId) return errResp('Veja o preço (cotação) antes de chamar o entregador.');
+        if (dr?.quote?.expirationAt && new Date(dr.quote.expirationAt) < new Date()) return errResp('A cotação venceu — veja o preço de novo.');
+        // Reserva antes do POST (2 cliques/2 abas): só segue quem trocou 'quoted' por 'requested'.
+        const reservado = { ...dr, status: 'requested', requested_at: now, by: userId, error: null, uncertain: false, timeline: { REQUESTED: now } };
+        const { data: trava } = await admin.from('ifood_orders').update({ driver_request: reservado, updated_at: now })
+          .eq('id', o.id).eq('driver_request->>status', 'quoted').eq('driver_request->>quote_id', quoteId).select('id');
+        if (!trava?.length) return errResp('Outra pessoa já chamou o entregador deste pedido — atualize a tela.');
+        // POST vai uma vez só: 5xx/queda pode ter sido aceito pelo iFood.
+        const r = await call(admin, c, 'POST', `/shipping/v1.0/orders/${o.ifood_order_id}/requestDriver`, { quoteId }, { 'idempotency-key': `driver-${o.ifood_order_id}-${quoteId}` });
+        if (!r.ok) {
+          const incerto = r.status === 0 || r.status >= 500;
+          const msg = incerto
+            ? 'O iFood não respondeu direito — pode ter chamado o entregador. Confira no Gestor de Pedidos do iFood antes de chamar de novo.'
+            : msgErro(r, 'Chamar entregador');
+          log(incerto ? 'ERROR' : 'WARN', 'driver', incerto ? 'resposta incerta' : 'recusado', { order: o.ifood_order_id, status: r.status, body: r.raw.slice(0, 300) });
+          await salvar({ ...reservado, status: 'failed', error: msg, uncertain: incerto });
+          return errResp(msg, 200, { code: errCode(r) || null, uncertain: incerto });
+        }
+        log('INFO', 'driver', 'request', { order: o.ifood_order_id, quote: quoteId, tenantId });
+        if (o.order_id) await admin.from('orders').update({ updated_at: now }).eq('id', o.order_id); // acorda as telas
+        return json({ success: true, message: 'Entregador pedido ao iFood — a confirmação chega em até 30 s.' });
+      }
+      // order_driver_cancel
+      if (!ativo) return errResp('Não há entregador do iFood chamado para este pedido.');
+      const r = await call(admin, c, 'POST', `/shipping/v1.0/orders/${o.ifood_order_id}/cancelRequestDriver`, undefined, { 'idempotency-key': `driver-cancel-${o.ifood_order_id}-${dr.quote_id ?? ''}` });
+      if (!r.ok) return errResp(apiError(r, 'Cancelar chamada'));
+      await salvar({ ...dr, status: 'cancel_requested', error: null });
+      log('INFO', 'driver', 'cancel', { order: o.ifood_order_id, tenantId });
+      return json({ success: true, message: 'Cancelamento da chamada enviado — o iFood confirma em até 30 s (sem taxa antes do aceite).' });
+    }
+
     // Operar o pedido pelo ERPOS (confirmar, preparo, pronto, despachar, cancelar): só no modo "operar" —
     // em produção a loja opera pelo Gestor de Pedidos do iFood (modo só leitura).
     if (action === 'order_action' || action === 'order_cancel_reasons') {

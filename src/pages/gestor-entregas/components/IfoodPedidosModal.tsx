@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useVoltarFecha } from '@/lib/voltarAndroid';
-import { ifoodShipping, fetchIfoodOrders, IFOOD_ORDER_LABEL, ifoodTipoPedido, ifoodPodeDespachar, type IfoodOrder } from '@/lib/ifoodShipping';
+import { ifoodShipping, fetchIfoodOrders, IFOOD_ORDER_LABEL, IFOOD_DRIVER_LABEL, IFOOD_DRIVER_ATIVO, ifoodDriverPodeCancelar, ifoodTipoPedido, ifoodPodeDespachar, type IfoodOrder } from '@/lib/ifoodShipping';
 import { fmtMoeda } from '../utils';
 import IfoodVinculosModal from './IfoodVinculosModal';
 import BotaoLinkCliente from '@/components/ifood/BotaoLinkCliente';
@@ -188,6 +188,9 @@ export default function IfoodPedidosModal({ tenantId, operar, funil = false, onC
                         </>
                       )}
                     </div>
+                    {p.order_type === 'DELIVERY' && p.delivered_by !== 'IFOOD' && (p.driver_request || !['concluded', 'cancelled'].includes(p.status)) && (
+                      <EntregadorIfood p={p} tenantId={tenantId} busy={busy} setBusy={setBusy} setMsg={setMsg} recarregar={carregar} />
+                    )}
                     {p.dispute && <Negociacao d={p.dispute} operar={operar} busy={busy} id={p.id} onResponder={(op, reason) => acao(p, op, { reason })} />}
                     {motivos?.id === p.id && (
                       <div className="flex gap-1.5">
@@ -214,6 +217,59 @@ function Botao({ on, b, t, cor, off }: { on: () => void; b: boolean; t: string; 
     <button disabled={b || off} onClick={on} className={`px-2.5 py-1.5 rounded-lg text-white font-bold disabled:opacity-50 ${cor}`}>
       {b ? '…' : t}
     </button>
+  );
+}
+
+// Entregador do iFood para pedido do iFood com entrega da loja (Shipping): ver preço e prazo → chamar → acompanhar.
+// Cancelar a chamada só antes do entregador aceitar (sem taxa). O código de coleta do pedido aparece em "Entrega".
+const minutos = (seg?: number) => (seg != null ? Math.round(seg / 60) : null);
+function EntregadorIfood({ p, tenantId, busy, setBusy, setMsg, recarregar }: {
+  p: IfoodOrder; tenantId: string; busy: string; setBusy: (v: string) => void;
+  setMsg: (m: { ok: boolean; t: string } | null) => void; recarregar: () => void;
+}) {
+  const d = p.driver_request ?? null;
+  const ativo = !!d && IFOOD_DRIVER_ATIVO.includes(d.status);
+  const terminou = ['concluded', 'cancelled'].includes(p.status);
+  const q = d?.status === 'quoted' ? d.quote : null;
+  const vencida = !!q?.expirationAt && new Date(q.expirationAt) < new Date();
+  const rodar = async (action: string, extra: Record<string, unknown> = {}) => {
+    setBusy(p.id + action); setMsg(null);
+    const r = await ifoodShipping<{ message?: string }>(action, tenantId, { order_row_id: p.id, ...extra });
+    setBusy('');
+    if (!r.success) setMsg({ ok: false, t: r.error ?? 'Falhou.' });
+    else if (r.message) setMsg({ ok: true, t: r.message });
+    recarregar();
+  };
+  return (
+    <div className="rounded-lg border border-red-100 bg-red-50/50 p-2 space-y-1.5">
+      <p className="font-bold text-zinc-700"><i className="ri-e-bike-2-line text-red-600" /> Entregador do iFood</p>
+      {d && d.status !== 'quoted' && (
+        <p className={d.status === 'failed' ? 'text-red-600 font-semibold' : 'text-zinc-700'}>
+          {IFOOD_DRIVER_LABEL[d.status] ?? d.status}
+          {d.driver?.name ? ` · ${d.driver.name}${d.driver.phone ? ` (${d.driver.phone})` : ''}` : ''}
+          {d.quote?.quote?.netValue != null ? ` · custo ${fmtMoeda(Number(d.quote.quote.netValue))}` : ''}
+        </p>
+      )}
+      {d?.error && d.status !== 'failed' && <p className="text-amber-700">{d.error}</p>}
+      {d?.status === 'failed' && d.error && <p className="text-red-600">{d.error}</p>}
+      {q && (
+        <p className="text-zinc-700">
+          Preço <b>{fmtMoeda(Number(q.quote?.netValue ?? 0))}</b>
+          {Number(q.quote?.discount ?? 0) > 0 ? <span className="text-zinc-400"> (de {fmtMoeda(Number(q.quote?.grossValue ?? 0))})</span> : null}
+          {q.deliveryTime ? ` · ${minutos(q.deliveryTime.min)}–${minutos(q.deliveryTime.max)} min` : ''}
+          {q.distance != null ? ` · ${(q.distance / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} km` : ''}
+          {vencida ? <span className="text-red-600"> · cotação vencida</span> : null}
+        </p>
+      )}
+      {!terminou && !ativo && (
+        <div className="flex flex-wrap gap-1.5">
+          <Botao on={() => rodar('order_driver_quote')} b={busy === p.id + 'order_driver_quote'} t={q ? 'Ver preço de novo' : 'Ver preço e prazo'} cor="bg-zinc-700" />
+          {q && !vencida && d?.quote_id && <Botao on={() => rodar('order_driver_request', { quote_id: d.quote_id })} b={busy === p.id + 'order_driver_request'} t="Chamar entregador" cor="bg-red-600" />}
+        </div>
+      )}
+      {ifoodDriverPodeCancelar(d) && <Botao on={() => rodar('order_driver_cancel')} b={busy === p.id + 'order_driver_cancel'} t="Cancelar chamada" cor="bg-zinc-500" />}
+      {d?.uncertain && <p className="text-amber-700">Confira no Gestor de Pedidos do iFood se o entregador foi chamado antes de tentar de novo.</p>}
+    </div>
   );
 }
 

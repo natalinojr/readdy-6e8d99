@@ -162,8 +162,26 @@ export interface IfoodOrder {
   /** Funil: pedido do ERPOS ligado (número/status) e por que ainda não entrou. */
   order_id?: string | null; funnel_error?: string | null;
   erpos?: { number: string | null; status: string; is_draft: boolean } | null;
+  /** Entregador do iFood chamado pelo ERPOS (pedido com entrega da loja; edge order_driver_*). */
+  driver_request?: IfoodDriverRequest | null;
   ifood_order_items?: IfoodOrderItem[];
 }
+
+export interface IfoodDriverRequest {
+  status: 'quoted' | 'requested' | 'allocated' | 'going_to_origin' | 'arrived_origin' | 'in_transit' | 'cancel_requested' | 'concluded' | 'cancelled' | 'failed';
+  quote_id: string | null; quoted_at?: string; requested_at?: string; error?: string | null; uncertain?: boolean;
+  quote: { id?: string; expirationAt?: string; distance?: number; quote?: { grossValue?: number; discount?: number; netValue?: number }; deliveryTime?: { min?: number; max?: number } } | null;
+  driver?: { name?: string; phone?: string; vehicle?: string } | null; timeline?: Record<string, string>;
+}
+export const IFOOD_DRIVER_LABEL: Record<IfoodDriverRequest['status'], string> = {
+  quoted: 'Cotado', requested: 'Procurando entregador', allocated: 'Entregador a caminho da loja', going_to_origin: 'Entregador a caminho da loja',
+  arrived_origin: 'Entregador chegou na loja', in_transit: 'Saiu para entrega', cancel_requested: 'Cancelando a chamada',
+  concluded: 'Entregue', cancelled: 'Chamada cancelada', failed: 'Sem entregador',
+};
+export const IFOOD_DRIVER_ATIVO = ['requested', 'allocated', 'going_to_origin', 'arrived_origin', 'in_transit', 'cancel_requested'];
+/** Cancelar a chamada só antes do entregador aceitar (doc: cancelRequestDriver). */
+export const ifoodDriverPodeCancelar = (d: IfoodDriverRequest | null | undefined) =>
+  !!d && ['requested', 'allocated'].includes(d.status) && !d.timeline?.ASSIGN_DRIVER && !d.timeline?.GOING_TO_ORIGIN;
 
 const hora = (iso?: unknown) => (typeof iso === 'string' && iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '');
 
@@ -192,7 +210,7 @@ export const ifoodPodeDespachar = (p: Pick<IfoodOrder, 'order_type' | 'delivered
 /** Pedidos do iFood desde `desde` (ISO), com itens (RLS: só da loja da pessoa). */
 export async function fetchIfoodOrders(tenantId: string, desde: string): Promise<IfoodOrder[]> {
   const { data } = await supabase.from('ifood_orders')
-    .select('id, merchant_id, ifood_order_id, display_id, status, order_type, order_timing, sales_channel, delivered_by, is_test, ordered_at, customer_name, customer_document, customer_orders_count, pickup_code, delivery_observations, address, total, payments, benefits, extra_info, schedule, dispute, cancel_reason, cancel_requested, last_event, timeline, created_at, updated_at, takeout:raw->takeout, dine_in:raw->dineIn, order_id, funnel_error, erpos:orders!ifood_orders_order_id_fkey(number, status, is_draft), ifood_order_items(id, idx, name, quantity, unit, unit_price, options_price, total_price, observations, external_code, options)')
+    .select('id, merchant_id, ifood_order_id, display_id, status, order_type, order_timing, sales_channel, delivered_by, is_test, ordered_at, customer_name, customer_document, customer_orders_count, pickup_code, delivery_observations, address, total, payments, benefits, extra_info, schedule, dispute, cancel_reason, cancel_requested, last_event, timeline, created_at, updated_at, takeout:raw->takeout, dine_in:raw->dineIn, order_id, funnel_error, driver_request, erpos:orders!ifood_orders_order_id_fkey(number, status, is_draft), ifood_order_items(id, idx, name, quantity, unit, unit_price, options_price, total_price, observations, external_code, options)')
     // Pela hora do PEDIDO (ordered_at): pedidos antigos trazidos ao conectar a loja entram com created_at de hoje e
     // apareciam todos como "de hoje". Pedido recém-chegado ainda sem detalhe (ordered_at nulo) entra pelo created_at.
     .eq('tenant_id', tenantId).or(`ordered_at.gte.${desde},and(ordered_at.is.null,created_at.gte.${desde})`)

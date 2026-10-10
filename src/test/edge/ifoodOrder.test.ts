@@ -84,3 +84,40 @@ describe('detalhe do pedido → linhas', () => {
     expect(m.benefitSponsors(d.benefits)).toEqual([{ value: 10, target: 'CART', sponsors: [{ name: 'IFOOD', value: 10 }] }]);
   });
 });
+
+describe('planDriverEvent — entregador do iFood para pedido com entrega da loja', () => {
+  const dr = (status: string, extra: any = {}) => ({ status, quote_id: 'q1', quote: { quote: { netValue: 7.99 } }, timeline: {}, ...extra });
+  it('sem chamada feita pelo ERPOS (ou só cotado) não mexe', () => {
+    expect(m.planDriverEvent(null, ev('ASSIGN_DRIVER'))).toBeNull();
+    expect(m.planDriverEvent(dr('quoted'), ev('REQUEST_DRIVER_SUCCESS'))).toBeNull();
+  });
+  it('evento que não é de entrega não mexe', () => {
+    expect(m.planDriverEvent(dr('requested'), ev('CONFIRMED'))).toBeNull();
+  });
+  it('sucesso → alocado; ASSIGN_DRIVER traz o entregador', () => {
+    expect(m.planDriverEvent(dr('requested'), ev('REQUEST_DRIVER_SUCCESS')).status).toBe('allocated');
+    const p = m.planDriverEvent(dr('allocated'), ev('ASSIGN_DRIVER', { workerName: 'João', workerPhone: '41999990000' }));
+    expect(p.status).toBe('allocated');
+    expect(p.driver).toEqual({ name: 'João', phone: '41999990000' });
+    expect(p.timeline.ASSIGN_DRIVER).toBe('2026-09-26T20:00:00.000Z');
+  });
+  it('falha → failed com motivo', () => {
+    const p = m.planDriverEvent(dr('requested'), ev('REQUEST_DRIVER_FAILED', { reason: 'HighDemand' }));
+    expect(p.status).toBe('failed');
+    expect(p.error).toContain('HighDemand');
+  });
+  it('não volta a fase: ASSIGN_DRIVER atrasado depois de saiu', () => {
+    expect(m.planDriverEvent(dr('in_transit'), ev('ASSIGN_DRIVER')).status).toBe('in_transit');
+  });
+  it('cancelar a chamada: pedido → aceito; recusado volta para alocado', () => {
+    expect(m.planDriverEvent(dr('requested'), ev('DELIVERY_CANCELLATION_REQUESTED')).status).toBe('cancel_requested');
+    expect(m.planDriverEvent(dr('cancel_requested'), ev('DELIVERY_CANCELLATION_REQUEST_ACCEPTED')).status).toBe('cancelled');
+    const r = m.planDriverEvent(dr('cancel_requested'), ev('DELIVERY_CANCELLATION_REQUEST_REJECTED'));
+    expect(r.status).toBe('allocated');
+    expect(r.error).toBeTruthy();
+  });
+  it('encerrada não reabre', () => {
+    expect(m.planDriverEvent(dr('cancelled'), ev('REQUEST_DRIVER_SUCCESS')).status).toBe('cancelled');
+    expect(m.planDriverEvent(dr('allocated'), ev('CONCLUDED')).status).toBe('concluded');
+  });
+});
