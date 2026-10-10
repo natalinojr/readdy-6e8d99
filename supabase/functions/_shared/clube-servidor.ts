@@ -124,6 +124,21 @@ function nomeConfere(nomeCadastro: unknown, nomeDigitado: string): boolean {
   return a.length >= 2 && a === b;
 }
 
+/** Cadastro sem pontos, sem prêmio aberto e sem giro por usar. */
+async function semNadaAcumulado(admin: any, cli: { id: string; loyalty_points?: unknown }): Promise<boolean> {
+  if (Number(cli.loyalty_points ?? 0) > 0) return false;
+  const agora = new Date().toISOString();
+  const [bn, gr] = await Promise.all([
+    admin.from("loyalty_benefits").select("id", { count: "exact", head: true }).eq("customer_id", cli.id).is("used_at", null)
+      .or(`expires_at.is.null,expires_at.gt.${agora}`),
+    admin.from("loyalty_spins").select("id", { count: "exact", head: true }).eq("customer_id", cli.id).is("used_at", null)
+      .or(`expires_at.is.null,expires_at.gt.${agora}`),
+  ]);
+  if (bn.error) throw bn.error;
+  if (gr.error) throw gr.error;
+  return !bn.count && !gr.count;
+}
+
 /** Cadastro no clube (tablet ou internet). Nunca junta pelo celular de OUTRO
  *  cadastro (bastaria saber o celular de alguém para ficar com os pontos dele) — a
  *  exceção é cadastro só com celular, sem CPF, fora do clube e com o mesmo 1º nome. */
@@ -142,14 +157,19 @@ export async function cadastrarNoClube(admin: any, tenantId: string, body: any, 
   }
   const agora = new Date().toISOString();
 
-  const { data: porCpf } = await admin.from("customers").select("id, name, phone, loyalty_joined_at, birth_date")
+  const { data: porCpf } = await admin.from("customers").select("id, name, phone, loyalty_joined_at, birth_date, loyalty_points")
     .eq("tenant_id", tenantId).eq("cpf", cpf).is("deleted_at", null).maybeSingle();
+  // "Só CPF": criado pelo CPF da nota (2026-10-05) — sem celular, nome provisório, fora do clube.
+  const soCpf = !!porCpf && !porCpf.loyalty_joined_at && soDigitos(porCpf.phone).length < 10
+    && String(porCpf.name ?? "").startsWith("Cliente CPF ");
   // Pela internet, só CPF que a loja ainda não conhece — inclusive MEMBRO: sem isto,
   // "cadastrar" com o CPF de um membro devolvia a sessão dele (sem os 4 dígitos). CPF que
   // já existe (membro, caixa, nota) entra por "Entrar" ou passa pelo balcão.
-  // (2026-10-05) Todo CPF da nota vira cliente "só CPF" — quem já comprou com CPF ativa no tablet
-  // ou no caixa, presencial, onde o cadastro "só CPF" é completado com nome e celular.
-  if (opts.web && porCpf) return { erro: "Este CPF já comprou na loja. Para juntar seus pontos, ative o clube no tablet ou no caixa — se já é do clube, use Entrar." };
+  // (2026-10-10) Exceção: "só CPF" sem nada acumulado (pontos, prêmio, giro) — ativar pela internet
+  // não entrega nada de valor a quem só sabe o CPF. Com saldo, continua no tablet/caixa.
+  if (opts.web && porCpf && !(soCpf && await semNadaAcumulado(admin, porCpf))) {
+    return { erro: "Este CPF já comprou na loja. Para juntar seus pontos, ative o clube no tablet ou no caixa — se já é do clube, use Entrar." };
+  }
   if (porCpf?.loyalty_joined_at) return { customerId: porCpf.id };
 
   const { data: porCel } = await admin.from("customers").select("id, name, cpf, loyalty_joined_at, birth_date")
@@ -158,7 +178,21 @@ export async function cadastrarNoClube(admin: any, tenantId: string, body: any, 
     // (2026-10-10) Cadastro só com celular (delivery/caixa), ainda sem CPF e fora do clube:
     // junta o CPF nele em vez de mandar ao caixa. Só se o 1º nome bater (ou o nome for
     // provisório) — saber só o celular de alguém não basta para ficar com o cadastro dele.
-    if (!porCpf && !porCel.cpf && !porCel.loyalty_joined_at && nomeConfere(porCel.name, nome)) {
+    const celLivre = !porCel.cpf && !porCel.loyalty_joined_at && nomeConfere(porCel.name, nome);
+    // Mesma pessoa com o "só CPF" da nota E o cadastro do celular: junta os dois (fica o do
+    // celular, com o histórico do delivery; pedidos e pontos do "só CPF" vão junto).
+    if (celLivre && soCpf) {
+      const { error: jErr } = await admin.rpc("fn_juntar_clientes", { p_tenant: tenantId, p_manter: porCel.id, p_remover: porCpf.id });
+      if (jErr) throw jErr;
+      const { error } = await admin.from("customers").update({
+        ...(nomeProvisorio(porCel.name) ? { name: nome } : {}),
+        ...(porCel.birth_date || porCpf.birth_date ? {} : { birth_date: nascimento }),
+        loyalty_joined_at: agora, gdpr_consent_at: agora, accepts_marketing: body.aceita_ofertas === true, updated_at: agora,
+      }).eq("id", porCel.id);
+      if (error) throw error;
+      return { customerId: porCel.id };
+    }
+    if (!porCpf && celLivre) {
       const { data: juntou, error } = await admin.from("customers").update({
         cpf,
         ...(nomeProvisorio(porCel.name) ? { name: nome } : {}),
