@@ -11,7 +11,7 @@ export interface ClubeProgramaPublico {
   niveis: { id: string; nome: string; emoji: string; cor: string; min_compras: number; multiplicador: number; beneficios: string }[];
   janela_dias: number;
   recompensas: { id: string; nome: string; tipo: string; valor: number; custo_pontos: number; foto: string | null; preco: number | null; nivel_minimo: string | null }[];
-  roleta: { a_cada_compras: number; pedido_acima_de: number; ao_subir_nivel: boolean; aniversario: boolean; premios: string[]; fatias: { id: string; nome: string; cor: string; peso: number }[] } | null;
+  roleta: { a_cada_compras: number; primeira_compra?: boolean; pedido_acima_de: number; ao_subir_nivel: boolean; aniversario: boolean; premios: string[]; fatias: { id: string; nome: string; cor: string; peso: number }[] } | null;
 }
 
 export interface ClubeExtratoLinha { tipo: string; pontos: number; texto: string; data: string; vence: string | null; reservado: boolean }

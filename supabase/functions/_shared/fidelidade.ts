@@ -103,6 +103,10 @@ export interface FidelidadeConfig {
     ao_subir_nivel: boolean;
     aniversario: boolean;
     giro_validade_dias: number;
+    /** 1 giro na 1ª compra no clube (só compras feitas depois de ligar: giro_primeira_compra_desde). */
+    giro_primeira_compra: boolean;
+    /** Quando a opção acima foi ligada (ISO). Compras antes disso não dão o giro (sem retroativo). */
+    giro_primeira_compra_desde: string | null;
     /** O 1º giro de cada cliente sempre dá um prêmio de verdade (nunca "Não foi dessa vez"). */
     primeiro_giro_garantido: boolean;
     /** Prêmio fixo do 1º giro garantido (id de um prêmio da roleta). null = sorteio entre os prêmios de verdade. */
@@ -170,6 +174,8 @@ export function configPadrao(): FidelidadeConfig {
       ao_subir_nivel: true,
       aniversario: true,
       giro_validade_dias: 30,
+      giro_primeira_compra: false,
+      giro_primeira_compra_desde: null,
       primeiro_giro_garantido: false,
       primeiro_giro_premio_id: null,
       premios: [
@@ -279,6 +285,8 @@ export function normalizarConfig(bruto: unknown): FidelidadeConfig {
       ao_subir_nivel: bool(ro.ao_subir_nivel, p.roleta.ao_subir_nivel),
       aniversario: bool(ro.aniversario, p.roleta.aniversario),
       giro_validade_dias: Math.round(num(ro.giro_validade_dias, p.roleta.giro_validade_dias, 1, 365)),
+      giro_primeira_compra: bool(ro.giro_primeira_compra, p.roleta.giro_primeira_compra),
+      giro_primeira_compra_desde: typeof ro.giro_primeira_compra_desde === 'string' && !Number.isNaN(Date.parse(ro.giro_primeira_compra_desde)) ? ro.giro_primeira_compra_desde : null,
       primeiro_giro_garantido: bool(ro.primeiro_giro_garantido, p.roleta.primeiro_giro_garantido),
       primeiro_giro_premio_id: premios.some((z) => z.id === ro.primeiro_giro_premio_id && z.tipo !== 'nada') ? String(ro.primeiro_giro_premio_id) : null,
       premios,
@@ -373,7 +381,7 @@ export function avisosConfigPorSecao(cfg: FidelidadeConfig): AvisoConfig[] {
   if (cfg.roleta.ativo) {
     if (cfg.roleta.premios.length < 2) add('roleta', 'A roleta precisa de pelo menos 2 prêmios.');
     if (cfg.roleta.premios.length > 0 && chancesRoleta(cfg.roleta.premios).soma <= 0) add('roleta', 'Roleta ligada com todos os pesos zero: nenhum prêmio pode sair.');
-    if (!cfg.roleta.a_cada_compras && !cfg.roleta.pedido_acima_de && !cfg.roleta.ao_subir_nivel && !cfg.roleta.aniversario) add('roleta', 'Roleta ligada, mas nenhuma regra dá giro ao cliente.');
+    if (!cfg.roleta.a_cada_compras && !cfg.roleta.pedido_acima_de && !cfg.roleta.ao_subir_nivel && !cfg.roleta.aniversario && !cfg.roleta.giro_primeira_compra) add('roleta', 'Roleta ligada, mas nenhuma regra dá giro ao cliente.');
     if (!cfg.roleta.premios.some((p) => p.tipo === 'nada')) add('roleta', 'Sem "Não foi dessa vez", todo giro custa alguma coisa — confira o custo por giro.');
     if (cfg.roleta.primeiro_giro_garantido && !cfg.roleta.premios.some((p) => p.tipo !== 'nada' && p.peso > 0)) add('roleta', '1º giro garantido ligado, mas a roleta não tem nenhum prêmio de verdade com chance.');
     for (const p of cfg.roleta.premios) {

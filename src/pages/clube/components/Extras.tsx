@@ -43,7 +43,7 @@ export function ComoFunciona({ p }: { p: ClubeProgramaPublico }) {
         <section className="bg-white rounded-2xl border border-[#EFE7DD] p-4">
           <h3 className="font-extrabold text-zinc-900 mb-2">🎡 Roleta de prêmios</h3>
           <p className="text-sm text-zinc-600">
-            Ganhe giros {[p.roleta.a_cada_compras > 0 && `a cada ${p.roleta.a_cada_compras} compras`, p.roleta.pedido_acima_de > 0 && `em pedidos acima de ${brl(p.roleta.pedido_acima_de)}`, p.roleta.ao_subir_nivel && 'ao subir de nível', p.roleta.aniversario && 'no seu aniversário'].filter(Boolean).join(', ')}.
+            Ganhe giros {[p.roleta.primeira_compra && 'na sua 1ª compra no clube', p.roleta.a_cada_compras > 0 && `a cada ${p.roleta.a_cada_compras} compras`, p.roleta.pedido_acima_de > 0 && `em pedidos acima de ${brl(p.roleta.pedido_acima_de)}`, p.roleta.ao_subir_nivel && 'ao subir de nível', p.roleta.aniversario && 'no seu aniversário'].filter(Boolean).join(', ')}.
             {p.roleta.premios.length > 0 && <> Pode sair: {p.roleta.premios.join(', ')}.</>}
           </p>
         </section>

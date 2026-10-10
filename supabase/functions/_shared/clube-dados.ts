@@ -31,7 +31,7 @@ export async function programaPublicoDaLoja(admin: any, tenantId: string) {
                nivel_minimo: c.trilha.niveis.find((n) => n.id === r.nivel_minimo)?.nome ?? null };
     }),
     roleta: c.roleta.ativo ? {
-      a_cada_compras: c.roleta.a_cada_compras, pedido_acima_de: c.roleta.pedido_acima_de, ao_subir_nivel: c.roleta.ao_subir_nivel, aniversario: c.roleta.aniversario,
+      a_cada_compras: c.roleta.a_cada_compras, primeira_compra: c.roleta.giro_primeira_compra, pedido_acima_de: c.roleta.pedido_acima_de, ao_subir_nivel: c.roleta.ao_subir_nivel, aniversario: c.roleta.aniversario,
       premios: c.roleta.premios.filter((p) => p.tipo !== "nada").map((p) => p.nome),
       // Desenho da roleta (o tamanho da fatia é a chance — o mesmo que o tablet mostra).
       fatias: c.roleta.premios.map((p) => ({ id: p.id, nome: p.nome, cor: p.cor, peso: p.peso })),
