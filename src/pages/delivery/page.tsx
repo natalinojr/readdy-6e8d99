@@ -16,6 +16,7 @@ import { useIdiomaCardapio } from '@/hooks/useIdiomaCardapio';
 import { tx } from '@/lib/idiomaCardapio';
 import SeletorIdioma from '@/components/SeletorIdioma';
 import LojaTopo, { BotaoCapa, type LojaTopoMeta } from '@/components/cliente/LojaTopo';
+import BotaoClubeLoja from '@/components/cliente/BotaoClubeLoja';
 import BarraSacola from '@/components/cliente/BarraSacola';
 import { corLojaVars } from '@/lib/corLoja';
 import { situacaoLoja } from '@/lib/situacaoLoja';
@@ -568,6 +569,7 @@ export default function DeliveryPage() {
                 </span>
                 <i className="ri-arrow-right-s-line text-xl text-stone-400" />
               </button>
+              <BotaoClubeLoja tenantId={tenant?.id} />
             </LojaTopo>
 
             {/* Cardápio (montar a sacola já funciona) */}
@@ -876,6 +878,7 @@ export default function DeliveryPage() {
                   </a>
                 ) : null}
               </div>
+              <BotaoClubeLoja tenantId={tenant?.id} />
             </LojaTopo>
           ) : null}
           {subView === 'acompanhar_input' ? (

@@ -80,7 +80,12 @@ export function Cartao({ dados, loja }: { dados: ClubeDados; loja: LojaDoClube }
         <>
           <div className="relative h-2 rounded-full bg-white/20 overflow-hidden mt-3.5"><div className="h-full rounded-full" style={{ width: `${progresso}%`, background: 'var(--acc)' }} /></div>
           <div className="relative flex justify-between text-xs mt-1.5 opacity-90">
-            <span>{r.compras_janela} de {r.proximo.min_compras} compra{r.proximo.min_compras === 1 ? '' : 's'}</span>
+            {dados.compras ? (
+              <button type="button" onClick={() => document.getElementById('compras-nivel')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                className="underline underline-offset-2 cursor-pointer">
+                {r.compras_janela} de {r.proximo.min_compras} compra{r.proximo.min_compras === 1 ? '' : 's'}
+              </button>
+            ) : <span>{r.compras_janela} de {r.proximo.min_compras} compra{r.proximo.min_compras === 1 ? '' : 's'}</span>}
             <span>{(r.faltam_compras ?? 0) > 0 ? <>{r.faltam_compras === 1 ? 'Falta' : 'Faltam'} <b>{r.faltam_compras}</b> para {r.proximo.emoji} {r.proximo.nome}</> : <>Na próxima: {r.proximo.emoji} {r.proximo.nome}</>}</span>
           </div>
         </>
@@ -154,7 +159,49 @@ export function Inicio({ dados, loja, programa, token, indicacao, onVerPremios, 
       <Secao titulo="Últimos movimentos" acao={dados.extrato.length > 4 ? <button onClick={onExtrato} className="text-[12.5px] font-bold cursor-pointer" style={{ color: 'var(--brand)' }}>Extrato</button> : undefined}>
         <Extrato linhas={dados.extrato.slice(0, 4)} />
       </Secao>
+      {dados.compras && programa.niveis.length > 0 && (
+        <ComprasDoNivel compras={dados.compras} janelaDias={programa.janela_dias} nivel={r.nivel ? `${r.nivel.emoji} ${r.nivel.nome}` : null} />
+      )}
     </>
+  );
+}
+
+// O nível conta as compras pagas na janela da trilha — inclusive as de antes de entrar no
+// clube, que não deram pontos e por isso não aparecem em "Últimos movimentos".
+function ComprasDoNivel({ compras, janelaDias, nivel }: { compras: NonNullable<ClubeDados['compras']>; janelaDias: number; nivel: string | null }) {
+  const [todas, setTodas] = useState(false);
+  const lista = todas ? compras : compras.slice(0, 5);
+  const periodo = janelaDias > 0 ? `nos últimos ${janelaDias} dias` : 'desde o seu cadastro';
+  return (
+    <section id="compras-nivel" className="mt-6 scroll-mt-24">
+      <div className="flex items-center justify-between px-4 mb-1">
+        <h3 className="text-[15.5px] font-extrabold text-zinc-900">Compras que contam para o nível</h3>
+      </div>
+      <p className="px-4 mb-2.5 text-[12.5px] text-zinc-500 leading-snug">
+        {compras.length} compra{compras.length === 1 ? '' : 's'} paga{compras.length === 1 ? '' : 's'} {periodo}{nivel ? ` deixam você no nível ${nivel}` : ''}.
+        {' '}Compras feitas antes de entrar no clube contam para o nível, mas não dão pontos.
+      </p>
+      {compras.length === 0 ? (
+        <p className="mx-4 text-sm text-zinc-500 bg-white border border-[#EFE7DD] rounded-[18px] p-4">Nenhuma compra no período.</p>
+      ) : (
+        <Lista className="mx-4">
+          {lista.map((c, i) => (
+            <Linha key={(c.numero ?? '') + i}
+              icone={<Icone fundo="#F4EEE6">🛍️</Icone>}
+              titulo={c.numero ? `Compra #${c.numero}` : 'Compra'}
+              sub={`${dataBR(c.data)} · ${brl(c.total)}`}
+              direita={c.pontos > 0
+                ? <span className="text-[13.5px] font-extrabold tabular-nums whitespace-nowrap text-emerald-700">+{pts(c.pontos)}</span>
+                : <span className="text-[11.5px] font-semibold text-zinc-400 whitespace-nowrap">sem pontos</span>} />
+          ))}
+        </Lista>
+      )}
+      {compras.length > 5 && (
+        <button type="button" onClick={() => setTodas((v) => !v)} className="mx-4 mt-2 h-11 w-[calc(100%-2rem)] rounded-xl text-[13px] font-bold cursor-pointer" style={{ color: 'var(--brand)' }}>
+          {todas ? 'Mostrar menos' : `Ver todas (${compras.length})`}
+        </button>
+      )}
+    </section>
   );
 }
 

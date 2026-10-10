@@ -190,63 +190,67 @@ export default function ClubeCheckout({ tenantId, itens, subtotal, onChange, com
 
   return (
     <div className={`rounded-xl border ${compacto ? 'border-amber-200 bg-amber-50/60' : 'border-amber-300 bg-gradient-to-r from-amber-50 to-rose-50'} text-zinc-800`}>
-      <button type="button" onClick={() => setAberto((v) => !v)} className="w-full flex items-center gap-2 px-3 py-2.5 text-left cursor-pointer">
-        <span className="text-lg">{resumo?.nivel?.emoji ?? '👑'}</span>
-        <span className="flex-1 min-w-0 text-xs">
+      <button type="button" onClick={() => setAberto((v) => !v)} className="w-full min-h-[52px] flex items-center gap-2.5 px-3.5 py-3 text-left cursor-pointer">
+        <span className="text-xl">{resumo?.nivel?.emoji ?? '👑'}</span>
+        <span className="flex-1 min-w-0 text-sm">
           {resumo ? (
             <><b>{resumo.primeiro_nome}</b> · {resumo.nivel?.nome ?? programaNome} · <b>{pts(resumo.saldo)} pts</b>{desc.total > 0 ? <span className="text-green-700 font-bold"> · −{brl(desc.total)}</span> : usaveis.length > 0 ? <span className="text-amber-700 font-bold"> · {usaveis.length} prêmio{usaveis.length > 1 ? 's' : ''} para usar</span> : null}</>
           ) : (
             travado ? <><b>{programaNome}</b>: confirme com a digital</> : <><b>{programaNome}</b>: entre e ganhe pontos neste pedido</>
           )}
         </span>
-        <i className={`ri-arrow-${aberto ? 'up' : 'down'}-s-line text-zinc-500`} />
+        <i className={`ri-arrow-${aberto ? 'up' : 'down'}-s-line text-xl text-zinc-500`} />
       </button>
 
       {aberto && (
-        <div className="px-3 pb-3 space-y-2">
+        <div className="px-3.5 pb-3.5 space-y-2.5">
           {travado ? (
-            <button type="button" onClick={() => { void destravar(); }} disabled={ocupado} className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-black rounded-lg cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5">
+            <button type="button" onClick={() => { void destravar(); }} disabled={ocupado} className="w-full min-h-[48px] py-2.5 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-sm font-black rounded-xl cursor-pointer disabled:opacity-50 flex items-center justify-center gap-1.5">
               <i className="ri-fingerprint-line text-base" />{ocupado ? 'Aguarde…' : 'Confirmar com a digital para ver seus pontos'}
             </button>
           ) : !resumo ? (
             <>
               <div className="flex gap-2">
-                <input value={formatarCpf(cpf)} onChange={(e) => setCpf(e.target.value.replace(/\D/g, '').slice(0, 11))} inputMode="numeric" placeholder="CPF" className="flex-1 min-w-0 px-3 py-2 text-xs border border-zinc-200 rounded-lg bg-white focus:outline-none focus:border-amber-400" />
-                <input value={celular} onChange={(e) => setCelular(e.target.value.replace(/\D/g, '').slice(0, 11))} inputMode="tel" autoComplete="tel-national" placeholder="Celular com DDD" className="w-36 min-w-0 px-2 py-2 text-xs border border-zinc-200 rounded-lg bg-white focus:outline-none focus:border-amber-400" />
+                <input value={formatarCpf(cpf)} onChange={(e) => setCpf(e.target.value.replace(/\D/g, '').slice(0, 11))} inputMode="numeric" placeholder="CPF" className="flex-1 min-w-0 h-12 px-3 text-base border border-zinc-200 rounded-xl bg-white focus:outline-none focus:border-amber-400" />
+                <input value={celular} onChange={(e) => setCelular(e.target.value.replace(/\D/g, '').slice(0, 11))} inputMode="tel" autoComplete="tel-national" placeholder="Celular com DDD" className="w-40 min-w-0 h-12 px-3 text-base border border-zinc-200 rounded-xl bg-white focus:outline-none focus:border-amber-400" />
               </div>
-              <button type="button" onClick={() => { void entrar(); }} disabled={ocupado} className="w-full py-2 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-black rounded-lg cursor-pointer disabled:opacity-50">
+              <button type="button" onClick={() => { void entrar(); }} disabled={ocupado} className="w-full h-12 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-sm font-black rounded-xl cursor-pointer disabled:opacity-50">
                 {ocupado ? 'Entrando…' : 'Entrar no clube'}
               </button>
-              {slug && <a href={`/clube/${slug}`} target="_blank" rel="noreferrer" className="block text-center text-[11px] text-amber-700 underline">Ainda não é do clube? Cadastre-se grátis</a>}
+              {slug && <a href={`/clube/${slug}`} target="_blank" rel="noreferrer" className="flex items-center justify-center h-11 text-sm font-bold text-amber-800 underline">Ainda não é do clube? Cadastre-se grátis</a>}
             </>
           ) : (
             <>
               {reservas.map((r) => {
                 const v = desc.porReserva[r.hold_id] ?? 0;
                 return (
-                  <div key={r.hold_id} className="flex items-center gap-2 text-xs bg-white rounded-lg px-2.5 py-2 border border-green-200">
+                  <div key={r.hold_id} className="flex items-center gap-2 text-sm bg-white rounded-xl pl-3 pr-1 py-1.5 border border-green-200">
                     <span className="flex-1 min-w-0"><b>🎁 {rotuloPremio(r.reward)}</b>{v > 0 ? <span className="text-green-700"> −{brl(v)}</span> : <span className="text-amber-700"> · adicione o item ao carrinho</span>}</span>
-                    <button type="button" onClick={() => { void remover(r.hold_id); }} disabled={ocupado} className="text-zinc-400 hover:text-red-600 cursor-pointer"><i className="ri-close-circle-line" /></button>
+                    <button type="button" onClick={() => { void remover(r.hold_id); }} disabled={ocupado} aria-label="Remover prêmio" className="w-11 h-11 flex items-center justify-center text-zinc-400 hover:text-red-600 cursor-pointer"><i className="ri-close-circle-line text-xl" /></button>
                   </div>
                 );
               })}
               {usaveis.length > 0 ? usaveis.map((u) => (
-                <div key={u.key} className="flex items-center gap-2 text-xs bg-white rounded-lg px-2.5 py-2 border border-zinc-200">
+                <div key={u.key} className="flex items-center gap-2 text-sm bg-white rounded-xl pl-3 pr-1.5 py-1.5 border border-zinc-200">
                   <span className="flex-1 min-w-0"><b>{u.nome}</b> <span className="text-zinc-500">· {u.detalhe}</span></span>
-                  <button type="button" onClick={() => { void usar(u.alvo); }} disabled={ocupado} className="px-2.5 py-1 bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold rounded-md cursor-pointer disabled:opacity-50">Usar</button>
+                  <button type="button" onClick={() => { void usar(u.alvo); }} disabled={ocupado} className="h-10 px-4 bg-amber-500 hover:bg-amber-400 text-zinc-950 text-sm font-black rounded-lg cursor-pointer disabled:opacity-50">Usar</button>
                 </div>
               )) : reservas.length === 0 && (
-                <p className="text-[11px] text-zinc-600">
+                <p className="text-[13px] leading-snug text-zinc-600">
                   {resumo.recompensas[0] ? `Faltam ${pts(resumo.recompensas[0].falta)} pts para ${resumo.recompensas[0].nome}. ` : ''}Este pedido já soma pontos quando for pago.
                 </p>
               )}
-              <div className="flex justify-between text-[11px]">
-                {slug ? <a href={`/clube/${slug}`} target="_blank" rel="noreferrer" className="text-amber-700 underline">Ver meu clube</a> : <span />}
-                <button type="button" onClick={sair} className="text-zinc-400 hover:text-zinc-700 cursor-pointer">Não sou eu</button>
+              <div className="flex items-center gap-2">
+                {slug ? (
+                  <a href={`/clube/${slug}`} target="_blank" rel="noreferrer" className="flex-1 h-11 flex items-center justify-center gap-1.5 rounded-xl border-2 border-amber-400 bg-white text-sm font-bold text-amber-800 no-underline">
+                    <i className="ri-vip-crown-2-line text-base" />Ver meu clube
+                  </a>
+                ) : <span className="flex-1" />}
+                <button type="button" onClick={sair} className="h-11 px-3 text-sm font-semibold text-zinc-500 hover:text-zinc-800 cursor-pointer">Não sou eu</button>
               </div>
             </>
           )}
-          {erro && <p className="text-[11px] text-red-600 font-semibold">{erro}</p>}
+          {erro && <p className="text-[13px] text-red-600 font-semibold">{erro}</p>}
           <ConviteAppLinha tenantId={tenantId} />
         </div>
       )}

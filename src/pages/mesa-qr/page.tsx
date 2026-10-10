@@ -11,6 +11,8 @@ import LojaTopo from '@/components/cliente/LojaTopo';
 import BarraSacola from '@/components/cliente/BarraSacola';
 import { corLojaVars } from '@/lib/corLoja';
 import { useStatusPedidoQR } from './useStatusPedidoQR';
+import { useContaAbertaQR } from './useContaAbertaQR';
+import BotaoClubeLoja from '@/components/cliente/BotaoClubeLoja';
 import { formatCurrency } from '@/lib/formatters';
 import { useIdiomaCardapio } from '@/hooks/useIdiomaCardapio';
 import { edgeUrl } from '@/lib/idiomaCardapio';
@@ -83,6 +85,14 @@ export default function MesaQRPage() {
   const statusQR = useStatusPedidoQR(
     participant ? { id: participant.id, access_token: participant.access_token } : null,
     step === 'cardapio' || step === 'confirmacao',
+  );
+
+  // Já pagou tudo (app ou caixa)? Some o "Pagar" da faixa. Reconsulta quando o andamento
+  // muda, quando sai/volta da confirmação e quando o modal de pagamento fecha.
+  const contaAberta = useContaAbertaQR(
+    participant ? { id: participant.id, access_token: participant.access_token } : null,
+    data.onlinePayEnabled && step === 'cardapio' && !data.showPagarConta,
+    (statusQR.status ? statusQR.status.etapa + ':' + statusQR.status.numero : '-'),
   );
 
   // Pedido novo confirmado: consulta o andamento na hora (senão a tela mostraria o do pedido anterior)
@@ -268,7 +278,7 @@ export default function MesaQRPage() {
                 <span className="block text-xs text-stone-300 mt-0.5 truncate">{participant.name} · toque para ver seus pedidos</span>
               </span>
             </button>
-            {data.onlinePayEnabled ? (
+            {data.onlinePayEnabled && contaAberta !== false ? (
               <button
                 type="button"
                 onClick={function () { data.setShowPagarConta(true); }}
@@ -339,6 +349,7 @@ export default function MesaQRPage() {
                     Pagar a conta da mesa
                   </button>
                 ) : null}
+                <BotaoClubeLoja tenantId={data.tenantId || null} />
               </LojaTopo>
 
               <div className="mt-3">

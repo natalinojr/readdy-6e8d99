@@ -16,10 +16,15 @@ export interface ClubeProgramaPublico {
 
 export interface ClubeExtratoLinha { tipo: string; pontos: number; texto: string; data: string; vence: string | null; reservado: boolean }
 
+/** Compra que conta para o nível (inclui as de antes de entrar no clube, que não deram pontos). */
+export interface ClubeCompraNivel { numero: string | null; data: string; total: number; pontos: number }
+
 export interface ClubeDados {
   token?: string;
   resumo: ClubeResumo;
   extrato: ClubeExtratoLinha[];
+  /** Ausente em servidor antigo. */
+  compras?: ClubeCompraNivel[];
   programa: ClubeProgramaPublico | null;
   loja: { nome?: string; slug?: string; tenant_id?: string };
 }

@@ -62,8 +62,8 @@ export function ConviteAppLinha({ tenantId }: { tenantId: string | null | undefi
   const app = useAppClube(tenantId);
   if (!app?.slug) return null;
   return (
-    <a href={linkInstalarApp(app.slug)} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-[11px] font-bold text-amber-800 underline">
-      <i className="ri-smartphone-line text-sm" />Baixe o app do clube: pontos em 1 toque e aviso de prêmio
+    <a href={linkInstalarApp(app.slug)} target="_blank" rel="noreferrer" className="flex items-center gap-2.5 min-h-[44px] text-[13px] leading-snug font-bold text-amber-800 underline">
+      <i className="ri-smartphone-line text-lg no-underline shrink-0" />Baixe o app do clube: pontos em 1 toque e aviso de prêmio
     </a>
   );
 }
