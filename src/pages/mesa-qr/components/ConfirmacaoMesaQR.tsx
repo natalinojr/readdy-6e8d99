@@ -46,6 +46,10 @@ interface Props {
   aguardandoPagamento?: { numero: string; total: number; pago: boolean } | null;
   /** Abre o pagamento pelo celular. Ausente = a loja não tem pagamento online (só no caixa). */
   onPagarAgora?: () => void;
+  /** Ainda falta pagar a conta (pedido que vai para a cozinha antes de pagar): oferece pagar já. */
+  contaAberta?: boolean;
+  /** Quanto falta na conta (pode somar pedidos anteriores da mesma senha/mesa). */
+  faltaPagar?: number;
   /** Topo: logo e nome da loja */
   logoUrl?: string | null;
   nomeLoja?: string;
@@ -158,6 +162,25 @@ export default function ConfirmacaoMesaQR(props: Props) {
                   Pague no caixa informando a senha <strong className="text-stone-900">{accessToken}</strong>.
                 </p>
               )}
+            </section>
+          ) : null}
+
+          {/* Pedido já na cozinha e a loja aceita pagar pelo celular: pagar agora e não passar no caixa */}
+          {!segurado && props.onPagarAgora && props.contaAberta ? (
+            <section className="bg-white border border-stone-200/70 rounded-[18px] p-4">
+              <p className="text-base font-extrabold text-stone-900">Quer já deixar pago?</p>
+              <p className="text-[13px] text-stone-600 mt-0.5">
+                {fila ? 'Pague pelo celular e só retire no balcão, sem passar no caixa.' : 'Pague pelo celular e não precisa esperar a conta.'}
+              </p>
+              <button
+                type="button"
+                onClick={props.onPagarAgora}
+                className="mt-3 w-full h-14 rounded-2xl bg-[var(--cor-loja)] hover:bg-[var(--cor-loja-forte)] text-white flex items-center justify-between px-4 text-base font-bold cursor-pointer"
+              >
+                <span className="flex items-center gap-2"><i className="ri-secure-payment-line text-lg" />Pagar agora</span>
+                {fila && props.faltaPagar && props.faltaPagar > 0 ? <span>{formatCurrency(props.faltaPagar)}</span> : null}
+              </button>
+              <p className="text-[12px] text-stone-500 mt-2 text-center">Pix ou cartão. Se preferir, pague depois no caixa.</p>
             </section>
           ) : null}
 

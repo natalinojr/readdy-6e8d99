@@ -89,10 +89,10 @@ export default function MesaQRPage() {
 
   // Já pagou tudo (app ou caixa)? Some o "Pagar" da faixa. Reconsulta quando o andamento
   // muda, quando sai/volta da confirmação e quando o modal de pagamento fecha.
-  const contaAberta = useContaAbertaQR(
+  const conta = useContaAbertaQR(
     participant ? { id: participant.id, access_token: participant.access_token } : null,
-    data.onlinePayEnabled && step === 'cardapio' && !data.showPagarConta,
-    (statusQR.status ? statusQR.status.etapa + ':' + statusQR.status.numero : '-'),
+    data.onlinePayEnabled && (step === 'cardapio' || step === 'confirmacao') && !data.showPagarConta,
+    step + ':' + numeroPedido + ':' + (statusQR.status ? statusQR.status.etapa + ':' + statusQR.status.numero : '-'),
   );
 
   // Pedido novo confirmado: consulta o andamento na hora (senão a tela mostraria o do pedido anterior)
@@ -215,6 +215,8 @@ export default function MesaQRPage() {
           descontoClube={data.descontoConfirmado}
           aguardandoPagamento={aguardando}
           onPagarAgora={data.onlinePayEnabled ? function () { data.setShowPagarConta(true); } : undefined}
+          contaAberta={conta.aberta === true}
+          faltaPagar={conta.falta}
           logoUrl={data.logoUrl}
           nomeLoja={tenantName}
           nomeCliente={participant.name}
@@ -278,7 +280,7 @@ export default function MesaQRPage() {
                 <span className="block text-xs text-stone-300 mt-0.5 truncate">{participant.name} · toque para ver seus pedidos</span>
               </span>
             </button>
-            {data.onlinePayEnabled && contaAberta !== false ? (
+            {data.onlinePayEnabled && conta.aberta !== false ? (
               <button
                 type="button"
                 onClick={function () { data.setShowPagarConta(true); }}
