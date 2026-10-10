@@ -108,8 +108,25 @@ export async function membroPorCpf(admin: any, tenantId: string, cpf: unknown): 
   return data?.loyalty_joined_at ? data.id : null;
 }
 
+const semAcento = (s: unknown) => String(s ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
+/** Nome que a loja gravou sem saber o nome de verdade ("Cliente ...", vazio, só números). */
+function nomeProvisorio(nome: unknown): boolean {
+  const n = semAcento(nome);
+  return !/[a-z]/.test(n) || n.startsWith("cliente");
+}
+
+/** 1º nome digitado = 1º nome do cadastro (sem acento/maiúscula), ou cadastro com nome provisório. */
+function nomeConfere(nomeCadastro: unknown, nomeDigitado: string): boolean {
+  if (nomeProvisorio(nomeCadastro)) return true;
+  const primeiro = (s: unknown) => semAcento(s).split(/\s+/)[0] ?? "";
+  const a = primeiro(nomeCadastro), b = primeiro(nomeDigitado);
+  return a.length >= 2 && a === b;
+}
+
 /** Cadastro no clube (tablet ou internet). Nunca junta pelo celular de OUTRO
- *  cadastro (bastaria saber o celular de alguém para ficar com os pontos dele). */
+ *  cadastro (bastaria saber o celular de alguém para ficar com os pontos dele) — a
+ *  exceção é cadastro só com celular, sem CPF, fora do clube e com o mesmo 1º nome. */
 export async function cadastrarNoClube(admin: any, tenantId: string, body: any, opts: { web?: boolean } = {}): Promise<{ customerId?: string; erro?: string }> {
   const cpf = soDigitos(body.cpf);
   const nome = String(body.nome ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
@@ -135,9 +152,22 @@ export async function cadastrarNoClube(admin: any, tenantId: string, body: any, 
   if (opts.web && porCpf) return { erro: "Este CPF já comprou na loja. Para juntar seus pontos, ative o clube no tablet ou no caixa — se já é do clube, use Entrar." };
   if (porCpf?.loyalty_joined_at) return { customerId: porCpf.id };
 
-  const { data: porCel } = await admin.from("customers").select("id")
+  const { data: porCel } = await admin.from("customers").select("id, name, cpf, loyalty_joined_at, birth_date")
     .eq("tenant_id", tenantId).eq("phone", celular).is("deleted_at", null).maybeSingle();
   if (porCel && porCel.id !== porCpf?.id) {
+    // (2026-10-10) Cadastro só com celular (delivery/caixa), ainda sem CPF e fora do clube:
+    // junta o CPF nele em vez de mandar ao caixa. Só se o 1º nome bater (ou o nome for
+    // provisório) — saber só o celular de alguém não basta para ficar com o cadastro dele.
+    if (!porCpf && !porCel.cpf && !porCel.loyalty_joined_at && nomeConfere(porCel.name, nome)) {
+      const { data: juntou, error } = await admin.from("customers").update({
+        cpf,
+        ...(nomeProvisorio(porCel.name) ? { name: nome } : {}),
+        birth_date: porCel.birth_date ?? nascimento,
+        loyalty_joined_at: agora, gdpr_consent_at: agora, accepts_marketing: body.aceita_ofertas === true, updated_at: agora,
+      }).eq("id", porCel.id).is("cpf", null).select("id");
+      if (error) throw error;
+      if (juntou?.length) return { customerId: porCel.id };
+    }
     return { erro: "Este celular já tem cadastro na loja. Peça ao caixa para incluir seu CPF nele." };
   }
 
