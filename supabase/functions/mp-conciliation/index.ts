@@ -411,12 +411,23 @@ async function insertStatement(admin: Admin, rows: Record<string, unknown>[]) {
 // (origin auto_card_fee, que a DRE já lê). Idempotente: apaga o que este dia lançou e relança.
 // Venda no Mercado Livre fica FORA: cai na mesma conta do Mercado Pago, mas não é venda da loja
 // (aparece no extrato para o saldo fechar, nunca na receita).
+/** Categorias do extrato que tiram a entrada da receita (mesma ideia do fin_pix_recebidos). */
+const NAO_E_VENDA = ['Não é venda', 'Aporte de sócio', 'Transferência entre contas'];
+
 async function postLedger(admin: Admin, tenantId: string, importId: string, allSales: MpSale[]) {
   const { error: delErr } = await admin.from('fin_cash_flow')
     .delete().eq('tenant_id', tenantId).eq('reference_id', importId).in('origin', ['stone_sale', 'auto_card_fee']);
   if (delErr) throw new Error(`Limpar lançamentos: ${delErr.message}`);
 
-  const sales = allSales.filter((s) => !s.marketplace);
+  // Entrada que o dono marcou no extrato como não sendo venda (ex.: Pix de R$ 840,80 na conta MP em 11/09/2026,
+  // antes da maquininha) fica fora da receita — a marca vale também nas reimportações do dia.
+  const { data: marcadas, error: mErr } = await admin.from('fin_bank_statement_imports')
+    .select('pid:raw->>payment_id')
+    .eq('tenant_id', tenantId).eq('provider_import_id', importId).eq('raw->>kind', 'release')
+    .in('category', NAO_E_VENDA);
+  if (mErr) throw new Error(`Ler marcas do extrato: ${mErr.message}`);
+  const naoVenda = new Set(((marcadas ?? []) as Array<{ pid: string | null }>).map((m) => String(m.pid)));
+  const sales = allSales.filter((s) => !s.marketplace && !naoVenda.has(s.id));
   // Cada movimento no dia em que o dinheiro mexe: venda na liberação; estorno e contestação no dia
   // em que aconteceram, tirando o bruto da receita e devolvendo a taxa proporcional (como a Stone).
   type Day = { gross: number; fee: number; refund: number; cbk: number; n: number; loss: number };
