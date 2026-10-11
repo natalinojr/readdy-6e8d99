@@ -19,6 +19,8 @@ interface ItemPedido {
 interface Pedido {
   id: string;
   number: string;
+  /** 'cancelled' = pedido cancelado: aparece na lista, mas não entra no Total da Conta. */
+  status: string;
   total_amount: number;
   subtotal: number;
   items: ItemPedido[];
@@ -48,7 +50,7 @@ export default function MeusPedidosModal({
       try {
         const { data: orders } = await supabase
           .from('orders')
-          .select('id, number, total_amount, subtotal, created_at')
+          .select('id, number, status, total_amount, subtotal, created_at')
           .eq('table_session_id', tableSessionId)
           .eq('destination_name', clienteNome)
           .order('created_at', { ascending: true });
@@ -72,6 +74,7 @@ export default function MeusPedidosModal({
               return {
                 id: order.id,
                 number: order.number ?? `#${order.id.slice(0, 8)}`,
+                status: order.status ?? '',
                 total_amount: order.total_amount ?? 0,
                 subtotal: order.subtotal ?? 0,
                 created_at: order.created_at,
@@ -116,6 +119,7 @@ export default function MeusPedidosModal({
             return {
               id: order.id,
               number: order.number ?? `#${order.id.slice(0, 8)}`,
+              status: order.status ?? '',
               total_amount: order.total_amount ?? 0,
               subtotal: order.subtotal ?? 0,
               created_at: order.created_at,
@@ -147,7 +151,9 @@ export default function MeusPedidosModal({
     buscarPedidos();
   }, [tableSessionId, clienteNome, tenantId]);
 
-  const totalConta = pedidos.reduce((s, p) => s + p.total_amount, 0);
+  // Pedido cancelado não é consumo: fora do total e da contagem do rodapé.
+  const pedidosValidos = pedidos.filter((p) => p.status !== 'cancelled');
+  const totalConta = pedidosValidos.reduce((s, p) => s + p.total_amount, 0);
 
   const toggleExpand = (id: string) => {
     setExpandedOrderId((prev) => (prev === id ? null : id));
@@ -234,7 +240,7 @@ export default function MeusPedidosModal({
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className="text-sm font-bold text-zinc-900">{fmt(pedido.total_amount)}</span>
+                        <span className={`text-sm font-bold ${pedido.status === 'cancelled' ? 'text-zinc-400 line-through' : 'text-zinc-900'}`}>{fmt(pedido.total_amount)}</span>
                         <div className="w-6 h-6 flex items-center justify-center text-zinc-400">
                           {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         </div>
@@ -337,7 +343,7 @@ export default function MeusPedidosModal({
           <div className="flex items-center justify-between">
             <div>
               <p className="text-[10px] text-zinc-400 uppercase tracking-wider">Total da Conta</p>
-              <p className="text-[10px] text-zinc-400">{pedidos.length} {pedidos.length === 1 ? 'pedido' : 'pedidos'}</p>
+              <p className="text-[10px] text-zinc-400">{pedidosValidos.length} {pedidosValidos.length === 1 ? 'pedido' : 'pedidos'}</p>
             </div>
             <span className="text-xl font-black text-amber-600">{fmt(totalConta)}</span>
           </div>

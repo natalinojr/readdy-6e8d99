@@ -7,6 +7,7 @@ import { useSearchParams } from 'react-router-dom';
 import { invokeWithAuth } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { avisar } from '@/components/base/Dialogos';
+import { todayBrasilia } from '@/lib/dateUtils';
 
 type Resultado = 'preparada' | 'guardada' | 'ja_paga' | 'erro' | 'nao_reconhecida';
 
@@ -46,7 +47,7 @@ function situacao(g: GuiaEnviada): { label: string; cls: string } {
   if (g.resultado === 'erro') return { label: 'Não lançada', cls: 'bg-red-50 text-red-600' };
   if (g.pagamento_status === 'rejected' || g.pagamento_status === 'cancelled') return { label: 'Pagamento recusado', cls: 'bg-red-50 text-red-600' };
   if (g.resultado === 'preparada') return { label: 'Aguardando o dono pagar', cls: 'bg-amber-50 text-amber-700' };
-  if (g.vencimento && g.vencimento < new Date().toISOString().slice(0, 10)) return { label: 'Vencida sem pagar', cls: 'bg-red-50 text-red-600' };
+  if (g.vencimento && g.vencimento < todayBrasilia()) return { label: 'Vencida sem pagar', cls: 'bg-red-50 text-red-600' };
   return { label: 'Lançada · paga no vencimento', cls: 'bg-sky-50 text-sky-700' };
 }
 

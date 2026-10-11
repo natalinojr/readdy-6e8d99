@@ -799,6 +799,9 @@ const MODE_TOOLTIPS: Record<DREMode, string> = {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 /** Receita recebida da DRE (soma das fontes já aplicadas). Única conta: tabela, gráfico e ação rápida. */
+/** Linha de receita aparece quando o mês atual OU o anterior têm valor (a coluna do mês anterior precisa fechar). */
+const temValor = (atual?: number, anterior?: number) => (atual ?? 0) > 0 || (anterior ?? 0) > 0;
+
 export const receitaRecebidaDe = (d: DREData) => d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento
   + d.receitaManual + (d.receitaStone ?? 0) + (d.receitaPix ?? 0) + (d.receitaIfood ?? 0) + (d.receitaDinheiro ?? 0);
 
@@ -1370,49 +1373,51 @@ export default function DRETab() {
 
                 {/* ── RECEITAS ── */}
                 <SectionHeader label="Receitas" icon="ri-arrow-down-circle-line" tone="emerald" />
-                {data.receitaBalcao > 0 && (
+                {/* Linha aparece se o mês atual OU o anterior tiver valor: a coluna do mês anterior
+                    precisa somar a "Receita bruta" dele (antes o mês passado escondia linhas). */}
+                {temValor(data.receitaBalcao, prevData?.receitaBalcao) && (
                   <DRERow label="Vendas balcão / hora" atual={data.receitaBalcao} anterior={prevData?.receitaBalcao} receitaBruta={receitaBruta} depth={1}
                     origin="Livro-razão: fin_cash_flow → auto_sale" clickable onClick={() => setDrillDown({ type: 'receita_balcao' })} />
                 )}
-                {data.receitaDelivery > 0 && (
+                {temValor(data.receitaDelivery, prevData?.receitaDelivery) && (
                   <DRERow label="Vendas delivery" atual={data.receitaDelivery} anterior={prevData?.receitaDelivery} receitaBruta={receitaBruta} depth={1}
                     origin="Livro-razão: fin_cash_flow → auto_sale" clickable onClick={() => setDrillDown({ type: 'receita_delivery' })} />
                 )}
-                {data.receitaMesa > 0 && (
+                {temValor(data.receitaMesa, prevData?.receitaMesa) && (
                   <DRERow label="Vendas mesa" atual={data.receitaMesa} anterior={prevData?.receitaMesa} receitaBruta={receitaBruta} depth={1}
                     origin="Livro-razão: fin_cash_flow → auto_sale" clickable onClick={() => setDrillDown({ type: 'receita_mesa' })} />
                 )}
-                {data.receitaAutoatendimento > 0 && (
+                {temValor(data.receitaAutoatendimento, prevData?.receitaAutoatendimento) && (
                   <DRERow label="Autoatendimento" atual={data.receitaAutoatendimento} anterior={prevData?.receitaAutoatendimento} receitaBruta={receitaBruta} depth={1}
                     origin="Livro-razão: fin_cash_flow → auto_sale" clickable onClick={() => setDrillDown({ type: 'receita_autoatendimento' })} />
                 )}
-                {(data.receitaStone ?? 0) > 0 && (
+                {temValor(data.receitaStone, prevData?.receitaStone) && (
                   <DRERow label={`Vendas em cartão (${flowLabels.card})`} atual={data.receitaStone} anterior={prevData?.receitaStone} receitaBruta={receitaBruta} depth={1}
                     origin={dreMode === 'competencia'
                       ? 'Vendas em cartão pela DATA DA VENDA (arquivo de conciliação da Stone), valor bruto. A taxa da venda (MDR) também pela data da venda; antecipação e tarifas pela data do repasse, em Taxas de cartão.'
                       : 'Livro-razão: fin_cash_flow → stone_sale (vendas em cartão pela DATA DO REPASSE, valor bruto; as taxas estão em Taxas de cartão)'} />
                 )}
-                {(data.receitaStone ?? 0) > 0 && linhasDetalhe(data.cartaoPorMaquininha, prevData?.cartaoPorMaquininha).map(k => (
+                {temValor(data.receitaStone, prevData?.receitaStone) && linhasDetalhe(data.cartaoPorMaquininha, prevData?.cartaoPorMaquininha).map(k => (
                   <DRERow key={`cartao-${k}`} label={k} atual={data.cartaoPorMaquininha?.[k] ?? 0} anterior={prevData?.cartaoPorMaquininha?.[k] ?? 0} receitaBruta={receitaBruta} depth={2} />
                 ))}
-                {(data.receitaPix ?? 0) > 0 && (
+                {temValor(data.receitaPix, prevData?.receitaPix) && (
                   <DRERow label={`Pix recebido (${flowLabels.bank})`} atual={data.receitaPix ?? 0} anterior={prevData?.receitaPix} receitaBruta={receitaBruta} depth={1}
                     origin={`Extrato do ${flowLabels.bank} → créditos Pix${flowLabels.pixMode === 'transfer' ? ' (inclui o Pix da maquininha transferido da conta dela)' : ''}. Aberto pela etiqueta dada na Conciliação.`} />
                 )}
-                {(data.receitaPix ?? 0) > 0 && linhasDetalhe(data.pixPorEtiqueta, prevData?.pixPorEtiqueta).map(k => (
+                {temValor(data.receitaPix, prevData?.receitaPix) && linhasDetalhe(data.pixPorEtiqueta, prevData?.pixPorEtiqueta).map(k => (
                   <DRERow key={`pix-${k}`} label={k} atual={data.pixPorEtiqueta?.[k] ?? 0} anterior={prevData?.pixPorEtiqueta?.[k] ?? 0} receitaBruta={receitaBruta} depth={2} />
                 ))}
-                {(data.receitaDinheiro ?? 0) > 0 && (
+                {temValor(data.receitaDinheiro, prevData?.receitaDinheiro) && (
                   <DRERow label="Vendas em dinheiro (caixa)" atual={data.receitaDinheiro ?? 0} anterior={prevData?.receitaDinheiro} receitaBruta={receitaBruta} depth={1}
                     origin="Livro-razão: fin_cash_flow → auto_sale dos pagamentos em dinheiro (data da venda)" />
                 )}
-                {(data.receitaIfood ?? 0) > 0 && (
+                {temValor(data.receitaIfood, prevData?.receitaIfood) && (
                   <DRERow label="Vendas iFood" atual={data.receitaIfood ?? 0} anterior={prevData?.receitaIfood} receitaBruta={receitaBruta} depth={1}
                     origin={dreMode === 'competencia'
                       ? 'Relatório de conciliação do iFood (fin_ifood_entries): vendas pela DATA DO PEDIDO, sem o que a loja recebeu direto. Comissões e taxas, também pela data do pedido, estão em Taxas de cartão, Pix e iFood.'
                       : 'Livro-razão: fin_cash_flow → ifood_sale (vendas do iFood pela DATA DO REPASSE, o que entrou no mês; comissões e taxas estão em Taxas de cartão, Pix e iFood)'} />
                 )}
-                {data.receitaManual > 0 && (
+                {temValor(data.receitaManual, prevData?.receitaManual) && (
                   <DRERow label="Entradas manuais (fluxo de caixa)" atual={data.receitaManual} anterior={prevData?.receitaManual} receitaBruta={receitaBruta} depth={1}
                     origin="Movimentações manuais registradas no Fluxo de Caixa" clickable onClick={() => setDrillDown({ type: 'receita_manual' })} />
                 )}

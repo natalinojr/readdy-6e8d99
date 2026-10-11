@@ -168,11 +168,19 @@ export function getPeriodoAnterior(periodo: string): string {
   return `custom:${dateKeyBrasilia(prevFrom)}:${dateKeyBrasilia(prevTo)}`;
 }
 
-/** Label legível do período anterior (ex: "7 dias anteriores", "ontem") */
+/** Label legível do período anterior (ex: "7d anteriores", "ontem", "anteontem") */
 export function labelPeriodoAnterior(periodo: string): string {
   const { from, to } = getPeriodDateObjects(periodo);
   const diffDias = Math.round((to.getTime() - from.getTime()) / 86_400_000);
-  if (diffDias === 1) return 'ontem';
+  if (diffDias === 1) {
+    // Dia único: o anterior a hoje é "ontem"; o anterior a ontem é "anteontem" (a comparação de "Ontem" é com o dia
+    // antes dele, não com ele mesmo); de qualquer outro dia (período personalizado) é só "dia anterior".
+    const dia = dateKeyBrasilia(to);
+    const hoje = todayBrasilia();
+    if (dia === hoje) return 'ontem';
+    if (dia === somarDias(hoje, -1)) return 'anteontem';
+    return 'dia anterior';
+  }
   return `${diffDias}d anteriores`;
 }
 

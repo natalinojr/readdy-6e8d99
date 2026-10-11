@@ -20,6 +20,7 @@ import { usePermissoes } from '@/hooks/usePermissoes';
 import { relKeyDaAba } from '@/constants/permissoesAbas';
 import { useToast } from '@/contexts/ToastContext';
 import { baixarCsvRelatorio, type ExportadorRelatorio } from '@/lib/exportRelatorio';
+import { dateKeyBrasilia, todayBrasilia } from '@/lib/dateUtils';
 import type { RegistrarExport } from './useRegistrarExport';
 
 type Tab = 'geral' | 'caixa' | 'produtos' | 'cmv' | 'sla' | 'origem' | 'delivery' | 'ifood' | 'cancelamentos' | 'clientes' | 'calendario';
@@ -73,10 +74,12 @@ export default function RelatoriosPage() {
   // baseado nas datas da sessão para usar nas abas que filtram por data
   const periodoEfetivo = useMemo(() => {
     if (isSessao && selectedSession) {
-      const from = selectedSession.opened_at.slice(0, 10);
+      // Datas em Brasília: o slice(0,10) do ISO é UTC e, depois das 21h locais, empurrava o fim da sessão
+      // para o dia seguinte (o relatório somava um dia a mais).
+      const from = dateKeyBrasilia(selectedSession.opened_at);
       const to = selectedSession.closed_at
-        ? selectedSession.closed_at.slice(0, 10)
-        : new Date().toISOString().slice(0, 10);
+        ? dateKeyBrasilia(selectedSession.closed_at)
+        : todayBrasilia();
       return `custom:${from}:${to}`;
     }
     return periodo;

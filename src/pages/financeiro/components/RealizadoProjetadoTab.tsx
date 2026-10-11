@@ -105,20 +105,24 @@ export default function RealizadoProjetadoTab() {
     const maxRef = `${ey}-${String(em).padStart(2, '0')}`;
 
     try {
-      const [cf, st, ap, rc, pr, ba] = await Promise.all([
+      const [cf, st, ap, rc, pr, ba, ab] = await Promise.all([
         fetchAllRows<{ date: string; amount: number; type: string }>((from, to) =>
           supabase.from('fin_cash_flow').select('date, amount, type').eq('tenant_id', t).eq('fora_do_caixa', false).gte('date', start).lte('date', end).range(from, to)),
         fetchAllRows<{ transaction_date: string; amount: number; transaction_type: string; status: string; reconciled: boolean; source?: string | null }>((from, to) =>
           supabase.from('fin_bank_statement_imports').select('transaction_date, amount, transaction_type, status, reconciled, source').eq('tenant_id', t).gte('transaction_date', start).lte('transaction_date', end).range(from, to)),
-        fetchAllRows<{ due_date: string; amount: number; paid_amount: number | null; status: string; reference_type: string | null; reference_id: string | null }>((from, to) =>
-          supabase.from('fin_accounts_payable').select('due_date, amount, paid_amount, status, reference_type, reference_id').eq('tenant_id', t).gte('due_date', start).lte('due_date', end).range(from, to)),
+        fetchAllRows<{ id: string; due_date: string; amount: number; paid_amount: number | null; status: string; reference_type: string | null; reference_id: string | null }>((from, to) =>
+          supabase.from('fin_accounts_payable').select('id, due_date, amount, paid_amount, status, reference_type, reference_id').eq('tenant_id', t).gte('due_date', start).lte('due_date', end).range(from, to)),
         fetchAllRows<{ due_date: string; amount: number; status: string }>((from, to) =>
           supabase.from('fin_receivable_installments').select('due_date, amount, status').eq('tenant_id', t).gte('due_date', start).lte('due_date', end).range(from, to)),
         supabase.from('hr_payroll').select('net_salary, status, reference_month').eq('tenant_id', t).gte('reference_month', minRef).lte('reference_month', maxRef),
         supabase.from('fin_bank_accounts').select('current_balance, synced_balance, synced_balance_at').eq('tenant_id', t).eq('is_active', true),
+        // Regra única de contas em aberto (fn_contas_em_aberto): daqui só sai a marca `ja_paga` (compra "já paga na entrega").
+        supabase.rpc('fn_contas_em_aberto', { p_tenants: [t] }),
       ]);
       const firstErr = [cf, st, ap, rc].find((r) => r.error)?.error ?? pr.error ?? ba.error;
       if (firstErr) throw new Error(firstErr.message);
+      // Se a regra única falhar, segue sem o filtro (como era) em vez de derrubar a tela.
+      const jaPagasIds = new Set(((ab.data ?? []) as Array<{ id: string; ja_paga: boolean }>).filter((c) => c.ja_paga).map((c) => c.id));
 
       // Balde por dia
       const map: Record<string, Bucket> = {};
@@ -148,7 +152,8 @@ export default function RealizadoProjetadoTab() {
         // Conta gerada pela folha (2026-10-05): a saída prevista já vem do hr_payroll abaixo.
         if (!(r.reference_type === 'hr_payroll' && r.reference_id)) b.saiPrev += Number(r.amount);
         const restante = Number(r.amount) - Number(r.paid_amount ?? 0);
-        if (r.due_date < today && restante > 0.005 && ['pending', 'partial', 'overdue'].includes(r.status)) { vencidasAbertas += restante; vencidasAbertasCount++; }
+        // "Vencida em aberto" é dívida: compra já paga na entrega fica de fora (o Previsto acima segue com ela, pois a saída é real).
+        if (r.due_date < today && restante > 0.005 && ['pending', 'partial', 'overdue'].includes(r.status) && !jaPagasIds.has(r.id)) { vencidasAbertas += restante; vencidasAbertasCount++; }
       });
       (rc.rows ?? []).forEach((r) => { const b = at(r.due_date); if (!b) return; if (r.status === 'cancelled') return; b.entPrev += Number(r.amount); });
       (pr.data ?? []).forEach((p: { net_salary: number; status: string; reference_month: string }) => {

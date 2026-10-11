@@ -3,12 +3,14 @@ import { useImplantacao } from '@/hooks/useImplantacao';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 import { formatCurrency } from '@/lib/formatters';
 import type { ImplementationCost } from '@/types/financeiro';
+import { todayBrasilia } from '@/lib/dateUtils';
 
 const CATEGORIAS = ['Obras', 'Equipamentos', 'Móveis', 'Documentação', 'Marketing Inicial', 'Estoque Inicial', 'Outros'];
 const FONTES = ['Recursos Próprios', 'Empréstimo Bancário', 'Investidor Anjo', 'BNDES', 'Sócio 1', 'Sócio 2'];
 const COLORS = ['#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ef4444', '#06b6d4', '#f97316', '#84cc16'];
 
-const emptyForm = { date: new Date().toISOString().split('T')[0], description: '', amount: '', custom_fields: {} as Record<string, string> };
+// Função: a data é o dia de Brasília na hora de abrir (era a data UTC do carregamento da página).
+const emptyForm = () => ({ date: todayBrasilia(), description: '', amount: '', custom_fields: {} as Record<string, string> });
 
 const PAGE_SIZE = 10;
 
@@ -45,7 +47,7 @@ export default function ImplantacaoTab() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     await upsertCost(editing ? { ...form, id: editing.id, amount: Number(form.amount) } : { ...form, amount: Number(form.amount) });
-    setShowModal(false); setForm(emptyForm); setEditing(null); setPage(1);
+    setShowModal(false); setForm(emptyForm()); setEditing(null); setPage(1);
   };
 
   const handleSaveSettings = async (e: React.FormEvent) => {
@@ -134,7 +136,7 @@ export default function ImplantacaoTab() {
             className="flex items-center gap-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 px-3 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
             <i className="ri-settings-line" /> Configurações
           </button>
-          <button onClick={() => { setEditing(null); setForm(emptyForm); setShowModal(true); }}
+          <button onClick={() => { setEditing(null); setForm(emptyForm()); setShowModal(true); }}
             className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer whitespace-nowrap transition-colors">
             <i className="ri-add-line" /> Novo Gasto
           </button>

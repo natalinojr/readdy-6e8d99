@@ -93,6 +93,45 @@ describe('useConsumoIngredientes', () => {
     expect(result.current.dados[0].totalConsumido).toBe(30);
   });
 
+  it('acerto da contagem por mudança de data do recebimento não é consumo; contagem a menos de verdade é', async () => {
+    h.movs = [
+      mov(1, '2026-09-02', 30),
+      // purchase-confirm-delivery: a data do recebimento mudou e a contagem foi corrigida (−768 un no caso real)
+      mov(2, '2026-09-03', 768, { type: 'inventory_adjustment', reason: 'Correção da contagem: data do recebimento mudou', signed_quantity: -768 }),
+      // contagem comum que achou a menos: continua sendo saída
+      mov(3, '2026-09-04', 5, { type: 'inventory_adjustment', reason: 'Ajuste de Inventario', signed_quantity: -5 }),
+    ];
+    const { result } = renderHook(() => useConsumoIngredientes(DE, ATE));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.dados[0].totalConsumido).toBe(35);
+    expect(result.current.dados[0].porTipo.ajuste).toBe(5);
+  });
+
+  it('correções de compra/conversão (saída manual) não são consumo', async () => {
+    h.movs = [
+      mov(1, '2026-09-02', 30),
+      mov(2, '2026-09-03', 100, { type: 'manual_out', reason: 'Correção de conversão: Fornecedor X - NF 123', signed_quantity: -100 }),
+      mov(3, '2026-09-03', 40, { type: 'manual_out', reason: 'Ajuste no recebimento: Fornecedor X NF 123', signed_quantity: -40 }),
+      mov(4, '2026-09-04', 60, { type: 'manual_out', reason: 'Ajuste por edição da compra: Fornecedor X NF 123', signed_quantity: -60 }),
+      mov(5, '2026-09-04', 25, { type: 'manual_out', reason: 'Detalhamento dos itens da compra: Fornecedor X NF 123', signed_quantity: -25 }),
+      // saída manual de verdade continua sendo consumo
+      mov(6, '2026-09-05', 10, { type: 'manual_out', reason: 'Uso interno', signed_quantity: -10 }),
+    ];
+    const { result } = renderHook(() => useConsumoIngredientes(DE, ATE));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.dados[0].totalConsumido).toBe(40);
+  });
+
+  it('empréstimo de insumo para outra loja (transfer_out) não é consumo nem custo', async () => {
+    h.movs = [mov(1, '2026-09-02', 30), mov(2, '2026-09-03', 500, { type: 'transfer_out', reason: 'Empréstimo para Loja B', signed_quantity: -500 })];
+    const { result } = renderHook(() => useConsumoIngredientes(DE, ATE));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const m = result.current.dados[0];
+    expect(m.totalConsumido).toBe(30);
+    expect(m.custoTotal).toBeCloseTo(1.2, 5);
+    expect(m.porTipo.transferencia).toBe(0);
+  });
+
   it('pedidos que não vieram: vendas ficam em branco (null) e a tela é avisada', async () => {
     h.pedidos = null;
     h.movs = [mov(1, '2026-09-02', 100)];

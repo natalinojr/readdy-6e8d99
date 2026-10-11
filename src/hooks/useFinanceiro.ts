@@ -5,6 +5,7 @@ import { translateSupabaseError } from '@/hooks/useQueryError';
 import { fetchRevenueSources, fetchStoneSales, fetchPixRecebidos, fetchIfoodSales, fetchCashSales } from '@/lib/revenueSources';
 import { empresaTemPdv } from '@/lib/tipoEmpresa';
 import { todayBrasilia } from '@/lib/dateUtils';
+import { saldoDaConta } from '@/lib/contasAbertas';
 import type {
   CostCenter, BillPayable, CashFlowEntry, Purchase,
   Supplier, FinanceiroDashboard, Anticipation, ReceivableInstallment,
@@ -91,7 +92,10 @@ export function useBankAccounts() {
     fetchAccounts();
   };
 
-  const totalBalance = accounts.reduce((s, a) => s + Number(a.current_balance), 0);
+  // Saldo total = a regra do Painel e da Hoje: o saldo que o banco informa quando a conta é integrada
+  // (synced_balance); só nas demais vale o do sistema. Somar só current_balance deixava o total abaixo
+  // das outras telas por causa das linhas do extrato ainda pendentes de conciliação.
+  const totalBalance = accounts.reduce((s, a) => s + saldoDaConta(a), 0);
 
   return { accounts, loading, error, upsert, remove, setDefault, refresh: fetchAccounts, totalBalance };
 }

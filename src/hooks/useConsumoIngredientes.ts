@@ -59,6 +59,18 @@ function normalizeUnit(u: string | null | undefined): UnidadeEstoque {
   return DB_UNIT_MAP[lower] ?? (lower as UnidadeEstoque) ?? 'un';
 }
 
+// Acertos de saldo que só corrigem um lançamento anterior (data/quantidade de compra, conversão, ficha, contagem):
+// o estoque se mexe, mas nada foi usado — não entram em consumo. Textos gravados por purchase-confirm-delivery,
+// purchase-write, vinculo de conversão (SQL) e ficha-retroativa; comparados sem acento e em minúsculas.
+const PREFIXOS_ACERTO = [
+  'correcao de conversao',
+  'correcao de ficha (saldo mantido)',
+  'correcao da contagem', // "Correção da contagem: data do recebimento mudou" (inventory_adjustment)
+  'ajuste no recebimento',
+  'ajuste por edicao da compra',
+  'detalhamento dos itens da compra',
+];
+
 function classifyMovement(
   type: string,
   reason: string | null,
@@ -68,21 +80,20 @@ function classifyMovement(
   isConsumo: boolean;
 } {
   const r = (reason || '').toLowerCase();
+  const rSemAcento = r.normalize('NFD').replace(/[̀-ͯ]/g, '');
 
   // ── Entradas NUNCA são consumo, independente do reason ──────────────────
   // type='in' é sempre entrada (compra, produção própria, ajuste positivo)
   if (type === 'in') return { bucket: 'ajuste', isConsumo: false };
 
-  // Transferência de entrada também não é consumo
-  if (type === 'transfer_in') return { bucket: 'transferencia', isConsumo: false };
+  // Transferência (empréstimo entre lojas) não é consumo da loja, nem na entrada nem na saída
+  if (type === 'transfer_in' || type === 'transfer_out') return { bucket: 'transferencia', isConsumo: false };
 
   // Estorno (ex.: produção excluída) desfaz um movimento: não é consumo (2026-10-04)
   if (r.startsWith('estorno')) return { bucket: 'ajuste', isConsumo: false };
 
-  // Correção de conversão (Classificação de itens) acerta a ENTRADA de uma compra antiga — não é consumo
-  if (r.startsWith('correção de conversão') || r.startsWith('correcao de conversao')) return { bucket: 'ajuste', isConsumo: false };
-  // Compensação de "aplicar ficha só no consumo": mantém o saldo, não é consumo
-  if (r.startsWith('correção de ficha (saldo mantido)')) return { bucket: 'ajuste', isConsumo: false };
+  // Acerto contábil de compra/conversão/ficha/contagem: mantém o saldo certo, não é consumo
+  if (PREFIXOS_ACERTO.some((p) => rSemAcento.startsWith(p))) return { bucket: 'ajuste', isConsumo: false };
 
   // ── A partir daqui só temos saídas / consumo ─────────────────────────────
 
@@ -104,9 +115,6 @@ function classifyMovement(
   ) {
     return { bucket: 'producao', isConsumo: true };
   }
-
-  /* transferência de saída */
-  if (type === 'transfer_out') return { bucket: 'transferencia', isConsumo: true };
 
   /* ajuste de inventário: só o que a contagem achou A MENOS é saída; a mais é entrada, não consumo */
   if (type === 'inventory_adjustment') return { bucket: 'ajuste', isConsumo: signed != null && signed < 0 };

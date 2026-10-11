@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 import type { RPCSessionRow, RPCRevenueRow, RPCSessionOrderRow } from '@/types/rpc';
 
 export interface SessionInfo {
@@ -59,15 +60,24 @@ export function useSessions(limit = 20) {
         }
       }
 
-      // Busca faturamento de todos os pedidos das sessões em uma única query
-      const { data: revenueData, error: revenueError } = await supabase
-        .from('orders')
-        .select('session_id, total_amount')
-        .eq('tenant_id', tenantId)
-        .in('session_id', sessionIds.length > 0 ? sessionIds : ['00000000-0000-0000-0000-000000000000'])
-        .not('status', 'in', '(cancelled,draft)')
-        .eq('is_training', false)
-        .eq('is_draft', false);
+      // Busca faturamento de todos os pedidos das sessões. Mesmo critério de "venda" das outras telas:
+      // pago, sem cancelado/rascunho/treino e sem o pedido do iFood pago pelo repasse (a venda dele é contada pelo
+      // iFood — sem isso a sessão aparecia aqui com mais pedidos/valor que no Caixa e no Dashboard).
+      // Paginado: 20 sessões passam fácil de 1000 pedidos e o PostgREST corta sem avisar.
+      const { rows: revenueData, error: revenueError } = await fetchAllRows<RPCRevenueRow>((from, to) =>
+        supabase
+          .from('orders')
+          .select('id, session_id, total_amount')
+          .eq('tenant_id', tenantId)
+          .in('session_id', sessionIds.length > 0 ? sessionIds : ['00000000-0000-0000-0000-000000000000'])
+          .not('status', 'in', '(cancelled,draft)')
+          .eq('is_training', false)
+          .eq('is_draft', false)
+          .eq('is_paid', true)
+          .is('ifood_order_id', null) // pedido do iFood (até o pago na loja) é somado pelo iFood
+          .order('id')
+          .range(from, to),
+      );
 
       if (revenueError) {
         console.error('[useSessions] revenue error:', revenueError.message);
@@ -75,7 +85,7 @@ export function useSessions(limit = 20) {
 
       // Agrega localmente: count e sum por session_id
       const revenueMap = new Map<string, { total: number; count: number }>();
-      for (const row of (revenueData ?? []) as RPCRevenueRow[]) {
+      for (const row of revenueData) {
         const sid = row.session_id;
         const prev = revenueMap.get(sid) ?? { total: 0, count: 0 };
         revenueMap.set(sid, {

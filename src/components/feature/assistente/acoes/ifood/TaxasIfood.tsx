@@ -8,7 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useAcessoAcoes, rotaLiberada } from '../acesso';
 import { Roteiro, useRoteiro, Opcao, Fim, brl, hojeISO, type AcaoProps } from '../kit';
 import { Painel, Kpis, Barras, Linhas, Variacao } from '../painel';
-import { resumoIfood, lojasIfood, atualizarVendasIfood, canceladoIfood, nm } from './comum';
+import { resumoIfood, lojasIfood, atualizarVendasIfood, canceladoIfood, ehTaxaDoCliente, nm } from './comum';
 
 const n = (v: unknown) => Number(v ?? 0);
 const mesAnterior = (m: string) => { const [y, mm] = m.split('-').map(Number); return mm === 1 ? `${y - 1}-12` : `${y}-${String(mm - 1).padStart(2, '0')}`; };
@@ -59,12 +59,12 @@ export default function TaxasIfood({ onFechar, irPara }: AcaoProps) {
     if (!r) { bot('Não consegui ler as vendas do iFood.'); setPasso('fim'); return; }
     if (!r.pedidos) { bot(`Nenhuma venda do iFood em ${nomeMes(mes)}.`); setPasso('fim'); return; }
 
-    // Taxas por tipo de lançamento (negativos que não são promoção nem a entrega feita pelo iFood — essa já
-    // fica fora do vendido), igual à coluna Taxas da tela.
+    // Taxas por tipo de lançamento (negativos que não são promoção, a entrega feita pelo iFood — essa já fica fora
+    // do vendido — nem a taxa de serviço/conveniência, que o cliente paga), igual à coluna Taxas da tela.
     const porTipo = new Map<string, number>();
     for (const s of r.vendas) {
       for (const b of Array.isArray(s.billing_entries) ? s.billing_entries : []) {
-        if (n(b.value) >= 0 || /SUBSIDY/i.test(String(b.name)) || String(b.name) === 'DELIVERY_FEE_IFOOD') continue;
+        if (n(b.value) >= 0 || /SUBSIDY/i.test(String(b.name)) || String(b.name) === 'DELIVERY_FEE_IFOOD' || ehTaxaDoCliente(b.name)) continue;
         const k = nm(b.name) || 'Outros';
         porTipo.set(k, (porTipo.get(k) ?? 0) + Math.abs(n(b.value)));
       }
@@ -82,7 +82,7 @@ export default function TaxasIfood({ onFechar, irPara }: AcaoProps) {
           principal={{ label: 'O iFood ficou com', valor: brl(custo), extra: <span className="text-xs font-semibold text-zinc-600">{pct(custo)} do vendido{pctAnt != null ? ` · mês anterior ${(Math.round(pctAnt * 1000) / 10).toLocaleString('pt-BR')}%` : ''}</span> }}
           outros={[
             { label: 'Vendido', valor: brl(r.vendido), extra: <Variacao atual={r.vendido} base={a && a.pedidos ? a.vendido : null} rotulo="vs mês anterior" /> },
-            { label: 'Líquido', valor: brl(r.liquido) },
+            { label: 'Cai no repasse', valor: brl(r.liquido) },
             { label: 'Pedidos', valor: String(r.pedidos) },
           ]}
         />

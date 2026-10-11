@@ -45,6 +45,15 @@ export function calcFGTS(salarioBruto: number): number {
   return Math.round(salarioBruto * 0.08 * 100) / 100;
 }
 
+// 13º salário: cada parcela é metade do salário. A 1ª sai sem desconto; a 2ª leva o INSS (estimativa antiga:
+// 9% da parcela, teto 454,43 — não é a tabela progressiva). O FGTS é 8% do valor DA PARCELA: 8% do salário
+// inteiro em cada parcela contava o dobro (163,82 em vez de 81,91 para R$ 2.047,74).
+export function calcParcela13(salario: number, parcela: 'first' | 'second') {
+  const valor = salario / 2;
+  const inss = parcela === 'second' ? Math.min(valor * 0.09, 454.43) : 0;
+  return { valor, inss, fgts: calcFGTS(valor), net: valor - inss };
+}
+
 // DSR (Descanso Semanal Remunerado) sobre horas extras
 // Fórmula: (total HE / dias úteis) * dias de descanso
 // Considerando 26 dias úteis e 4 domingos/feriados no mês = fator ~0.1538

@@ -151,7 +151,7 @@ export default function VendasDia({ onFechar, irPara }: AcaoProps) {
           <Linhas titulo="iFood (fora do PDV)" itens={[
             { label: 'Vendido no iFood', valor: brl(ifood.vendido), detalhe: `${ifood.pedidos} pedido${ifood.pedidos === 1 ? '' : 's'} · itens + entrega própria` },
             { label: 'Taxas do iFood', valor: brl(ifood.taxas), status: 'alerta' },
-            { label: 'Líquido para a loja', valor: brl(ifood.liquido), status: 'ok' },
+            { label: 'Cai no repasse', valor: brl(ifood.liquido), status: 'ok' },
             ...(ifood.cancelados ? [{ label: `${ifood.cancelados} cancelado${ifood.cancelados === 1 ? '' : 's'} no iFood`, valor: brl(ifood.valorCancelado), status: 'perigo' as const }] : []),
           ]} />
         )}

@@ -8,7 +8,7 @@
 import { Fragment, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { callFinancialWrite, type Employee } from '@/hooks/useRH';
-import { categorizarRubrica, labelCategoria, parseExtratoDominio, pdfWords, refHoras, type ExtratoDominio, type FuncionarioExtrato, type Rubrica } from '@/lib/dominioExtrato';
+import { categorizarRubrica, INSS_DESC_RE, labelCategoria, parseExtratoDominio, pdfWords, refHoras, type ExtratoDominio, type FuncionarioExtrato, type Rubrica } from '@/lib/dominioExtrato';
 
 const brl = (n: number) => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
@@ -21,9 +21,8 @@ const mesLabel = (ym: string) => {
 const fmtCpf = (d: string | null) => (d && d.length === 11 ? `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}` : d ?? undefined);
 
 type ModoImport = 'completa' | 'inss' | 'nao';
-const INSS_RE = /I\.?N\.?S\.?S/;
 /** INSS da pessoa no extrato (rubricas de desconto de INSS). */
-const inssDe = (f: FuncionarioExtrato) => round2(f.rubricas.filter((r) => r.tipo === 'D' && INSS_RE.test(r.descricao)).reduce((s, r) => s + r.valor, 0));
+const inssDe = (f: FuncionarioExtrato) => round2(f.rubricas.filter((r) => r.tipo === 'D' && INSS_DESC_RE.test(r.descricao)).reduce((s, r) => s + r.valor, 0));
 
 interface ExistingPay { id: string; employee_id: string | null; employee_name: string; status: string }
 
@@ -68,7 +67,7 @@ function mapearFolha(f: FuncionarioExtrato, modo: ModoImport = 'completa') {
   // "LIQUIDO RESCISAO" vem como desconto no extrato (o Domínio zera o líquido do mês porque o valor
   // foi pago no TRCT), mas é o dinheiro que a pessoa recebeu: volta para o líquido, sai dos descontos.
   const liqResc = soma(pega(D, /LIQUIDO\s+RESCIS/, uD));
-  const inss = pega(D, /I\.?N\.?S\.?S/, uD);
+  const inss = pega(D, INSS_DESC_RE, uD);
   const irrf = pega(D, /I\.?R\.?R\.?F|IMPOSTO DE RENDA/, uD);
   const faltas = pega(D, /FALTA|ATRASO/, uD);
   const vt = pega(D, /VALE[\s.-]*TRANSP|\bV\.?T\.?\b/, uD);

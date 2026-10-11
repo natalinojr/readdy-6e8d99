@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { BillPayable } from '@/types/financeiro';
 import { formatCurrency } from '@/lib/formatters';
+import { todayBrasilia } from '@/lib/dateUtils';
 
 interface AgingBucket {
   label: string;
@@ -28,11 +29,26 @@ interface Props {
   bills: BillPayable[];
   activeBucket: string | null;
   onBucketClick: (label: string | null) => void;
+  /** Regra única de "em aberto" (fn_contas_em_aberto, via ContasPagarTab): tira compra "já paga na entrega". */
+  ehAberta?: (id: string) => boolean;
+  /** Dia de hoje em Brasília (AAAA-MM-DD) — o mesmo "hoje" do servidor usado nos cartões da tela. */
+  hoje?: string;
 }
 
 // Saldo ainda devido de uma conta (amount − o que já foi pago)
 const saldoDevedor = (b: BillPayable) =>
   Math.max(0, Number(b.amount ?? 0) - Number(b.paid_amount ?? 0));
+
+// Em aberto = mesma regra de todas as telas (fn_contas_em_aberto): status pending/overdue/partial com saldo
+// e fora a compra "já paga na entrega". Antes era `status !== 'paid'`: somava conta CANCELADA como vencida
+// há +60/90 dias e a compra já paga na entrega como dívida.
+const STATUS_EM_ABERTO = ['pending', 'overdue', 'partial'];
+const emAbertoDe = (bills: BillPayable[], ehAberta: (id: string) => boolean) =>
+  bills.filter((b) => STATUS_EM_ABERTO.includes(b.status) && saldoDevedor(b) > 0.005 && ehAberta(b.id));
+
+// Dias de atraso entre o dia de hoje (Brasília) e o vencimento — conta em dias de calendário, sem fuso do aparelho.
+const diasDeAtraso = (hoje: string, vencimento: string) =>
+  Math.round((Date.parse(`${hoje}T00:00:00Z`) - Date.parse(`${vencimento}T00:00:00Z`)) / 86400000);
 
 const BUCKET_DEFS = [
   { label: 'A vencer', minDays: -9999, maxDays: -1, color: 'border-green-200', bgColor: 'bg-green-50', textColor: 'text-green-700', barColor: 'bg-green-400' },
@@ -44,21 +60,17 @@ const BUCKET_DEFS = [
   { label: '+90 dias', minDays: 91, maxDays: 9999, color: 'border-red-400', bgColor: 'bg-red-100', textColor: 'text-red-900', barColor: 'bg-red-700' },
 ];
 
-function buildBuckets(bills: BillPayable[]): AgingBucket[] {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
+function buildBuckets(bills: BillPayable[], hoje: string, ehAberta: (id: string) => boolean): AgingBucket[] {
   // Aging deve refletir o SALDO devedor: depois do fix P11, `paid_amount`
   // acumula e uma conta de R$1.000 com R$900 pagos ainda entrava no bucket
   // valendo R$1.000 — distorcendo faixas, % de inadimplência e o alerta de 20%.
-  const unpaid = bills.filter((b) => b.status !== 'paid');
+  const unpaid = emAbertoDe(bills, ehAberta);
   const grandTotal = unpaid.reduce((s, b) => s + saldoDevedor(b), 0);
 
   return BUCKET_DEFS.map((def) => {
     const items = unpaid.filter((b) => {
       if (!b.due_date) return false;
-      const due = new Date(b.due_date + 'T00:00:00');
-      const days = Math.floor((today.getTime() - due.getTime()) / 86400000);
+      const days = diasDeAtraso(hoje, b.due_date);
       return days >= def.minDays && days <= def.maxDays;
     });
     const total = items.reduce((s, b) => s + saldoDevedor(b), 0);
@@ -71,11 +83,8 @@ function buildBuckets(bills: BillPayable[]): AgingBucket[] {
   });
 }
 
-function buildSupplierAging(bills: BillPayable[]): SupplierAging[] {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const unpaid = bills.filter((b) => b.status !== 'paid' && b.supplier);
+function buildSupplierAging(bills: BillPayable[], hoje: string, ehAberta: (id: string) => boolean): SupplierAging[] {
+  const unpaid = emAbertoDe(bills, ehAberta).filter((b) => b.supplier);
   const map: Record<string, SupplierAging> = {};
 
   for (const b of unpaid) {
@@ -87,8 +96,7 @@ function buildSupplierAging(bills: BillPayable[]): SupplierAging[] {
     map[key].total += amount;
     map[key].count += 1;
 
-    const due = b.due_date ? new Date(b.due_date + 'T00:00:00') : null;
-    const isOverdue = due ? due < today : false;
+    const isOverdue = b.due_date ? b.due_date < hoje : false;
     if (isOverdue) {
       map[key].overdue += amount;
     } else {
@@ -105,9 +113,12 @@ function buildSupplierAging(bills: BillPayable[]): SupplierAging[] {
     .sort((a, b) => b.overdue - a.overdue || b.total - a.total);
 }
 
-export default function AgingContasPagar({ bills, activeBucket, onBucketClick }: Props) {
-  const buckets = useMemo(() => buildBuckets(bills), [bills]);
-  const supplierAging = useMemo(() => buildSupplierAging(bills), [bills]);
+const TODAS_ABERTAS = () => true; // referência fixa: não refaz o useMemo a cada render
+
+export default function AgingContasPagar({ bills, activeBucket, onBucketClick, ehAberta = TODAS_ABERTAS, hoje: hojeProp }: Props) {
+  const hoje = hojeProp ?? todayBrasilia();
+  const buckets = useMemo(() => buildBuckets(bills, hoje, ehAberta), [bills, hoje, ehAberta]);
+  const supplierAging = useMemo(() => buildSupplierAging(bills, hoje, ehAberta), [bills, hoje, ehAberta]);
 
   const totalUnpaid = buckets.reduce((s, b) => s + b.total, 0);
   const totalVencido = buckets.filter((b) => b.minDays >= 1).reduce((s, b) => s + b.total, 0);
@@ -240,12 +251,7 @@ export default function AgingContasPagar({ bills, activeBucket, onBucketClick }:
           </div>
           <div className="divide-y divide-zinc-100/80">
             {supplierAging.map((s) => {
-              const today = new Date();
-              today.setHours(0, 0, 0, 0);
-              const oldestDue = s.oldestDue ? new Date(s.oldestDue + 'T00:00:00') : null;
-              const daysOldest = oldestDue
-                ? Math.floor((today.getTime() - oldestDue.getTime()) / 86400000)
-                : 0;
+              const daysOldest = s.oldestDue ? diasDeAtraso(hoje, s.oldestDue) : 0;
               const isCritical = daysOldest > 30 && s.overdue > 0;
 
               return (

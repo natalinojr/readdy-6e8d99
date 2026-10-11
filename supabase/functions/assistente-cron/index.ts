@@ -34,6 +34,7 @@ import { decidirAvisoEstoque, resumoEstoque, painelEstoque, ROTA_COMPRAR, type I
 import { contagemDaLoja, insumosDaSituacao, papeisDaPessoa, precisaSituacao, rotinaDeHoje, type DadosRotina, type EstadoItem } from '../_shared/rotina.ts';
 import Anthropic from 'npm:@anthropic-ai/sdk@0.125.0';
 import { registrarUsoIa } from '../_shared/ai-usage.ts';
+import { ifoodVendasDoPeriodo, ifoodDoDiaDaLoja, type JanelaSessao } from '../_shared/ifood-faturamento.ts';
 
 const TZ = 'America/Sao_Paulo';
 const json = (body: unknown, status = 200) =>
@@ -829,43 +830,45 @@ async function turnosAbertosSemCaixa(admin: SupabaseClient, tenants: Array<{ id:
 
 // iFood no fechamento (dono, 2026-09-25): o iFood não passa pelo PDV, então o faturamento do turno/dia
 // não tem esses pedidos. Antes de somar, pede ao ifood-financial a busca LEVE das vendas de hoje/ontem
-// (a diária das 07h20 ainda não tem a noite). Mesmas contas da tela Financeiro › iFood › Pedidos:
-// vendido = itens + entrega (sem a entrega feita pelo iFood) dos não cancelados; taxas = lançamentos negativos que não são promoção;
-// líquido = saleBalance (o que o iFood repassa). null = loja sem iFood / sem venda no período.
+// (a diária das 07h20 ainda não tem a noite).
+// Vendido (dono, 2026-10-10) = a conta das telas (_shared/ifood-faturamento.ts): vendas do Portal − promoção paga pela
+// loja, pela cascata conciliação → API de Vendas → pedido ao vivo. Antes lia só o gross_bag da API, que vem 0 em vários
+// pedidos (Paranaguá 08/10: R$ 143,53 em vez de 300,88). Taxas, líquido e cancelados seguem da API (fin_ifood_sales):
+// taxas = lançamentos negativos que não são promoção; líquido = saleBalance (o que o iFood repassa).
+// null = loja sem iFood / sem venda no período.
 type IfoodResumo = { pedidos: number; cancelados: number; vendido: number; taxas: number; liquido: number };
-async function ifoodResumo(tenantId: string, from: string, to: string, atualizar: boolean): Promise<IfoodResumo | null> {
-  const [{ tem }] = await db()<[{ tem: boolean }]>`select exists(select 1 from fin_ifood_config where tenant_id = ${tenantId} and is_active) as tem`;
-  if (!tem) return null;
-  if (atualizar) {
-    try {
-      await fetch(`${supabaseUrl}/functions/v1/ifood-financial`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': Deno.env.get('FISCAL_INTERNAL_KEY') ?? '' },
-        body: JSON.stringify({ action: 'sync_sales', tenant_id: tenantId, days: 2 }),
-        signal: AbortSignal.timeout(25_000),
-      });
-    } catch { /* sem a busca, usa o que já está no banco */ }
-  }
-  const rows = await db()<Array<{ cancelado: boolean; vendido: number; liquido: number; taxas: number }>>`
+const lojaTemIfood = async (tenantId: string) =>
+  (await db()<[{ tem: boolean }]>`select exists(select 1 from fin_ifood_config where tenant_id = ${tenantId} and is_active) as tem`)[0].tem;
+async function ifoodAtualizarVendas(tenantId: string) {
+  try {
+    await fetch(`${supabaseUrl}/functions/v1/ifood-financial`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-internal-key': Deno.env.get('FISCAL_INTERNAL_KEY') ?? '' },
+      body: JSON.stringify({ action: 'sync_sales', tenant_id: tenantId, days: 2 }),
+      signal: AbortSignal.timeout(25_000),
+    });
+  } catch { /* sem a busca, usa o que já está no banco */ }
+}
+async function ifoodResumo(admin: SupabaseClient, tenantId: string, from: string, to: string, atualizar: boolean): Promise<IfoodResumo | null> {
+  if (!(await lojaTemIfood(tenantId))) return null;
+  if (atualizar) await ifoodAtualizarVendas(tenantId);
+  const rows = await db()<Array<{ cancelado: boolean; liquido: number; taxas: number }>>`
     select s.current_status ~* 'CANCEL' as cancelado,
-           -- entrega só quando não é o iFood que entrega (DELIVERY_FEE_IFOOD = entrega retida pelo iFood; igual ao Portal)
-           (coalesce(s.gross_bag, 0) + case when exists (select 1 from jsonb_array_elements(case when jsonb_typeof(s.billing_entries) = 'array' then s.billing_entries else '[]'::jsonb end) e
-                                                          where e->>'name' = 'DELIVERY_FEE_IFOOD') then 0 else coalesce(s.delivery_fee, 0) end)::float as vendido,
            coalesce(s.sale_balance, 0)::float as liquido,
            coalesce((select sum((b->>'value')::numeric) from jsonb_array_elements(case when jsonb_typeof(s.billing_entries) = 'array' then s.billing_entries else '[]'::jsonb end) b
-                      where (b->>'value')::numeric < 0 and coalesce(b->>'name', '') !~* 'SUBSIDY' and coalesce(b->>'name', '') <> 'DELIVERY_FEE_IFOOD'), 0)::float as taxas
+                      where (b->>'value')::numeric < 0 and coalesce(b->>'name', '') !~* 'SUBSIDY|SERVICE_FEE|CONVENIENCE_FEE' and coalesce(b->>'name', '') <> 'DELIVERY_FEE_IFOOD'), 0)::float as taxas -- taxa de serviço é do cliente, não custo da loja (igual às telas)
       from fin_ifood_sales s
      where s.tenant_id = ${tenantId} and s.sale_created_at >= ${from}::timestamptz and s.sale_created_at < ${to}::timestamptz`;
-  if (!rows.length) return null;
-  const ok = rows.filter((r) => !r.cancelado);
+  const vendas = await ifoodVendasDoPeriodo(admin, tenantId, from, to);
+  if (!rows.length && !vendas.lista.length) return null;
   return {
-    pedidos: ok.length, cancelados: rows.length - ok.length,
-    vendido: ok.reduce((a, r) => a + Number(r.vendido), 0),
+    pedidos: vendas.pedidos, cancelados: rows.filter((r) => r.cancelado).length,
+    vendido: vendas.total,
     taxas: rows.reduce((a, r) => a + Number(r.taxas), 0),
     liquido: rows.reduce((a, r) => a + Number(r.liquido), 0),
   };
 }
 const ifoodLinhas = (f: IfoodResumo) => [
-  { l: 'Vendido no iFood', v: brl(f.vendido), d: `${f.pedidos} pedido${f.pedidos === 1 ? '' : 's'} · itens + entrega própria` },
+  { l: 'Vendido no iFood', v: brl(f.vendido), d: `${f.pedidos} pedido${f.pedidos === 1 ? '' : 's'} · vendas do Portal − promoção da loja` },
   { l: 'Taxas do iFood', v: brl(f.taxas), st: 'alerta' as const },
   { l: 'Líquido para a loja', v: brl(f.liquido), st: 'ok' as const },
   ...(f.cancelados ? [{ l: `${f.cancelados} cancelado${f.cancelados === 1 ? '' : 's'} no iFood`, st: 'perigo' as const }] : []),
@@ -890,10 +893,11 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
     select
       (select count(*)::int from orders where session_id = ${sessionId} and not is_training and status = 'cancelled') as cancelados,
       (select coalesce(sum(total_amount),0)::float from orders where session_id = ${sessionId} and not is_training and status = 'cancelled') as cancelados_valor,
-      (select coalesce(sum(discount_amount),0)::float from orders where session_id = ${sessionId} and not is_training and status <> 'cancelled') as descontos`;
+      -- sem pedido do iFood (ifood_order_id): o faturamento do turno também não tem (fn_get_sales_report); o desconto do iFood não é do PDV
+      (select coalesce(sum(discount_amount),0)::float from orders where session_id = ${sessionId} and not is_training and status <> 'cancelled' and ifood_order_id is null) as descontos`;
   const x = extra[0];
   // iFood no horário do turno (abertura → fechamento), com busca leve antes (a noite ainda não foi buscada).
-  const ifood = await ifoodResumo(String(s.tenant_id), String(s.opened_at), String(s.closed_at ?? new Date().toISOString()), true).catch(() => null);
+  const ifood = await ifoodResumo(admin, String(s.tenant_id), String(s.opened_at), String(s.closed_at ?? new Date().toISOString()), true).catch(() => null);
   if (!n && !x.cancelados && !ifood) return null; // turno sem venda: não enche o chat
   const lwRev = Number(prev.total_revenue ?? 0);
   const CANAL_NOME: Record<string, string> = { delivery: 'Delivery', table: 'Mesa', qr_universal: 'QR Code', cashier: 'Caixa', immediate: 'Balcão', name: 'Senha', password: 'Senha', self_service: 'Autoatendimento', waiter: 'Garçom' };
@@ -943,7 +947,8 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
   }
   // Por categoria do cardápio (dono, 2026-09-24): mesma conta da Visão Geral e da ação "Vendas do dia" —
   // itens não cancelados dos pedidos pagos do turno, preço × quantidade. Só itens: taxa de serviço/
-  // entrega e descontos ficam fora, então a soma não fecha com o faturamento.
+  // entrega e descontos ficam fora, então a soma não fecha com o faturamento. Sem pedido do iFood
+  // (ifood_order_id): o faturamento do turno não tem, e o iFood vem em linha própria (2026-10-10).
   const categorias = await db()<Array<{ nome: string; valor: number; qtd: number }>>`
     select coalesce(mc.name, 'Sem categoria') as nome,
            coalesce(sum(oi.item_price * oi.quantity), 0)::float as valor,
@@ -952,7 +957,7 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
     join order_items oi on oi.order_id = o.id and oi.status <> 'cancelled'
     left join menu_items mi on mi.id = oi.item_id
     left join menu_categories mc on mc.id = mi.category_id
-    where o.session_id = ${sessionId} and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft
+    where o.session_id = ${sessionId} and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft and o.ifood_order_id is null
     group by 1 order by 2 desc`;
   if (categorias.length) {
     l.push('');
@@ -960,17 +965,18 @@ async function sessaoText(admin: SupabaseClient, sessionId: string): Promise<Avi
     for (const c of categorias) l.push(`· ${c.nome}: ${brl(c.valor)} (${c.qtd})`);
   }
   // Faturado por hora (dono, 2026-09-24): mesma regra do faturamento (pedidos pagos, sem cancelado,
-  // treino ou rascunho), pela hora do pedido em Brasília. Comparação = mesmo dia da semana passada
+  // treino, rascunho ou pedido do iFood — com o iFood as horas somavam mais que o faturamento, 2026-10-10),
+  // pela hora do pedido em Brasília. Comparação = mesmo dia da semana passada
   // (o dia inteiro da loja, como no "vs … passada" do faturamento). Eixo: da 1ª à última hora com venda.
   const [horasTurno, horasBase] = await Promise.all([
     db()<Array<{ h: number; v: number }>>`
       select extract(hour from o.created_at at time zone 'America/Sao_Paulo')::int as h, coalesce(sum(o.total_amount), 0)::float as v
-      from orders o where o.session_id = ${sessionId} and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft group by 1`,
+      from orders o where o.session_id = ${sessionId} and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft and o.ifood_order_id is null group by 1`,
     db()<Array<{ h: number; v: number }>>`
       select extract(hour from o.created_at at time zone 'America/Sao_Paulo')::int as h, coalesce(sum(o.total_amount), 0)::float as v
       from orders o where o.tenant_id = ${s.tenant_id}
         and o.created_at >= ${`${lwDay}T00:00:00-03:00`}::timestamptz and o.created_at < ${`${addDays(lwDay, 1)}T00:00:00-03:00`}::timestamptz
-        and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft group by 1`,
+        and o.is_paid and o.status <> 'cancelled' and not o.is_training and not o.is_draft and o.ifood_order_id is null group by 1`,
   ]);
   const porHora = new Map(horasTurno.map((x) => [Number(x.h), Number(x.v)]));
   const porHoraBase = new Map(horasBase.map((x) => [Number(x.h), Number(x.v)]));
@@ -1045,11 +1051,12 @@ async function closingText(admin: SupabaseClient, tenants: Array<{ id: string; n
       select
         (select count(*)::int from orders where tenant_id = ${t.id} and is_training = false and status = 'cancelled' and created_at >= ${from}::timestamptz and created_at < ${to}::timestamptz) as cancelados,
         (select coalesce(sum(total_amount),0)::float from orders where tenant_id = ${t.id} and is_training = false and status = 'cancelled' and created_at >= ${from}::timestamptz and created_at < ${to}::timestamptz) as cancelados_valor,
-        (select coalesce(sum(discount_amount),0)::float from orders where tenant_id = ${t.id} and is_training = false and status <> 'cancelled' and created_at >= ${from}::timestamptz and created_at < ${to}::timestamptz) as descontos,
+        -- sem pedido do iFood: mesma base do faturamento (fn_get_sales_report), senão o % de desconto sai misturado
+        (select coalesce(sum(discount_amount),0)::float from orders where tenant_id = ${t.id} and is_training = false and status <> 'cancelled' and ifood_order_id is null and created_at >= ${from}::timestamptz and created_at < ${to}::timestamptz) as descontos,
         (select sum(closing_difference)::float from cash_registers where tenant_id = ${t.id} and closed_at >= ${from}::timestamptz and closed_at < ${to}::timestamptz) as quebra,
         (select count(*)::int from cash_registers where tenant_id = ${t.id} and status <> 'closed' and opened_at >= ${from}::timestamptz and opened_at < ${to}::timestamptz) as caixas_abertos`;
     const x = extra[0];
-    const ifood = await ifoodResumo(t.id, from, to, day === localDate()).catch(() => null);
+    const ifood = await ifoodResumo(admin, t.id, from, to, day === localDate()).catch(() => null);
     if (!n && !x.cancelados && !ifood) { parts.push(`*${t.name}*: sem movimento hoje.`); continue; }
     anyMovement = true;
     const lines = [`*${t.name}*`];
@@ -1096,10 +1103,13 @@ async function anomalyTexts(tenants: Array<{ id: string; name: string }>, pro: a
       with hoje as (
         select coalesce(sum(total_amount),0)::float v from orders
         where tenant_id = ${t.id} and is_training = false and status <> 'cancelled'
+          and not is_draft and ifood_order_id is null -- sem iFood (vem por fora) e sem rascunho; sem is_paid: a base das
+          -- semanas passadas já estaria toda paga e hoje não (64% do valor é pago 30+ min depois) — alarme falso
           and created_at >= (date_trunc('day', now() at time zone 'America/Sao_Paulo')) at time zone 'America/Sao_Paulo' and created_at <= now()),
       sem as (
         select w, coalesce(sum(o.total_amount),0)::float v from generate_series(1,4) w
         left join orders o on o.tenant_id = ${t.id} and o.is_training = false and o.status <> 'cancelled'
+          and not o.is_draft and o.ifood_order_id is null
           and o.created_at >= ((date_trunc('day', now() at time zone 'America/Sao_Paulo')) at time zone 'America/Sao_Paulo') - (w || ' week')::interval
           and o.created_at <= now() - (w || ' week')::interval
         group by w)
@@ -2355,36 +2365,35 @@ async function avisarNoCelular(lojaId: string, kind: string, titulo: string, cor
 }
 
 // Faturamento de hoje = a conta do Dashboard: pedidos pagos do PDV (os canais de fn_get_dashboard_painel, mesmo
-// filtro de fn_get_dashboard_metrics) + iFood (API de Vendas buscada agora + pedidos ao vivo ainda fora dela).
+// filtro de fn_get_dashboard_metrics, dia da loja) + iFood do MESMO dia da loja (pedido na sessão aberta na hora conta
+// no dia dela; _shared/ifood-faturamento.ts: conciliação → API de Vendas → pedido ao vivo, vendas do Portal − promoção
+// paga pela loja). Antes o iFood ia pelo calendário e pelo gross_bag da API, e o PDV pelo dia da loja (2026-10-10).
 async function medirVendas(admin: SupabaseClient, lojaId: string) {
   const { data, error } = await admin.rpc('fn_get_dashboard_painel', { p_tenant_id: lojaId, p_desde: null, p_completo: true });
   if (error) throw new Error(error.message);
   const pn = data as {
-    dia_semana: number; canais: Array<{ origem: string; valor: number }> | null; semana_passada: { canais: Record<string, number> | null } | null;
+    dia: string; janelas: JanelaSessao[] | null;
+    dia_semana: number; canais: Array<{ origem: string; valor: number }> | null;
+    semana_passada: { dia?: string; ate?: string; janelas?: JanelaSessao[] | null; canais: Record<string, number> | null } | null;
     ritmo_esperado: number | null; ritmo_dias: number; metas: Array<{ dia_semana: number; faturamento: number }> | null;
   };
   const hoje: Record<string, number> = {};
   for (const c of pn.canais ?? []) hoje[c.origem] = Number(c.valor ?? 0);
   const antes: Record<string, number> = Object.fromEntries(Object.entries(pn.semana_passada?.canais ?? {}).map(([k, v]) => [k, Number(v ?? 0)]));
   const inicio = new Date(`${localDate()}T00:00:00-03:00`);
-  const semana = 7 * 86400_000;
-  const ifHoje = await ifoodResumo(lojaId, inicio.toISOString(), new Date().toISOString(), true);
-  const [ifAntes, [vivo], [sess]] = await Promise.all([
-    ifoodResumo(lojaId, new Date(inicio.getTime() - semana).toISOString(), new Date(Date.now() - semana).toISOString(), false),
-    db()<[{ v: number }]>`
-      select coalesce(sum(coalesce((o.total->>'subTotal')::numeric, 0)
-             + case when o.delivered_by = 'MERCHANT' then coalesce((o.total->>'deliveryFee')::numeric, 0) else 0 end), 0)::float v
-        from ifood_orders o
-       where o.tenant_id = ${lojaId} and o.ordered_at >= ${inicio.toISOString()}::timestamptz and o.ordered_at <= now()
-         and o.status <> 'cancelled'
-         and not exists (select 1 from fin_ifood_sales s where s.tenant_id = o.tenant_id and s.sale_id = o.ifood_order_id)`,
+  // Busca leve das vendas de hoje na API do iFood antes de somar (só loja com iFood ligado).
+  if (await lojaTemIfood(lojaId)) await ifoodAtualizarVendas(lojaId);
+  const sp = pn.semana_passada;
+  const [ifHoje, ifAntes, [sess]] = await Promise.all([
+    ifoodDoDiaDaLoja(admin, lojaId, pn.dia ?? localDate(), pn.janelas ?? []),
+    // mesmo dia da semana passada (dia da loja), até esta hora — igual ao Dashboard
+    sp?.dia && sp.ate ? ifoodDoDiaDaLoja(admin, lojaId, sp.dia, sp.janelas ?? [], new Date(sp.ate)) : Promise.resolve(null),
     db()<[{ abriu: boolean }]>`
       select exists(select 1 from sessions where tenant_id = ${lojaId} and coalesce(is_training, false) = false
                      and (opened_at >= ${inicio.toISOString()}::timestamptz or status::text = 'open')) as abriu`,
   ]);
-  const ifood = (ifHoje?.vendido ?? 0) + Number(vivo?.v ?? 0);
-  if (ifood > 0) hoje.ifood = ifood;
-  if ((ifAntes?.vendido ?? 0) > 0) antes.ifood = Number(ifAntes?.vendido);
+  if (ifHoje.total > 0) hoje.ifood = ifHoje.total;
+  if ((ifAntes?.total ?? 0) > 0) antes.ifood = Number(ifAntes?.total);
   const meta = Number((pn.metas ?? []).find((m) => m.dia_semana === pn.dia_semana && Number(m.faturamento) > 0)?.faturamento ?? 0);
   const valor = Object.values(hoje).reduce((s, v) => s + v, 0);
   return { valor, meta, ritmo: pn.ritmo_esperado, ritmoDias: Number(pn.ritmo_dias ?? 0), hoje, antes, abriu: !!sess?.abriu };

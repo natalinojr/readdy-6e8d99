@@ -7,9 +7,10 @@ import { SecaoTitulo, Vazio, brl, brlInteiro, btn } from '../../ui';
 import { resumir30d, type PedidoMes } from './calculos';
 
 // "Últimos 30 dias": o número e o que fazer com ele. Uma consulta nos pedidos de entrega própria do mês;
-// as contas estão em calculos.ts (resumir30d). iFood e retirada ficam de fora (têm relatório próprio).
+// as contas estão em calculos.ts (resumir30d). iFood e retirada ficam de fora (têm relatório próprio); o pedido do
+// iFood entregue pelo motoboy da loja (`ifood_order_id`) só entra na contagem de entregas, não em vendido/ticket/taxa.
 
-const COLUNAS = 'status, total_amount, delivery_fee, cancel_reason, motoboy_status, motoboy_timeline, out_for_delivery_at, delivery_source, delivery_platform, created_at';
+const COLUNAS = 'status, total_amount, delivery_fee, cancel_reason, motoboy_status, motoboy_timeline, out_for_delivery_at, delivery_source, delivery_platform, ifood_order_id, created_at';
 const POR_PAGINA = 1000; // limite de linhas do Supabase por consulta
 
 async function buscarPedidos(tenantId: string): Promise<PedidoMes[]> {

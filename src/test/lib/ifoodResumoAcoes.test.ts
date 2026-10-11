@@ -19,7 +19,7 @@ const venda = (o: Record<string, unknown>) => ({
 });
 
 describe('resumoIfood', () => {
-  it('vendido = itens + entrega dos não cancelados; taxas sem promoção; líquido de todos', async () => {
+  it('vendido = itens + entrega − promoção da loja dos não cancelados; taxas sem promoção; líquido de todos', async () => {
     h.rows = [
       venda({
         gross_bag: 50, delivery_fee: 8, sale_balance: 40,
@@ -34,14 +34,14 @@ describe('resumoIfood', () => {
     expect(r!.pedidos).toBe(2);
     expect(r!.cancelados).toBe(1);
     expect(r!.valorCancelado).toBe(20);
-    expect(r!.vendido).toBe(88);
+    expect(r!.vendido).toBe(83); // 50 + 8 − 5 (promoção paga pela loja, decisão de 2026-10-10) + 30
     expect(r!.taxas).toBeCloseTo(-20.5); // -12 -1.5 -5 -2 (a promoção STORE_SUBSIDY de -5 fica fora)
     expect(r!.liquido).toBe(63);
     expect(r!.promoLoja).toBe(5);
     expect(r!.promoIfood).toBe(3);
     expect(r!.porLoja.map((l) => l.nome)).toEqual(['Loja A', 'Loja B']);
     expect(r!.porPagamento.map((p) => p.nome)).toEqual(['Crédito Visa', 'Pix']);
-    expect(r!.porHora[19]).toBe(58); // 22:10Z = 19h em Brasília
+    expect(r!.porHora[19]).toBe(53); // 22:10Z = 19h em Brasília; 58 − 5 da promoção da loja
     expect(r!.porHora[12]).toBe(30);
   });
 
@@ -53,6 +53,15 @@ describe('resumoIfood', () => {
     const r = await resumoIfood('t', 'a', 'b');
     expect(r!.vendido).toBeCloseTo(70.79 + 36.9 + 8.5);
     expect(r!.taxas).toBeCloseTo(-17);
+  });
+
+  it('taxa de serviço e de conveniência (o cliente paga ao iFood) não são taxa da loja, mas seguem no que cai no repasse', async () => {
+    h.rows = [
+      venda({ gross_bag: 40, sale_balance: 30, billing_entries: [{ name: 'ORDER_COMMISSION', value: -9 }, { name: 'SERVICE_FEE', value: -0.99 }, { name: 'CONVENIENCE_FEE', value: -1.5 }, { name: 'PAYMENT_TRANSACTION_FEE', value: -1 }] }),
+    ];
+    const r = await resumoIfood('t', 'a', 'b');
+    expect(r!.taxas).toBeCloseTo(-10); // só comissão + transação
+    expect(r!.liquido).toBe(30); // saleBalance continua inteiro
   });
 
   it('sem venda no período', async () => {

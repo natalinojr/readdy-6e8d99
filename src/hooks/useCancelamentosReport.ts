@@ -50,6 +50,8 @@ export interface CancelamentosData {
   gorjetas: GorjetaItem[];
 }
 
+const MSG_ERRO = 'Não consegui ler os cancelamentos deste período. Confira a internet e tente de novo.';
+
 export function useCancelamentosReport(periodo: string) {
   const { user } = useAuth();
   const [dados, setDados] = useState<CancelamentosData>({
@@ -59,17 +61,21 @@ export function useCancelamentosReport(periodo: string) {
     gorjetas: [],
   });
   const [loading, setLoading] = useState(true);
+  // Erro da leitura: a tela mostra o aviso em vez de "nenhum cancelamento" (que seria mentira).
+  const [error, setError] = useState<string | null>(null);
 
   const carregar = useCallback(async () => {
     if (!user?.tenantId) return;
     setLoading(true);
+    setError(null);
     try {
       const { from, to } = getPeriodDateObjects(periodo);
-      const { data } = await supabase.rpc('fn_get_cancelamentos_report', {
+      const { data, error: rpcErr } = await supabase.rpc('fn_get_cancelamentos_report', {
         p_tenant_id: user.tenantId,
         p_start: from.toISOString(),
         p_end: to.toISOString(),
       });
+      if (rpcErr) throw rpcErr;
 
       const raw = data as Record<string, unknown[]>;
       setDados({
@@ -80,6 +86,8 @@ export function useCancelamentosReport(periodo: string) {
       });
     } catch (e) {
       console.error('useCancelamentosReport:', e);
+      setDados({ cancelamentos: [], estornos: [], descontos: [], gorjetas: [] });
+      setError(MSG_ERRO);
     } finally {
       setLoading(false);
     }
@@ -87,5 +95,5 @@ export function useCancelamentosReport(periodo: string) {
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  return { dados, loading, recarregar: carregar };
+  return { dados, loading, error, recarregar: carregar };
 }

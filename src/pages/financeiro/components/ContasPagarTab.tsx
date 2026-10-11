@@ -310,6 +310,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
     // Aging e "em aberto" olham todas as datas, só o que é dívida: conta cancelada (status fora do
     // tipo) entrava aqui e derrubava a tela no STATUS_LABEL (2026-09-30).
     let result = (agingBucket || emAberto) ? [...bills.filter(b => ['pending', 'overdue', 'partial'].includes(b.status))] : [...billsDoMes];
+    // A faixa do Aging conta só o que é a pagar de verdade (ehAberta): a lista aberta pelo clique tem que fechar com ela.
+    if (agingBucket) result = result.filter((b) => ehAberta(b.id));
     if (emAberto) {
       result = result.filter((b) => ehAberta(b.id) && !!b.due_date && (
         emAberto === 'vencidas' ? b.due_date < hojeCP
@@ -334,8 +336,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
 
     // Filtro por bucket de aging
     if (agingBucket) {
-      const todayDate = new Date();
-      todayDate.setHours(0, 0, 0, 0);
+      // Dias de atraso contados do "hoje" de Brasília (o mesmo do Aging), não do relógio do aparelho.
+      const hojeMs = Date.parse(`${hojeCP}T00:00:00Z`);
       const BUCKET_RANGES: Record<string, [number, number]> = {
         'A vencer': [-9999, -1],
         'Vence hoje': [0, 0],
@@ -349,8 +351,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
       if (range) {
         result = result.filter((b) => {
           if (!b.due_date) return false;
-          const due = new Date(b.due_date + 'T00:00:00');
-          const days = Math.floor((todayDate.getTime() - due.getTime()) / 86400000);
+          const days = Math.round((hojeMs - Date.parse(`${b.due_date}T00:00:00Z`)) / 86400000);
           return days >= range[0] && days <= range[1];
         });
       }
@@ -480,6 +481,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
   // Faixa de aviso: a MESMA lista "em aberto agora" dos cartões (todas as vencidas, não só as do mês escolhido)
   const today = hojeCP;
   const vencidasAgora = resumoAberto.vencidas;
+  // Conta HOJE + os 7 dias seguintes (o aviso diz "hoje e nos próximos 7 dias"); o Dashboard separa hoje de amanhã..+7.
   const vencendoEmBreve = aPagar(abertasCP ?? []).filter(c => c.vencimento >= today && c.vencimento <= em7CP);
   const vencendoHoje = vencendoEmBreve.filter(c => c.vencimento === today);
   const [showAlertBanner, setShowAlertBanner] = useState(true);
@@ -561,7 +563,7 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
             <p className={`text-sm font-bold ${vencidasAgora.n > 0 ? 'text-red-800' : 'text-amber-800'}`}>
               {vencidasAgora.n > 0
                 ? `${vencidasAgora.n} conta${vencidasAgora.n > 1 ? 's' : ''} vencida${vencidasAgora.n > 1 ? 's' : ''} — ${formatCurrency(vencidasAgora.v)} em aberto`
-                : `${vencendoEmBreve.length} conta${vencendoEmBreve.length > 1 ? 's' : ''} vencendo nos próximos 7 dias`}
+                : `${vencendoEmBreve.length} conta${vencendoEmBreve.length > 1 ? 's' : ''} vencendo hoje e nos próximos 7 dias`}
             </p>
             <div className="flex flex-wrap gap-2 mt-1.5">
               {vencendoHoje.length > 0 && (
@@ -762,6 +764,8 @@ export default function ContasPagarTab({ onNavigateToCompras }: Props) {
       {showAging && (
         <AgingContasPagar
           bills={bills}
+          ehAberta={ehAberta}
+          hoje={hojeCP}
           activeBucket={agingBucket}
           onBucketClick={(label) => {
             setAgingBucket(label);

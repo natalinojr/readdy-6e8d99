@@ -16,6 +16,8 @@ interface ItemPedido {
 interface Pedido {
   id: string;
   number: string;
+  /** 'cancelled' = pedido cancelado: aparece na lista, mas não entra no Total da Conta. */
+  status: string;
   total_amount: number;
   subtotal: number;
   items: ItemPedido[];
@@ -76,6 +78,7 @@ export default function MeusPedidosModalQR(props: Props) {
           return {
             id: order.id,
             number: order.number ? order.number.slice(-3) : '#' + order.id.slice(0, 8),
+            status: order.status || '',
             total_amount: order.total_amount || 0,
             subtotal: order.subtotal || 0,
             created_at: order.created_at,
@@ -123,7 +126,9 @@ export default function MeusPedidosModalQR(props: Props) {
     };
   }, [participantId]);
 
-  const totalConta = pedidos.reduce(function (s, p) { return s + p.total_amount; }, 0);
+  // Pedido cancelado não é consumo: fora do total e da contagem do rodapé.
+  const pedidosValidos: Pedido[] = pedidos.filter(function (p: Pedido) { return p.status !== 'cancelled'; });
+  const totalConta = pedidosValidos.reduce(function (s, p) { return s + p.total_amount; }, 0);
 
   function toggleExpand(id: string) {
     setExpandedOrderId(function (prev) {
@@ -197,7 +202,7 @@ export default function MeusPedidosModalQR(props: Props) {
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className="text-sm font-bold text-stone-900">{formatMoney(pedido.total_amount)}</span>
+                        <span className={'text-sm font-bold ' + (pedido.status === 'cancelled' ? 'text-stone-400 line-through' : 'text-stone-900')}>{formatMoney(pedido.total_amount)}</span>
                         <div className="w-6 h-6 flex items-center justify-center text-stone-400">
                           {isExpanded ? <i className="ri-arrow-up-s-line text-sm" /> : <i className="ri-arrow-down-s-line text-sm" />}
                         </div>
@@ -299,7 +304,7 @@ export default function MeusPedidosModalQR(props: Props) {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-[10px] text-stone-400 uppercase tracking-wider">Total da Conta</p>
-              <p className="text-[10px] text-stone-400">{pedidos.length} {pedidos.length === 1 ? 'pedido' : 'pedidos'}</p>
+              <p className="text-[10px] text-stone-400">{pedidosValidos.length} {pedidosValidos.length === 1 ? 'pedido' : 'pedidos'}</p>
             </div>
             <span className="text-xl font-black text-[var(--cor-loja,#C2410C)]">{formatMoney(totalConta)}</span>
           </div>

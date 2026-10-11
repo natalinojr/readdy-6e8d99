@@ -44,19 +44,25 @@ describe('Ação rápida — Vendas do dia', () => {
     }));
     h.tabelas = {
       // 12:30 e 12:50 em Brasília = 15:30Z / 15:50Z; 20:10 BRT = 23:10Z
-      orders: (f) => ({
+      orders: (f) => f.some(([m]) => m === 'gte') ? ({
         data: diaDoFiltro(f) === DIA ? [
           { id: 'o1', created_at: `${DIA}T15:30:00Z`, total_amount: 100 },
           { id: 'o2', created_at: `${DIA}T15:50:00Z`, total_amount: 50 },
           { id: 'o3', created_at: `${DIA}T23:10:00Z`, total_amount: 200 },
         ] : [],
         error: null,
+      }) : ({
+        // consulta por ids (subtotal e canal para normalizar o preço dos itens): o1 é delivery, subtotal 135 + 30 de adicional
+        data: [{ id: 'o1', subtotal: 165, origin_type: 'delivery' }],
+        error: null,
       }),
       order_items: () => ({
         data: [
-          { item_price: 40, quantity: 2, menu_items: { menu_categories: { name: 'Burgers' } } },
-          { item_price: 15, quantity: 3, menu_items: { menu_categories: { name: 'Bebidas' } } },
-          { item_price: 10, quantity: 1, menu_items: null },
+          { order_id: 'o1', item_price: 40, quantity: 2, order_item_options: [], menu_items: { menu_categories: { name: 'Burgers' } } },
+          { order_id: 'o1', item_price: 15, quantity: 3, order_item_options: [], menu_items: { menu_categories: { name: 'Bebidas' } } },
+          { order_id: 'o1', item_price: 10, quantity: 1, order_item_options: [], menu_items: null },
+          // combo de delivery: item_price 0 e o valor todo nos adicionais — entra pelo valor real
+          { order_id: 'o1', item_price: 0, quantity: 1, order_item_options: [{ additional_price: 30 }], menu_items: { menu_categories: { name: 'Combos' } } },
         ],
         error: null,
       }),
@@ -82,6 +88,9 @@ describe('Ação rápida — Vendas do dia', () => {
     expect(screen.getByText('Bebidas')).toBeInTheDocument();
     expect(screen.getByText('Sem categoria')).toBeInTheDocument();
     expect(screen.getByText(/R\$\s80,00/)).toBeInTheDocument();
+    // Combo de delivery (item_price 0 + adicional de R$ 30): aparece pelo valor real
+    expect(screen.getByText('Combos')).toBeInTheDocument();
+    expect(screen.getByText(/R\$\s30,00/)).toBeInTheDocument();
   });
 
   it('com iFood: destaque = ERPOS + iFood, detalhe de cada um e gráfico com a semana passada', async () => {

@@ -1427,7 +1427,7 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
       if (!o) return new Response(JSON.stringify({ _v: "v14", order: null }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
       const { data: itemRows } = await admin
         .from("order_items")
-        .select("id, item_name, item_price, quantity, notes")
+        .select("id, item_name, item_price, quantity, notes, status")
         .eq("order_id", o.id)
         .eq("tenant_id", tenant_id);
       // Adicionais/opcoes por item — o cliente ver o que compoe o valor de cada item.
@@ -1466,6 +1466,8 @@ Deno.serve({ verify_jwt: false }, async (req: Request) => {
         items: (itemRows ?? []).map((it: Record<string, unknown>) => ({
           id: it.id, item_name: it.item_name, item_price: Number(it.item_price ?? 0),
           quantity: Number(it.quantity ?? 0), notes: it.notes ?? null,
+          // 'cancelled' = item cancelado depois do pedido: o acompanhamento do cliente não mostra nem soma.
+          status: (it.status as string | null) ?? null,
           options: optsByItem.get(it.id as string) ?? [],
         })),
       };

@@ -157,8 +157,17 @@ describe("getPeriodoAnterior", () => {
 // ─── labelPeriodoAnterior ─────────────────────────────────────────────────────
 
 describe("labelPeriodoAnterior", () => {
-  it("Ontem → 'ontem'", () => {
-    expect(labelPeriodoAnterior("Ontem")).toBe("ontem");
+  it("Hoje → 'ontem'", () => {
+    expect(labelPeriodoAnterior("Hoje")).toBe("ontem");
+  });
+
+  it("Ontem → 'anteontem' (compara com o dia antes de ontem)", () => {
+    expect(labelPeriodoAnterior("Ontem")).toBe("anteontem");
+  });
+
+  it("dia único personalizado: hoje → 'ontem', outro dia → 'dia anterior'", () => {
+    expect(labelPeriodoAnterior("custom:2025-03-31:2025-03-31")).toBe("ontem");
+    expect(labelPeriodoAnterior("custom:2025-03-10:2025-03-10")).toBe("dia anterior");
   });
 
   it("7 dias → '7d anteriores'", () => {

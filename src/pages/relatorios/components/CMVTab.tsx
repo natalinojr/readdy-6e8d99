@@ -5,6 +5,7 @@ import {
 import { useCmvRelatorio } from '@/hooks/useCmvRelatorio';
 import { useRegistrarExport, type RegistrarExport } from '../useRegistrarExport';
 import { reais } from '@/lib/exportRelatorio';
+import { faixaCmv, CMV_BOM_ATE, CMV_ATENCAO_ATE, type FaixaCmv } from '@/lib/cmvRegras';
 
 interface Props { periodo: string; onExport?: RegistrarExport; }
 
@@ -20,20 +21,25 @@ function labelPeriodo(periodo: string): string {
   return periodo;
 }
 
-// Cor baseada no CMV%: verde < 30%, amarelo 30-45%, vermelho > 45%
+// Faixas do CMV: a mesma régua do Estoque (faixaCmv em cmvRegras.ts) — o mesmo % tem a mesma cor nas duas telas.
+const COR_FAIXA: Record<FaixaCmv, string> = { bom: '#10b981', atencao: '#f59e0b', revisar: '#ef4444' };
+
 function cmvColor(pct: number): string {
   if (pct === 0) return '#d4d4d8'; // sem ficha
-  if (pct <= 30) return '#10b981';
-  if (pct <= 45) return '#f59e0b';
-  return '#ef4444';
+  return COR_FAIXA[faixaCmv(pct)];
 }
 
 function cmvLabel(pct: number): { text: string; cls: string } {
   if (pct === 0) return { text: 'Sem ficha', cls: 'bg-zinc-100 text-zinc-400' };
-  if (pct <= 30) return { text: 'Ótimo', cls: 'bg-emerald-100 text-emerald-700' };
-  if (pct <= 45) return { text: 'Atenção', cls: 'bg-amber-100 text-amber-700' };
+  const f = faixaCmv(pct);
+  if (f === 'bom') return { text: 'Ótimo', cls: 'bg-emerald-100 text-emerald-700' };
+  if (f === 'atencao') return { text: 'Atenção', cls: 'bg-amber-100 text-amber-700' };
   return { text: 'Alto', cls: 'bg-red-100 text-red-700' };
 }
+
+// Classes do CMV geral (borda do cartão e texto) pela mesma régua; 0 = sem ficha, neutro.
+const BORDA_FAIXA: Record<FaixaCmv, string> = { bom: 'border-emerald-200', atencao: 'border-amber-200', revisar: 'border-red-200' };
+const TEXTO_FAIXA: Record<FaixaCmv, string> = { bom: 'text-emerald-600', atencao: 'text-amber-600', revisar: 'text-red-600' };
 
 export default function CMVTab({ periodo, onExport }: Props) {
   const { data, loading } = useCmvRelatorio(periodo);
@@ -156,16 +162,10 @@ export default function CMVTab({ periodo, onExport }: Props) {
           <p className="text-[10px] text-zinc-400 mt-0.5">Período: {labelPeriodo(periodo)}</p>
         </div>
         <div className={`bg-white border rounded-xl p-4 text-center ${
-          cmvGeral > 0 && cmvGeral <= 30 ? 'border-emerald-200'
-          : cmvGeral > 30 && cmvGeral <= 45 ? 'border-amber-200'
-          : cmvGeral > 45 ? 'border-red-200'
-          : 'border-zinc-100'
+          cmvGeral > 0 ? BORDA_FAIXA[faixaCmv(cmvGeral)] : 'border-zinc-100'
         }`}>
           <p className={`text-xl font-black ${
-            cmvGeral === 0 ? 'text-zinc-400'
-            : cmvGeral <= 30 ? 'text-emerald-600'
-            : cmvGeral <= 45 ? 'text-amber-600'
-            : 'text-red-600'
+            cmvGeral === 0 ? 'text-zinc-400' : TEXTO_FAIXA[faixaCmv(cmvGeral)]
           }`}>
             {cmvGeral > 0 ? `${cmvGeral.toFixed(1)}%` : '—'}
           </p>
@@ -191,9 +191,9 @@ export default function CMVTab({ periodo, onExport }: Props) {
       {/* Referência de CMV */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {[
-          { label: 'Ótimo', range: 'CMV ≤ 30%', color: 'bg-emerald-50 border-emerald-100 text-emerald-700', dot: 'bg-emerald-500' },
-          { label: 'Atenção', range: 'CMV 30–45%', color: 'bg-amber-50 border-amber-100 text-amber-700', dot: 'bg-amber-400' },
-          { label: 'Alto', range: 'CMV > 45%', color: 'bg-red-50 border-red-100 text-red-700', dot: 'bg-red-500' },
+          { label: 'Ótimo', range: `CMV ≤ ${CMV_BOM_ATE}%`, color: 'bg-emerald-50 border-emerald-100 text-emerald-700', dot: 'bg-emerald-500' },
+          { label: 'Atenção', range: `CMV ${CMV_BOM_ATE}–${CMV_ATENCAO_ATE}%`, color: 'bg-amber-50 border-amber-100 text-amber-700', dot: 'bg-amber-400' },
+          { label: 'Alto', range: `CMV > ${CMV_ATENCAO_ATE}%`, color: 'bg-red-50 border-red-100 text-red-700', dot: 'bg-red-500' },
         ].map(r => (
           <div key={r.label} className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${r.color}`}>
             <div className={`w-2 h-2 rounded-full flex-shrink-0 ${r.dot}`} />
@@ -371,7 +371,7 @@ export default function CMVTab({ periodo, onExport }: Props) {
                     <td className="px-4 py-3 text-right font-black text-zinc-900">{fmt(receitaItensCom)}</td>
                     <td className="px-4 py-3 text-right font-black text-red-600">{fmt(totalCusto)}</td>
                     <td className="px-4 py-3 text-center">
-                      <span className={`font-black text-sm ${cmvGeral <= 30 ? 'text-emerald-600' : cmvGeral <= 45 ? 'text-amber-600' : 'text-red-600'}`}>
+                      <span className={`font-black text-sm ${TEXTO_FAIXA[faixaCmv(cmvGeral)]}`}>
                         {cmvGeral.toFixed(1)}%
                       </span>
                     </td>

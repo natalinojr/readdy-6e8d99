@@ -320,8 +320,10 @@ export function useCaixaReport(filtros?: CaixaFiltros) {
           }
 
           rawSessions = sessData.map((sess: any) => {
-            const regs = registersMap[sess.id] ?? [];
-            const cr = regs[0] ?? null;
+            // Em ordem de abertura (como a RPC): `cash_registers` completo e `cash_register` = o ÚLTIMO caixa.
+            // Antes pegava regs[0] sem ordenar (qualquer um). Os totais da sessão somam todos (src/lib/caixaSessao.ts).
+            const regs = [...(registersMap[sess.id] ?? [])].sort((a, b) => new Date(a.opened_at).getTime() - new Date(b.opened_at).getTime());
+            const cr = regs.length > 0 ? regs[regs.length - 1] : null;
             const ords = ordersMap[sess.id] ?? { total: 0, count: 0, cancelados: 0, cortesias: 0, valor_cortesias: 0 };
             const sessPayments = paymentsBySession.get(sess.id) ?? [];
             const sessDiscountsTotal = discountsBySession.get(sess.id) ?? 0;

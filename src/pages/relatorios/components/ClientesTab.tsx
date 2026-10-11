@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useClientesReport } from '@/hooks/useClientesReport';
 import { useClientesRetencao } from '@/hooks/useClientesRetencao';
+import { btn, CartaoAcao } from '@/components/kit';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   AreaChart, Area, ReferenceLine, Cell,
@@ -46,7 +47,7 @@ function SegmentoCard({ seg, count, total }: { seg: RFMSegmento; count: number; 
 }
 
 export default function ClientesTab({ periodo }: Props) {
-  const { dados, loading } = useClientesReport(periodo);
+  const { dados, loading, error, recarregar } = useClientesReport(periodo);
   const { semanas: retencaoSemanas, loading: loadingRetencao } = useClientesRetencao(periodo);
   const [vistaTab, setVistaTab] = useState<'rfm' | 'retencao' | 'ranking'>('rfm');
 
@@ -57,6 +58,16 @@ export default function ClientesTab({ periodo }: Props) {
       <div className="flex items-center justify-center py-20">
         <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
       </div>
+    );
+  }
+
+  // Falha de leitura não é "sem clientes": avisa e deixa tentar de novo.
+  if (error) {
+    return (
+      <CartaoAcao tom="alerta" icone="ri-error-warning-line" titulo="Não consegui ler os clientes"
+        acoes={<button type="button" onClick={recarregar} className={btn('dark', 'sm')}>Tentar de novo</button>}>
+        {error}
+      </CartaoAcao>
     );
   }
 

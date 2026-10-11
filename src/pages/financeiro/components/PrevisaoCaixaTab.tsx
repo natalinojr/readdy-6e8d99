@@ -52,6 +52,7 @@ interface Receivable {
 }
 
 interface Payable {
+  id?: string;
   due_date: string;
   amount: number;
   paid_amount: number | null;
@@ -381,7 +382,7 @@ export default function PrevisaoCaixaTab() {
     const payrollMinMonth = monthKey(new Date(today.getFullYear(), today.getMonth() - 6, 1));
     const payrollMaxMonth = monthKey(endDate);
 
-    const [payablesRes, cashFlowsRes, pastFlowsRes, receivablesRes, payrollRes, bankAccountsRes, notasRes] = await Promise.all([
+    const [payablesRes, cashFlowsRes, pastFlowsRes, receivablesRes, payrollRes, bankAccountsRes, notasRes, abertasRes] = await Promise.all([
       // Contas a pagar: 'partial' TAMBÉM é dívida em aberto (invariante §8:
       // saldo devedor = amount − paid_amount). Filtrar só por 'pending' fazia a
       // conta paga pela metade sumir INTEIRA da previsão.
@@ -393,7 +394,7 @@ export default function PrevisaoCaixaTab() {
       // venceu é jogado em HOJE (mesmo tratamento que a folha em atraso já tinha).
       supabase
         .from('fin_accounts_payable')
-        .select('due_date, amount, paid_amount, status, description, is_recurring, recurrence_end_date')
+        .select('id, due_date, amount, paid_amount, status, description, is_recurring, recurrence_end_date')
         .eq('tenant_id', user.tenantId)
         // 'overdue' É dívida em aberto. A rotina `fn_mark_overdue_bills` troca
         // 'pending' → 'overdue' assim que a data passa, então filtrar por
@@ -469,7 +470,17 @@ export default function PrevisaoCaixaTab() {
         // é NULL — um `.neq()` sozinho descartaria justamente as notas mais novas.
         .or('sefaz_status.is.null,sefaz_status.neq.2')
         .not('parcelas', 'is', null),
+
+      // Regra única de contas em aberto (fn_contas_em_aberto, 2026-10-07): daqui só sai a marca `ja_paga` —
+      // compra "já paga por … na entrega" (o Receber deixa pendente até o extrato) não é dívida.
+      supabase.rpc('fn_contas_em_aberto', { p_tenants: [user.tenantId] }),
     ]);
+
+    // Se a regra única falhar, segue sem o filtro (como era) em vez de esvaziar a previsão.
+    const jaPagasIds = new Set(
+      ((abertasRes.data ?? []) as Array<{ id: string; ja_paga: boolean }>).filter((c) => c.ja_paga).map((c) => c.id),
+    );
+    const payables = ((payablesRes.data ?? []) as Payable[]).filter((p) => !p.id || !jaPagasIds.has(p.id));
 
     // P5: saldo inicial da projeção.
     // Preferimos o saldo bancário real (fin_bank_accounts) quando os bancos estão em uso;
@@ -520,7 +531,7 @@ export default function PrevisaoCaixaTab() {
     // então ela pressiona o caixa a partir de agora, não na data que passou.
     let totalVencidas = 0;
     let countVencidas = 0;
-    (payablesRes.data ?? []).forEach((p: Payable) => {
+    payables.forEach((p) => {
       const venceu = p.due_date < todayStr;
       const k = venceu ? todayStr : p.due_date;
       const saldoDevedor = Number(p.amount) - Number(p.paid_amount ?? 0);
@@ -542,7 +553,7 @@ export default function PrevisaoCaixaTab() {
     });
     // Recorrentes: a tabela só tem a próxima ocorrência; os meses seguintes do horizonte
     // entram como previstos (o aluguel de novembro não aparecia na previsão de 90 dias).
-    ocorrenciasRecorrentes((payablesRes.data ?? []) as Payable[], endDateStr).forEach((o) => {
+    ocorrenciasRecorrentes(payables, endDateStr).forEach((o) => {
       if (!dayMap[o.due_date] || !(o.amount > 0.005)) return;
       dayMap[o.due_date].saidasContas += o.amount;
       dayMap[o.due_date].detalhes.push({ tipo: 'conta_pagar', descricao: `${o.description} (recorrente — prevista)`, valor: o.amount });

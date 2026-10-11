@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 import type { BillPayable } from '@/types/financeiro';
 import { rotuloMes } from '@/lib/competenciaConta';
+import { todayBrasilia } from '@/lib/dateUtils';
 
 const STATUS_BADGE: Record<string, string> = {
   paid: 'bg-green-100 text-green-700',
@@ -65,9 +66,11 @@ export default function ContasPagarDetalheModal({ bill, onClose, onPay, onNaviga
   const [relatedInstallments, setRelatedInstallments] = useState<RelatedInstallment[]>([]);
   const [loadingDetails, setLoadingDetails] = useState(false);
 
-  const today = new Date().toISOString().split('T')[0];
+  // Dia de Brasília nos dois lados: antes `today` era a data UTC lida como meia-noite UTC e o
+  // vencimento como meia-noite local — conta que vence hoje mostrava "Faltam 1d" e a de ontem "Vence hoje".
+  const today = todayBrasilia();
   const daysUntil = bill.due_date
-    ? Math.ceil((new Date(bill.due_date + 'T00:00:00').getTime() - new Date(today).getTime()) / 86400000)
+    ? Math.round((new Date(bill.due_date.slice(0, 10) + 'T12:00:00Z').getTime() - new Date(today + 'T12:00:00Z').getTime()) / 86400000)
     : null;
 
   useEffect(() => {

@@ -49,6 +49,12 @@ export interface ExtratoDominio {
 const LABEL_RE = /:$/;
 const NUM_RE = /^-?\d{1,3}(\.\d{3})*,\d{2}$|^-?\d+,\d{2}$/;
 const REF_RE = /^(\d+:\d{2}|-?\d{1,3}(\.\d{3})*,\d{2}|\d+)$/;
+// PDF com texto lido por OCR (ex.: extrato refeito a partir do "Microsoft Print to PDF") às vezes cola o tipo
+// no valor: "2,98P", "2.047,74P", "242,87D". Sem separar, a coluna não fecha e a rubrica some ou gruda na vizinha.
+const VALOR_TIPO_RE = /^(-?\d{1,3}(?:\.\d{3})*,\d{2}|-?\d+,\d{2})([PD])$/;
+
+/** "INSS" na descrição da rubrica: "I.N.S.S..", "INSS SOBRE RESCISAO" e as leituras de OCR ("IN(S.S.."). */
+export const INSS_DESC_RE = /I[^A-Za-z0-9]{0,2}N[^A-Za-z0-9]{0,2}S[^A-Za-z0-9]{0,2}S/;
 
 export function brNum(s: string | null | undefined): number {
   if (s == null) return 0;
@@ -146,9 +152,20 @@ function parseRubrica(ws: PdfWord[]): Rubrica | null {
 
 /** Linha de rubricas: separa a coluna de proventos (esquerda) da de descontos (direita). */
 function parseRubricaRow(row: Row): Rubrica[] {
+  // Valor e tipo colados ("2,98P"): separa em duas palavras; o tipo separado vale como fim de coluna
+  // mesmo sem a posição x (a palavra colada começa no valor, não no P).
+  const colados = new Set<PdfWord>();
+  const words: PdfWord[] = [];
+  for (const w of row.words) {
+    const m = w.str.match(VALOR_TIPO_RE);
+    if (!m) { words.push(w); continue; }
+    const tipo: PdfWord = { ...w, str: m[2], x: w.x + 0.01 };
+    colados.add(tipo);
+    words.push({ ...w, str: m[1] }, tipo);
+  }
   // O "P"/"D" fecha cada coluna: corta logo depois do primeiro P/D da esquerda.
-  const idx = row.words.findIndex((w) => (w.str === 'P' || w.str === 'D') && w.x < 300);
-  const cols = idx >= 0 ? [row.words.slice(0, idx + 1), row.words.slice(idx + 1)] : [row.words];
+  const idx = words.findIndex((w) => (w.str === 'P' || w.str === 'D') && (w.x < 300 || colados.has(w)));
+  const cols = idx >= 0 ? [words.slice(0, idx + 1), words.slice(idx + 1)] : [words];
   return cols.map(parseRubrica).filter((r): r is Rubrica => r !== null);
 }
 
@@ -317,7 +334,7 @@ export function categorizarRubrica(r: Pick<Rubrica, 'descricao' | 'tipo'>): stri
     return 'outros_proventos';
   }
   if (/LIQUIDO\s+RESCIS/.test(d)) return 'liquido_rescisao';
-  if (/I\.?N\.?S\.?S/.test(d)) return 'inss';
+  if (INSS_DESC_RE.test(d)) return 'inss';
   if (/I\.?R\.?R\.?F|IMPOSTO DE RENDA/.test(d)) return 'irrf';
   if (/FALTA|ATRASO/.test(d)) return 'faltas';
   if (/MULTA/.test(d)) return 'multa_rescisoria';

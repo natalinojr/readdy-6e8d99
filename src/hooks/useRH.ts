@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { SUPABASE_URL } from '@/lib/supabase';
-import { calculatePayroll, type PayrollCalcInput, type PayrollCalcResult } from '@/lib/payrollCalculations';
+import { calculatePayroll, calcParcela13, type PayrollCalcInput, type PayrollCalcResult } from '@/lib/payrollCalculations';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export type EmployeeStatus = 'active' | 'inactive' | 'vacation' | 'leave';
@@ -414,10 +414,7 @@ export function usePayroll(referenceMonth?: string) {
     const records = employees
       .filter(e => e.status === 'active' && !existingIds.has(e.id))
       .map(e => {
-        const base = Number(e.salary);
-        const parcelValue = base / 2;
-        const inss = parcel === 'second' ? Math.min(parcelValue * 0.09, 454.43) : 0;
-        const net = parcelValue - inss;
+        const { valor: parcelValue, inss, fgts, net } = calcParcela13(Number(e.salary), parcel);
         return {
           tenant_id: user.tenantId,
           employee_id: e.id,
@@ -444,7 +441,7 @@ export function usePayroll(referenceMonth?: string) {
           dsr_value: 0,
           inss,
           irrf: 0,
-          fgts: base * 0.08,
+          fgts,
           vale_transporte: 0,
           deductions: inss,
           desconto_faltas: 0,

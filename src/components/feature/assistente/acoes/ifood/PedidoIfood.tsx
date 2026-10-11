@@ -1,5 +1,5 @@
 // Ação rápida (só leitura): um pedido do iFood pelo número curto (o "#1234" do Portal/tablet) —
-// quanto o cliente pagou, promoções por quem pagou, cada taxa, o líquido e a linha do tempo.
+// quanto o cliente pagou, promoções por quem pagou, cada taxa, o que cai no repasse e a linha do tempo.
 // Fonte: fin_ifood_sales (API Sales). Número curto se repete: busca nos últimos 30 dias e, se vier
 // mais de um, a pessoa escolhe. Antes de buscar, busca leve das vendas de hoje/ontem na API.
 import { useEffect, useRef, useState } from 'react';
@@ -8,7 +8,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useAcessoAcoes, rotaLiberada } from '../acesso';
 import { Roteiro, useRoteiro, Campo, Opcao, Fim, brl, dataBR, horaBR, hojeISO, somaDias, type AcaoProps } from '../kit';
 import { Painel, Kpis, Linhas, Chip } from '../painel';
-import { atualizarVendasIfood, canceladoIfood, codigoCancelamento, lojasIfood, MOTIVO_CANCELAMENTO, nm, taxasDoPedido } from './comum';
+import { atualizarVendasIfood, canceladoIfood, codigoCancelamento, lojasIfood, MOTIVO_CANCELAMENTO, nm, taxasDoPedido, ehTaxaDoCliente } from './comum';
 
 interface Pedido {
   sale_id: string; merchant_id: string; short_id: string | null; sale_created_at: string; current_status: string | null;
@@ -61,7 +61,7 @@ export default function PedidoIfood({ onFechar, irPara }: AcaoProps) {
         promos.push({ label: `Promoção ${b.target === 'DELIVERY_FEE' ? 'na entrega' : b.target === 'CART' ? 'no pedido' : 'no item'} · paga pela ${quem}`, valor: brl(n(sp.value)), status: quem.startsWith('loja') ? 'alerta' : 'ok' });
       }
     }
-    const taxas = (p.billing_entries ?? []).filter((b) => n(b.value) < 0 && !/SUBSIDY/i.test(String(b.name)))
+    const taxas = (p.billing_entries ?? []).filter((b) => n(b.value) < 0 && !/SUBSIDY/i.test(String(b.name)) && !ehTaxaDoCliente(b.name))
       .map((b) => ({ label: nm(b.name), valor: brl(n(b.value)), status: 'alerta' as const }));
     const primeiro = new Map<string, string>();
     for (const e of p.eventos ?? []) if (e.fullCode && e.createdAt && !primeiro.has(e.fullCode)) primeiro.set(e.fullCode, e.createdAt);
@@ -74,9 +74,9 @@ export default function PedidoIfood({ onFechar, irPara }: AcaoProps) {
     const codigo = codigoCancelamento(p.eventos);
     painel(
       <Painel titulo={`Pedido #${p.short_id ?? '—'}`} subtitulo={`${nomes.current[p.merchant_id] ?? 'iFood'} · ${dataBR(p.sale_created_at.slice(0, 10))} ${horaBR(p.sale_created_at)}`}
-        rodape="Da API de vendas do iFood. Líquido = o que o iFood repassa por este pedido.">
+        rodape="Da API de vendas do iFood. Cai no repasse = o que o iFood repassa por este pedido (não inclui o que o cliente pagou direto à loja).">
         <Kpis
-          principal={{ label: 'Líquido para a loja', valor: brl(n(p.sale_balance)), extra: cancelado ? <Chip texto={`Cancelado${codigo ? ` · ${MOTIVO_CANCELAMENTO[codigo] ?? `código ${codigo}`}` : ''}`} status="perigo" /> : <Chip texto={p.logistica === 'IFOOD_LOGISTICS' ? 'Entrega do iFood' : 'Entrega própria'} status="neutro" /> }}
+          principal={{ label: 'Cai no repasse', valor: brl(n(p.sale_balance)), extra: cancelado ? <Chip texto={`Cancelado${codigo ? ` · ${MOTIVO_CANCELAMENTO[codigo] ?? `código ${codigo}`}` : ''}`} status="perigo" /> : <Chip texto={p.logistica === 'IFOOD_LOGISTICS' ? 'Entrega do iFood' : 'Entrega própria'} status="neutro" /> }}
           outros={[
             { label: 'Itens + entrega', valor: brl(n(p.gross_bag) + n(p.delivery_fee)) },
             { label: 'Cliente pagou', valor: brl(pago) },
@@ -88,7 +88,7 @@ export default function PedidoIfood({ onFechar, irPara }: AcaoProps) {
           ...promos,
           ...taxas,
           { label: 'Total de taxas', valor: brl(taxasDoPedido(p)), status: 'alerta' },
-          { label: 'Líquido para a loja', valor: brl(n(p.sale_balance)), status: 'ok' },
+          { label: 'Cai no repasse', valor: brl(n(p.sale_balance)), status: 'ok' },
         ]} />
         <Linhas titulo="Pagamento" itens={(p.payment_methods ?? []).map((m) => ({
           label: m.wallet?.name ? nm(m.wallet.name) : `${nm(m.method)}${m.card?.brand ? ` ${nm(m.card.brand)}` : ''}`,

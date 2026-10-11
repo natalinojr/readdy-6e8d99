@@ -10,6 +10,7 @@ import { formatCurrency } from '@/lib/formatters';
 import { todayBrasilia } from '@/lib/dateUtils';
 import { saldoDaConta } from '@/lib/contasAbertas';
 import { supabase } from '@/lib/supabase';
+import { fetchAllRows } from '@/lib/fetchAllRows';
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchRevenueSources, fetchPixRecebidos, fetchCashSales } from '@/lib/revenueSources';
 import { empresaTemPdv } from '@/lib/tipoEmpresa';
@@ -110,16 +111,20 @@ function useReceitaVsDespesa(meses: number) {
         sources.includes('ifood') ? 'ifood_sale' : null,
       ].filter(Boolean) as string[];
 
-      const [{ data: ledgerIncome }, pixRes, cashRes] = await Promise.all([
+      // Paginado: em 6/12 meses o razão passa de 1000 linhas (Vila Leste já tinha 1.066 em out/2026)
+      // e o PostgREST cortava em silêncio — o mês mais recente saía com receita a menos.
+      const [{ rows: ledgerIncome }, pixRes, cashRes] = await Promise.all([
         origins.length === 0
-          ? Promise.resolve({ data: [] as { date: string; amount: number }[] })
-          : supabase
+          ? Promise.resolve({ rows: [] as { date: string; amount: number }[] })
+          : fetchAllRows<{ date: string; amount: number }>((from, to) => supabase
             .from('fin_cash_flow')
             .select('date, amount')
             .eq('tenant_id', user.tenantId)
             .eq('type', 'income')
             .in('origin', origins)
-            .gte('date', startDateStr),
+            .gte('date', startDateStr)
+            .order('id')
+            .range(from, to)),
         sources.includes('pix')
           ? fetchPixRecebidos(user.tenantId, startDateStr, '2999-12-31')
           : Promise.resolve({ rows: [], error: null }),
@@ -136,12 +141,19 @@ function useReceitaVsDespesa(meses: number) {
       ];
 
       // Despesas: fin_cash_flow saídas (já inclui auto_purchase, auto_bill_payment, auto_payroll)
-      const { data: expData } = await supabase
+      // Não são despesa da loja: retirada do sócio e recarga de fornecedor pré-pago (vira despesa só
+      // quando chega a nota do consumo; a DRE também a deixa de fora). A sangria do PDV FICA: quase
+      // sempre é freelancer ou compra paga em dinheiro, e é o único registro dessa saída.
+      // Filtro aqui no código (e não .not('origin','in',…)) para não perder linha sem origin.
+      const NAO_E_DESPESA = new Set(['auto_retirada_socio', 'prepaid_topup']);
+      const { rows: expData } = await fetchAllRows<{ date: string; amount: number; origin: string | null }>((from, to) => supabase
         .from('fin_cash_flow')
-        .select('date, amount')
+        .select('date, amount, origin')
         .eq('tenant_id', user.tenantId)
         .eq('type', 'expense')
-        .gte('date', startDateStr);
+        .gte('date', startDateStr)
+        .order('id')
+        .range(from, to));
 
       const map = new Map<string, { receita: number; despesa: number }>();
 
@@ -159,6 +171,7 @@ function useReceitaVsDespesa(meses: number) {
         if (map.has(key)) map.get(key)!.receita += Number(o.amount ?? 0);
       }
       for (const e of (expData ?? [])) {
+        if (e.origin && NAO_E_DESPESA.has(e.origin)) continue;
         const key = e.date.slice(0, 7);
         if (map.has(key)) map.get(key)!.despesa += Number(e.amount ?? 0);
       }

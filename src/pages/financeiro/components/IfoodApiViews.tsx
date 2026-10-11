@@ -50,6 +50,8 @@ const NOME_PT: Record<string, string> = {
   NUBANK: 'Nubank', VR: 'VR', IFOOD_MEAL_VOUCHER: 'Vale iFood', ALELO: 'Alelo', SODEXO: 'Pluxee', TICKET: 'Ticket',
   APPLE_PAY: 'Apple Pay', GOOGLE_PAY: 'Google Pay', SAMSUNG_PAY: 'Samsung Pay',
 };
+/** Taxa de serviço/conveniência que o CLIENTE paga ao iFood: vem negativa na API, mas não é custo da loja. */
+export const ehTaxaDoCliente = (nome: unknown) => /SERVICE_FEE|CONVENIENCE_FEE/i.test(String(nome ?? ''));
 // Código desconhecido (ex.: NOVO_TIPO_X) vira "Novo tipo x"; texto comum passa como veio.
 export const nm = (s?: string | null) => {
   if (!s) return '';
@@ -363,7 +365,7 @@ export default function IfoodApiViews({ tenantId, competence, view, merchantId, 
 }
 
 // ── Pedidos (Sales) ─────────────────────────────────────────────────────────
-// Linha enxuta (bruto, promoções por quem pagou, taxas, líquido); a composição do líquido abre ao clicar.
+// Linha enxuta (bruto, promoções por quem pagou, taxas, o que cai no repasse); a composição abre ao clicar.
 const somaPatrocinio = (r: any, quem: 'loja' | 'ifood' | 'industria') => {
   let v = 0;
   for (const bf of (r.raw?.benefits?.benefits ?? []) as any[]) {
@@ -396,13 +398,15 @@ function PedidosView({ rows, nomes, verApi }: { rows: any[]; nomes: Record<strin
   const validos = rows.filter((r) => !cancelado(r));
   // Bruto = itens + entrega (a entrega só quando não é o iFood que entrega — aí ela vem retida como
   // DELIVERY_FEE_IFOOD e é do iFood; igual ao Portal e aos Relatórios). A taxa de serviço (cobrada do cliente
-  // e repassada ao iFood) vem negativa da API e aparece na composição do líquido.
+  // e repassada ao iFood) vem negativa da API e aparece na composição do repasse, mas não entra em "Taxas do iFood":
+  // não é custo da loja. "Cai no repasse" = sale_balance (não inclui o que o cliente pagou direto à loja; o "líquido
+  // para a loja" de Relatórios › iFood › Dinheiro é outra conta).
   const entregaIfood = (r: any) => ((r.billing_entries ?? []) as any[]).some((b) => String(b.name) === 'DELIVERY_FEE_IFOOD');
   const bruto = validos.reduce((s, r) => s + n(r.gross_bag) + (entregaIfood(r) ? 0 : n(r.delivery_fee)), 0);
   const promoLoja = validos.reduce((s, r) => s + somaPatrocinio(r, 'loja'), 0);
   const promoIfood = validos.reduce((s, r) => s + somaPatrocinio(r, 'ifood'), 0);
   const liquido = rows.reduce((s, r) => s + n(r.sale_balance), 0);
-  const taxasDe = (r: any) => ((r.billing_entries ?? []) as any[]).filter((b) => n(b.value) < 0 && !/SUBSIDY/i.test(String(b.name)) && String(b.name) !== 'DELIVERY_FEE_IFOOD').reduce((s, b) => s + n(b.value), 0);
+  const taxasDe = (r: any) => ((r.billing_entries ?? []) as any[]).filter((b) => n(b.value) < 0 && !/SUBSIDY/i.test(String(b.name)) && String(b.name) !== 'DELIVERY_FEE_IFOOD' && !ehTaxaDoCliente(b.name)).reduce((s, b) => s + n(b.value), 0);
   const taxas = rows.reduce((s, r) => s + taxasDe(r), 0);
   const nomeLoja = (id: string) => nomes[id] ?? `Loja ${String(id).slice(0, 8)}`;
 
@@ -421,7 +425,7 @@ function PedidosView({ rows, nomes, verApi }: { rows: any[]; nomes: Record<strin
         <Stat label="Vendido (itens + entrega própria)" value={formatCurrency(bruto)} />
         <Stat label="Promoções" value={formatCurrency(promoLoja + promoIfood)} sub={`loja ${formatCurrency(promoLoja)} · iFood ${formatCurrency(promoIfood)}`} />
         <Stat label="Taxas do iFood" value={formatCurrency(taxas)} tone="text-red-600" />
-        <Stat label="Líquido para a loja" value={formatCurrency(liquido)} tone="text-green-700" />
+        <Stat label="Cai no repasse" value={formatCurrency(liquido)} tone="text-green-700" sub="sem o pago direto à loja" />
       </div>
       <div className="px-4 py-2.5 border-b border-zinc-100 flex flex-wrap items-center gap-2 bg-zinc-50/60">
         <div className="relative">
@@ -446,7 +450,7 @@ function PedidosView({ rows, nomes, verApi }: { rows: any[]; nomes: Record<strin
               <th className="text-right font-semibold px-3 py-2.5">Vendido</th>
               <th className="text-right font-semibold px-3 py-2.5">Promoções</th>
               <th className="text-right font-semibold px-3 py-2.5">Taxas</th>
-              <th className="text-right font-semibold px-3 py-2.5">Líquido</th>
+              <th className="text-right font-semibold px-3 py-2.5">Cai no repasse</th>
               <th className="w-8" />
             </tr>
           </thead>
@@ -502,7 +506,7 @@ function PedidosView({ rows, nomes, verApi }: { rows: any[]; nomes: Record<strin
                       <td colSpan={7} className="px-4 pb-4 pt-1">
                         <div className="grid md:grid-cols-2 gap-4">
                           <div className="bg-white rounded-2xl border border-zinc-100 p-3">
-                            <p className="text-xs font-semibold text-zinc-700 mb-2">Composição do líquido</p>
+                            <p className="text-xs font-semibold text-zinc-700 mb-2">Composição do repasse</p>
                             {entradas.length === 0 && <p className="text-xs text-zinc-400">O iFood ainda não fechou os valores deste pedido (costuma sair no dia seguinte).</p>}
                             {entradas.map((b, i) => (
                               <div key={i} className="flex justify-between gap-3 py-1 text-sm border-t border-zinc-50 first:border-0">
@@ -512,7 +516,7 @@ function PedidosView({ rows, nomes, verApi }: { rows: any[]; nomes: Record<strin
                             ))}
                             {entradas.length > 0 && (
                               <div className="flex justify-between gap-3 pt-2 mt-1 border-t border-zinc-200 text-sm font-semibold">
-                                <span>Líquido</span><span className="tabular-nums">{formatCurrency(n(r.sale_balance))}</span>
+                                <span>Cai no repasse</span><span className="tabular-nums">{formatCurrency(n(r.sale_balance))}</span>
                               </div>
                             )}
                           </div>

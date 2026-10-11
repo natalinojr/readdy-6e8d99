@@ -1,16 +1,22 @@
 // Contas do iFood usadas pelas ações rápidas (grupo iFood, Vendas do dia e Fechamento do dia).
 // MESMAS regras da tela Financeiro › iFood › Pedidos (IfoodApiViews › PedidosView) e do
 // "Fechamento do turno" (assistente-cron › ifoodResumo) — mudou lá, mude aqui:
-// - vendido = itens (gross_bag) + entrega só quando NÃO é o iFood que entrega (entrega própria/sob demanda),
-//   dos pedidos NÃO cancelados (taxa de serviço fica fora). Entregue pelo iFood (tem DELIVERY_FEE_IFOOD), a
-//   taxa de entrega é do iFood — igual ao Portal do Parceiro e aos Relatórios (regra do dono, 2026-09-26);
-// - taxas = lançamentos negativos do pedido que não são promoção (SUBSIDY) nem a entrega retida pelo iFood;
-// - líquido = saleBalance (o que o iFood repassa), de todos os pedidos (cancelado pode ter saldo).
+// - vendido = itens (gross_bag) + entrega só quando NÃO é o iFood que entrega (entrega própria/sob demanda) −
+//   promoção paga pela loja (regra do dono, 2026-10-10), dos pedidos NÃO cancelados (taxa de serviço fica fora).
+//   Entregue pelo iFood (tem DELIVERY_FEE_IFOOD), a taxa de entrega é do iFood (regra do dono, 2026-09-26).
+//   O TOTAL vendido/pedidos vem de fetchIfoodVendas (a mesma conta do Dashboard: conciliação → API → ao vivo);
+//   os detalhes (por loja, hora, pagamento) são da API;
+// - taxas = lançamentos negativos do pedido que não são promoção (SUBSIDY), a entrega retida pelo iFood nem a taxa
+//   de serviço/conveniência (essa o CLIENTE paga ao iFood: não é custo da loja);
+// - "cai no repasse" (campo `liquido`) = saleBalance (o que o iFood repassa; NÃO inclui o pago direto à loja), de todos
+//   os pedidos (cancelado pode ter saldo). Nas telas leva o nome "cai no repasse", não "líquido para a loja" (esse é
+//   o de Relatórios › iFood › Dinheiro, que parte das vendas inteiras, inclusive o pago direto à loja).
 // O iFood não passa pelo PDV: nada disto está no faturamento do fn_get_sales_report.
 import { supabase, invokeWithAuth } from '@/lib/supabase';
-import { nm } from '@/pages/financeiro/components/IfoodApiViews';
+import { nm, ehTaxaDoCliente } from '@/pages/financeiro/components/IfoodApiViews';
+import { fetchIfoodVendas } from '@/lib/ifoodVendas';
 
-export { nm };
+export { nm, ehTaxaDoCliente };
 
 interface Venda {
   merchant_id: string;
@@ -45,14 +51,28 @@ const horaBrasilia = (ts: string) => Number(new Date(ts).toLocaleString('en-US',
 export const canceladoIfood = (s: { current_status: string | null }) => /CANCEL/i.test(String(s.current_status ?? ''));
 export const taxasDoPedido = (s: { billing_entries: Venda['billing_entries'] }) =>
   (Array.isArray(s.billing_entries) ? s.billing_entries : [])
-    .filter((b) => n(b.value) < 0 && !/SUBSIDY/i.test(String(b.name)) && String(b.name) !== 'DELIVERY_FEE_IFOOD')
+    .filter((b) => n(b.value) < 0 && !/SUBSIDY/i.test(String(b.name)) && String(b.name) !== 'DELIVERY_FEE_IFOOD' && !ehTaxaDoCliente(b.name))
     .reduce((a, b) => a + n(b.value), 0);
 /** Entregue pelo iFood: a taxa de entrega fica com o iFood (vem retida como DELIVERY_FEE_IFOOD). */
 export const entregaDoIfood = (s: { billing_entries: Venda['billing_entries'] }) =>
   (Array.isArray(s.billing_entries) ? s.billing_entries : []).some((b) => String(b.name) === 'DELIVERY_FEE_IFOOD');
-/** Vendido do pedido: itens + entrega, sem a entrega quando é o iFood que entrega. */
-export const vendidoDoPedido = (s: { gross_bag: number | null; delivery_fee: number | null; billing_entries: Venda['billing_entries'] }) =>
-  n(s.gross_bag) + (entregaDoIfood(s) ? 0 : n(s.delivery_fee));
+/** Promoção paga pela loja no pedido, separando a da entrega (alvo DELIVERY_FEE) da dos itens. */
+const promoLojaDoPedido = (benefits: unknown) => {
+  let itens = 0; let entrega = 0;
+  const lista = (benefits as { benefits?: Array<{ target?: string; sponsorships?: Array<{ name?: string; value?: number }> }> } | null)?.benefits ?? [];
+  for (const bf of lista) {
+    const v = (bf?.sponsorships ?? []).filter((sp) => /^(MERCHANT|CHAIN)$/i.test(String(sp?.name ?? ''))).reduce((a, sp) => a + n(sp?.value), 0);
+    if (/DELIVERY/i.test(String(bf?.target ?? ''))) entrega += v; else itens += v;
+  }
+  return { itens, entrega };
+};
+/** Vendido do pedido = faturamento (decisão do dono, 2026-10-10): itens + entrega (só quando não é o iFood que
+ *  entrega) − promoção paga pela loja (a da entrega só sai quando a loja entrega). Mesma regra de src/lib/ifoodVendas.ts. */
+export const vendidoDoPedido = (s: { gross_bag: number | null; delivery_fee: number | null; billing_entries: Venda['billing_entries']; benefits?: unknown }) => {
+  const doIfood = entregaDoIfood(s);
+  const promo = promoLojaDoPedido(s.benefits);
+  return n(s.gross_bag) + (doIfood ? 0 : n(s.delivery_fee)) - promo.itens - (doIfood ? 0 : promo.entrega);
+};
 
 // Promoções por quem pagou (mesma regra de IfoodApiViews › somaPatrocinio).
 const patrocinio = (benefits: unknown, quem: 'loja' | 'ifood') => {
@@ -111,6 +131,8 @@ export async function resumoIfood(tenantId: string, de: string, ate: string, nom
     vendas.push(...((data ?? []) as unknown as Venda[]));
     if ((data ?? []).length < 1000) break;
   }
+  // Total igual ao do Dashboard (a API às vezes vem com o valor zerado; a conciliação corrige).
+  const tela = await fetchIfoodVendas(tenantId, de, ate).catch(() => null);
   const ok = vendas.filter((s) => !canceladoIfood(s));
   const cancel = vendas.filter(canceladoIfood);
   const lojas = new Map<string, { vendido: number; pedidos: number }>();
@@ -128,10 +150,10 @@ export async function resumoIfood(tenantId: string, de: string, ate: string, nom
     horas[horaBrasilia(s.sale_created_at)] += v;
   }
   return {
-    pedidos: ok.length,
+    pedidos: tela && !tela.error ? tela.pedidos : ok.length,
     cancelados: cancel.length,
     valorCancelado: cancel.reduce((a, s) => a + n(s.gross_bag) + n(s.delivery_fee), 0),
-    vendido: ok.reduce((a, s) => a + vendidoDoPedido(s), 0),
+    vendido: tela && !tela.error ? tela.total : ok.reduce((a, s) => a + vendidoDoPedido(s), 0),
     taxas: vendas.reduce((a, s) => a + taxasDoPedido(s), 0),
     liquido: vendas.reduce((a, s) => a + n(s.sale_balance), 0),
     promoLoja: ok.reduce((a, s) => a + patrocinio(s.benefits, 'loja'), 0),

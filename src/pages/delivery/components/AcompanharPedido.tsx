@@ -25,9 +25,22 @@ type OrderStatusData = {
     item_price: number;
     quantity: number;
     notes: string | null;
+    /** 'cancelled' = item cancelado depois do pedido (não aparece nem soma). Só vem se o servidor mandar. */
+    status?: string | null;
     options?: Array<{ option_name: string; group_name: string | null; additional_price: number }>;
   }>;
 };
+
+type ItemDoPedido = OrderStatusData['items'][number];
+
+/**
+ * Valor da linha do item. No delivery o item_price é só o preço BASE (os adicionais ficam em
+ * order_item_options, por unidade): a linha é (base + adicionais) × quantidade, igual ao subtotal do pedido.
+ */
+function valorDaLinha(item: ItemDoPedido): number {
+  const adicionais = (item.options ?? []).reduce(function (s, op) { return s + (Number(op.additional_price) || 0); }, 0);
+  return ((Number(item.item_price) || 0) + adicionais) * (Number(item.quantity) || 0);
+}
 
 interface Props {
   numeroPedido: string;
@@ -266,7 +279,11 @@ export default function AcompanharPedido(props: Props) {
   const linhaDeBaixo = mostrarPrevisao
     ? (isRetirada ? 'Pronto até ' : 'Chega até ') + formatTime(new Date(previsaoEntregaMs!).toISOString())
     : 'Feito em ' + formatDate(orderData.created_at) + ' às ' + formatTime(orderData.created_at);
-  const qtdItens = orderData.items.reduce(function (s, i) { return s + (i.quantity || 1); }, 0);
+  // Item cancelado depois do pedido não aparece nem entra na conta (o subtotal/total já saíram dele).
+  const itensAtivos = orderData.items.filter(function (i) { return i.status !== 'cancelled'; });
+  const qtdItens = itensAtivos.reduce(function (s, i) { return s + (i.quantity || 1); }, 0);
+  // Voucher e prêmio do clube não vêm no retorno: o desconto é o que falta para subtotal + taxa fechar no total.
+  const valorDesconto = Math.round(((orderData.subtotal || 0) + (isRetirada ? 0 : (orderData.delivery_fee || 0)) - orderData.total_amount) * 100) / 100;
 
   return (
     <div className="space-y-3">
@@ -412,15 +429,15 @@ export default function AcompanharPedido(props: Props) {
         </button>
         {verItens ? (
           <div className="border-t border-stone-100 px-4 py-3 space-y-2.5">
-            {orderData.items.map(function (item) {
+            {itensAtivos.map(function (item) {
               const opcoes = item.options ?? [];
               return (
                 <div key={item.id}>
                   <div className="flex items-start justify-between gap-3">
                     <span className="text-sm text-stone-800 break-words"><strong>{item.quantity}×</strong> {item.item_name}</span>
-                    <span className="text-sm font-bold text-stone-900 shrink-0">{formatCurrency(item.item_price * item.quantity)}</span>
+                    <span className="text-sm font-bold text-stone-900 shrink-0">{formatCurrency(valorDaLinha(item))}</span>
                   </div>
-                  {/* Adicionais/opções: o valor do item já os inclui; aqui detalhamos cada um */}
+                  {/* Adicionais/opções: o valor da linha ao lado já os soma (preço base + adicionais); aqui detalhamos cada um */}
                   {opcoes.length > 0 ? (
                     <div className="ml-6 mt-0.5 space-y-0.5">
                       {opcoes.map(function (op, i) {
@@ -443,6 +460,9 @@ export default function AcompanharPedido(props: Props) {
                 <div className="flex justify-between text-[13px] text-stone-600">
                   <span>Taxa de entrega</span><span>{orderData.delivery_fee > 0 ? formatCurrency(orderData.delivery_fee) : 'Grátis'}</span>
                 </div>
+              ) : null}
+              {valorDesconto > 0.01 ? (
+                <div className="flex justify-between text-[13px] text-emerald-700"><span>Desconto</span><span>− {formatCurrency(valorDesconto)}</span></div>
               ) : null}
               <div className="flex justify-between text-sm font-extrabold text-stone-900 pt-1"><span>Total</span><span>{formatCurrency(orderData.total_amount)}</span></div>
             </div>

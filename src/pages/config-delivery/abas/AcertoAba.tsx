@@ -24,7 +24,8 @@ export default function AcertoAba() {
   const { hasPermissao } = usePermissoes();
   const podeVerFinanceiro = hasPermissao('fin_entregadores');
 
-  // Entregas próprias entregues nos últimos 30 dias (pedido de treino não conta).
+  // Entregas próprias entregues nos últimos 30 dias (pedido de treino não conta). Inclui o pedido do iFood entregue
+  // pelo motoboy da loja ('propria'): é trabalho dele e entra no acerto (só não é venda do delivery).
   const [pedidos, setPedidos] = useState<PedidoConta[] | null>(null);
   const [falhou, setFalhou] = useState(false);
   useEffect(() => {

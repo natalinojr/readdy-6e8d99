@@ -137,7 +137,7 @@ export function useDeliveryReport(periodo: string) {
         .eq('tenant_id', user.tenantId)
         .eq('origin_type', 'delivery')
         .eq('is_training', false)
-        .eq('ifood_repasse', false) // pedido do iFood pago pelo repasse: venda contada pelo iFood
+        .is('ifood_order_id', null) // pedido do iFood (repasse ou pago na loja): venda contada pelo iFood
         .eq('status', 'delivered')
         .gte('created_at', fromTs)
         .lte('created_at', toTs)

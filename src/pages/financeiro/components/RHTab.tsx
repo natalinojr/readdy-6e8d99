@@ -17,6 +17,7 @@ import DetalheFolhaModal from './DetalheFolhaModal';
 import FreelancersTab from './FreelancersTab';
 import PrestadoresTab from './PrestadoresTab';
 import BeneficiosTab from './BeneficiosTab';
+import { todayBrasilia } from '@/lib/dateUtils';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 const today = new Date();
@@ -1150,7 +1151,7 @@ function FechamentoFolhaModal({
 function PayAllModal({ count, total, onClose, onConfirm }: {
   count: number; total: number; onClose: () => void; onConfirm: (date: string, method: string) => void;
 }) {
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(() => todayBrasilia());
   const [method, setMethod] = useState('Transferência');
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
@@ -1371,7 +1372,9 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
     const matchSearch = !search || e.name.toLowerCase().includes(search.toLowerCase()) || e.role.toLowerCase().includes(search.toLowerCase());
     return matchDept && matchSearch;
   });
-  const pendingEntries = entries.filter(e => e.status === 'pending');
+  // "Só INSS" (sócio sem retirada) não é salário a pagar: o INSS sai no DARF. Fica fora de Pendente / Fechar e Pagar
+  // (pagar por aqui lançaria a saída em dobro com a guia) e dos totais de líquido, pago e progresso.
+  const pendingEntries = entries.filter(e => e.status === 'pending' && !isSoInss(e));
   // Guias do mês: INSS = descontado dos empregados + INSS do pró-labore (DARF 1099); FGTS = da folha + consignado.
   const inssSocio = entries.reduce((s, e) => s + (e.rubricas ?? []).filter(r => r.categoria === 'inss_socio').reduce((a, r) => a + Number(r.valor || 0), 0), 0);
   // Somas por categoria de rubrica (folha do Domínio).
@@ -1390,6 +1393,9 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
   // coluna INSS e fora de Proventos/Líquido; no custo total continua (a DRE conta pelo bruto da folha).
   const brutoSemSocio = totalBruto - inssSocio;
   const liquidoSemSocio = totalLiquido - inssSocio;
+  const netSoInss = (status: string) => entries.filter(e => isSoInss(e) && e.status === status).reduce((s, e) => s + Number(e.net_salary || 0), 0);
+  const pagoSemSocio = totalPago - netSoInss('paid');
+  const pendenteSemSocio = totalPendente - netSoInss('pending');
   const temImportado = entries.some(isImportado);
   const departments = ['Todos', ...Array.from(new Set(employees.map(e => e.department)))];
 
@@ -1501,8 +1507,8 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
       <div className={`grid grid-cols-2 max-sm:[&>*:last-child:nth-child(odd)]:col-span-2 sm:grid-cols-2 xl:grid-cols-4 gap-3 ${activeView === 'freelancers' || activeView === 'prestadores' || activeView === 'beneficios' ? 'hidden' : ''}`}>
         <KpiCard label="Funcionários ativos" icon="ri-team-line" value={String(activeCount)} sub={`${employees.length} no total`} atual={activeCount} semVariacao />
         <KpiCard label="Massa salarial" icon="ri-money-dollar-circle-line" value={formatCurrency(totalSalaryMass)} sub="Salários base ativos" atual={totalSalaryMass} semVariacao />
-        <KpiCard label="Folha do mês" icon="ri-file-list-3-line" value={formatCurrency(totalLiquido)} sub={`Líquido — ${monthLabel(selectedMonth)}`} atual={totalLiquido} semVariacao />
-        <KpiCard label="Pendente" icon="ri-time-line" value={formatCurrency(totalPendente)} valueTone="text-red-600" sub={`${pendingEntries.length} lançamento(s)`} atual={totalPendente} semVariacao />
+        <KpiCard label="Folha do mês" icon="ri-file-list-3-line" value={formatCurrency(liquidoSemSocio)} sub={`Líquido — ${monthLabel(selectedMonth)}`} atual={liquidoSemSocio} semVariacao />
+        <KpiCard label="Pendente" icon="ri-time-line" value={formatCurrency(pendenteSemSocio)} valueTone="text-red-600" sub={`${pendingEntries.length} lançamento(s)`} atual={pendenteSemSocio} semVariacao />
       </div>
 
       {/* Alertas */}
@@ -1571,7 +1577,7 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
                   { label: 'Líquido a pagar', value: liquidoSemSocio, color: 'text-zinc-900' },
                   { label: 'FGTS (empresa)', value: totalFGTS, color: 'text-amber-600' },
                   { label: 'Custo total', value: totalBruto + totalFGTS, color: 'text-orange-700' },
-                  { label: 'Já pago', value: totalPago, color: 'text-green-600' },
+                  { label: 'Já pago', value: pagoSemSocio, color: 'text-green-600' },
                 ].map(item => (
                   <div key={item.label} className="text-center">
                     <p className="text-xs text-zinc-500 mb-1">{item.label}</p>
@@ -1595,11 +1601,11 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
               <div className="mt-4">
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-xs text-zinc-500">Progresso de pagamento</span>
-                  <span className="text-xs font-semibold text-zinc-700">{totalLiquido > 0 ? ((totalPago / totalLiquido) * 100).toFixed(0) : 0}%</span>
+                  <span className="text-xs font-semibold text-zinc-700">{liquidoSemSocio > 0 ? ((pagoSemSocio / liquidoSemSocio) * 100).toFixed(0) : 0}%</span>
                 </div>
                 <div className="w-full bg-zinc-100 rounded-full h-2">
                   <div className="bg-green-500 h-2 rounded-full transition-all duration-700"
-                    style={{ width: `${totalLiquido > 0 ? (totalPago / totalLiquido) * 100 : 0}%` }} />
+                    style={{ width: `${liquidoSemSocio > 0 ? (pagoSemSocio / liquidoSemSocio) * 100 : 0}%` }} />
                 </div>
               </div>
               </div>
@@ -1708,8 +1714,9 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
                       </td>
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-1 justify-end">
-                          {entry.status === 'pending' && (
-                            <button onClick={() => markPaid(entry.id, new Date().toISOString().split('T')[0], 'Transferência')}
+                          {/* "Só INSS" sai no DARF: marcar aqui lançaria a saída em dobro com a guia */}
+                          {entry.status === 'pending' && !isSoInss(entry) && (
+                            <button onClick={() => markPaid(entry.id, todayBrasilia(), 'Transferência')}
                               title="Marcar como pago"
                               className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-green-100 text-green-600 cursor-pointer transition-colors">
                               <i className="ri-check-line text-sm" />
@@ -1847,7 +1854,7 @@ export default function RHTab({ inicial }: { inicial?: RHView } = {}) {
       {payAllModal && (
         <PayAllModal
           count={pendingEntries.length}
-          total={adjustedTotalPendente ?? totalPendente}
+          total={adjustedTotalPendente ?? pendenteSemSocio}
           onClose={() => { setPayAllModal(false); setAdjustedTotalPendente(null); }}
           onConfirm={(date, method) => {
             markAllPaid(pendingEntries.map(e => e.id), date, method);

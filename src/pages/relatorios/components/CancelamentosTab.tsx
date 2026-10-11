@@ -6,6 +6,8 @@ import {
 import { useCancelamentosReport } from '@/hooks/useCancelamentosReport';
 import { useRegistrarExport, type RegistrarExport } from '../useRegistrarExport';
 import { reais } from '@/lib/exportRelatorio';
+import { estornosSemCancelamento, cancelamentosPorHora } from '@/lib/cancelamentosRelatorio';
+import { btn, CartaoAcao } from '@/components/kit';
 
 interface Props { periodo: string; onExport?: RegistrarExport; }
 
@@ -16,7 +18,7 @@ type SubTab = 'cancelamentos' | 'estornos' | 'descontos' | 'gorjetas';
 
 export default function CancelamentosTab({ periodo, onExport }: Props) {
   const [sub, setSub] = useState<SubTab>('cancelamentos');
-  const { dados, loading } = useCancelamentosReport(periodo);
+  const { dados, loading, error, recarregar } = useCancelamentosReport(periodo);
 
   const cancelamentos = dados.cancelamentos as Record<string, unknown>[];
   const estornos = dados.estornos as Record<string, unknown>[];
@@ -27,6 +29,13 @@ export default function CancelamentosTab({ periodo, onExport }: Props) {
   const totalEstornos = estornos.reduce((s, c) => s + (c.valor as number), 0);
   const totalDescontos = descontos.reduce((s, c) => s + (c.valor as number), 0);
   const totalGorjetas = gorjetas.reduce((s, c) => s + ((c.totalGorjeta as number) ?? 0), 0);
+
+  // Pedido cancelado que também teve o pagamento estornado é UMA perda só (o estorno dele já está no valor do
+  // cancelamento): "Perda" e "Impacto total" somam só os estornos de pedidos que não foram cancelados.
+  const totalEstornosSemCancelamento = useMemo(
+    () => estornosSemCancelamento(cancelamentos, estornos).reduce((s, e) => s + ((e.valor as number) ?? 0), 0),
+    [cancelamentos, estornos],
+  );
 
   // Ranking de motivos de cancelamento
   const motivosRanking = useMemo(() => {
@@ -42,20 +51,9 @@ export default function CancelamentosTab({ periodo, onExport }: Props) {
       .sort((a, b) => b.count - a.count);
   }, [cancelamentos]);
 
-  // Tendência de cancelamentos por horário
-  const tendenciaDia = useMemo(() => {
-    const mapa: Record<string, { count: number; total: number }> = {};
-    cancelamentos.forEach(c => {
-      const hora = (c.hora as string) ?? '';
-      const dia = hora.length >= 5 ? hora.slice(0, 5) : hora;
-      if (!mapa[dia]) mapa[dia] = { count: 0, total: 0 };
-      mapa[dia].count += 1;
-      mapa[dia].total += c.valor as number;
-    });
-    return Object.entries(mapa)
-      .map(([dia, d]) => ({ dia, count: d.count, total: d.total }))
-      .slice(0, 12);
-  }, [cancelamentos]);
+  // Cancelamentos por hora do dia (Brasília), em ordem de hora e sem cortar nenhuma. Antes agrupava por HH:MM
+  // e ficava só com as 12 primeiras, que eram as últimas horas do período (a RPC manda do mais novo ao mais velho).
+  const tendenciaDia = useMemo(() => cancelamentosPorHora(cancelamentos), [cancelamentos]);
 
   // Impacto financeiro acumulado
   const impactoAcumulado = useMemo(() => {
@@ -99,6 +97,16 @@ export default function CancelamentosTab({ periodo, onExport }: Props) {
       <div className="flex items-center justify-center py-20">
         <div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
       </div>
+    );
+  }
+
+  // Falha de leitura não é "nenhum cancelamento": avisa e deixa tentar de novo.
+  if (error) {
+    return (
+      <CartaoAcao tom="alerta" icone="ri-error-warning-line" titulo="Não consegui ler os cancelamentos"
+        acoes={<button type="button" onClick={recarregar} className={btn('dark', 'sm')}>Tentar de novo</button>}>
+        {error}
+      </CartaoAcao>
     );
   }
 
@@ -265,8 +273,8 @@ export default function CancelamentosTab({ periodo, onExport }: Props) {
             </ResponsiveContainer>
           </div>
           <div className="flex items-center justify-between mt-2 pt-2 border-t border-zinc-50">
-            <span className="text-xs text-zinc-500">Perda total no período</span>
-            <span className="text-sm font-black text-red-600">{fmt(totalCancelamentos + totalEstornos)}</span>
+            <span className="text-xs text-zinc-500" title="Cancelamentos + estornos de pedidos que não foram cancelados (pedido cancelado e estornado conta uma vez)">Perda total no período</span>
+            <span className="text-sm font-black text-red-600">{fmt(totalCancelamentos + totalEstornosSemCancelamento)}</span>
           </div>
         </div>
       )}
@@ -288,7 +296,7 @@ export default function CancelamentosTab({ periodo, onExport }: Props) {
           </div>
           <div className="bg-zinc-50 border border-zinc-100 rounded-xl p-4 text-center">
             <p className="text-lg font-black text-zinc-700">
-              {fmt(totalCancelamentos + totalEstornos + totalDescontos)}
+              {fmt(totalCancelamentos + totalEstornosSemCancelamento + totalDescontos)}
             </p>
             <p className="text-xs text-zinc-500 mt-0.5">Impacto total no período</p>
           </div>

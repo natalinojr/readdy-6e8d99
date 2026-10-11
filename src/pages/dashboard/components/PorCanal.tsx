@@ -1,7 +1,7 @@
 // Venda por canal (pedidos pagos do sistema por origem + iFood), com a variação contra o mesmo período
 // da semana passada até esta hora.
 
-const fmt = (v: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 }).format(v);
+import { formatCurrency as fmt } from '@/lib/formatters'; // com centavos: em reais inteiros R$ 49,90 aparecia como "R$ 50"
 
 const CANAL: Record<string, { label: string; icon: string; cor: string }> = {
   table: { label: 'Salão (mesas)', icon: 'ri-restaurant-line', cor: 'bg-amber-400' },
@@ -56,7 +56,7 @@ export default function PorCanal({ linhas, rotuloSemana }: { linhas: LinhaCanal[
                       {varPct >= 0 ? '▲' : '▼'} {Math.abs(varPct).toFixed(0)}%
                     </span>
                   )}
-                  <b className="tabular-nums w-20 text-right text-zinc-800">{fmt(l.valor)}</b>
+                  <b className="tabular-nums min-w-[5.5rem] flex-shrink-0 text-right text-zinc-800">{fmt(l.valor)}</b>
                 </div>
               );
             })}

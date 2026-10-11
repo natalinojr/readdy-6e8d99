@@ -480,6 +480,47 @@ async function postLedger(admin: Admin, tenantId: string, importId: string, allS
   return { rows: rows.length, receita: sum('stone_sale'), taxas: sum('auto_card_fee') };
 }
 
+// Vendas aprovadas no dia que já estão no extrato (raw.kind='release') e que a busca atual não
+// trouxe — remontadas do raw gravado, com os estornos das linhas raw.kind='refund'.
+async function vendasDoExtrato(admin: Admin, tenantId: string, bankAccountId: string, date: string, vistas: Set<string>): Promise<MpSale[]> {
+  const { data, error } = await admin.from('fin_bank_statement_imports')
+    .select('transaction_date, raw')
+    .eq('tenant_id', tenantId).eq('bank_account_id', bankAccountId).eq('source', 'mercadopago')
+    .eq('raw->>kind', 'release').eq('raw->>approved_date', date);
+  if (error) throw new Error(`Ler extrato gravado: ${error.message}`);
+  const faltam = (data ?? []).filter((r: any) => r.raw?.payment_id && !vistas.has(String(r.raw.payment_id)));
+  if (faltam.length === 0) return [];
+  const ids = faltam.map((r: any) => String(r.raw.payment_id));
+  const { data: refs, error: refErr } = await admin.from('fin_bank_statement_imports')
+    .select('transaction_date, raw')
+    .eq('tenant_id', tenantId).eq('bank_account_id', bankAccountId).eq('source', 'mercadopago')
+    .eq('raw->>kind', 'refund').in('raw->>payment_id', ids)
+    // mesma ordem em que foram gravados ('mpref:X' antes de 'mpref:X:<id>'): saleRows dá o id pela posição
+    .order('external_id');
+  if (refErr) throw new Error(`Ler estornos gravados: ${refErr.message}`);
+  const estornos = new Map<string, MpSale['refunds']>();
+  for (const r of (refs ?? []) as any[]) {
+    const k = String(r.raw.payment_id);
+    const l = estornos.get(k) ?? [];
+    l.push({ id: String(r.raw.refund_id ?? ''), date: String(r.raw.refund_date ?? r.transaction_date), time: r.raw.hora ?? null, amount: Number(r.raw.refunded ?? 0) });
+    estornos.set(k, l);
+  }
+  return faltam.map((r: any) => {
+    const x = r.raw;
+    return {
+      id: String(x.payment_id), status: String(x.status ?? 'approved'),
+      approvedDate: String(x.approved_date ?? date), releaseDate: String(x.release_date ?? r.transaction_date),
+      releaseTime: x.hora ?? null,
+      gross: Number(x.gross ?? 0), fee: Number(x.fee ?? 0), net: Number(x.net ?? 0), refunded: Number(x.refunded ?? 0),
+      refunds: estornos.get(String(x.payment_id)) ?? [], chargebackDate: null,
+      installments: Number(x.installments ?? 1), brand: String(x.brand ?? ''), paymentType: String(x.payment_type ?? ''),
+      operationType: String(x.operation_type ?? ''), orderType: x.order_type ?? null, marketplace: x.marketplace === true,
+      charges: Array.isArray(x.charges) ? x.charges : [], externalReference: x.external_reference ?? null,
+      lastFour: null, description: x.description ?? null,
+    } as MpSale;
+  });
+}
+
 // ── Importa as vendas de um dia ──────────────────────────────────────────────
 async function importDay(admin: Admin, tenantId: string, cfg: any, token: string, date: string) {
   const now = new Date().toISOString();
@@ -494,6 +535,19 @@ async function importDay(admin: Admin, tenantId: string, cfg: any, token: string
   if (error) {
     await logRow({ status: 'error', payments_count: 0, error_message: error.slice(0, 500) });
     return { date, error };
+  }
+  // A busca do MP às vezes volta incompleta (26/09/2026: a reimportação de 27/09 trouxe 1 de 33
+  // vendas) e o dia sumia do financeiro, porque o postLedger apaga e relança. Venda aprovada não
+  // some: completa com as vendas deste dia que já estão no extrato.
+  try {
+    const antigas = await vendasDoExtrato(admin, tenantId, cfg.bank_account_id, date, new Set(sales.map((s) => s.id)));
+    if (antigas.length > 0) {
+      log('WARN', 'import', 'MP devolveu menos vendas que o extrato; mantidas as já gravadas', { tenantId, date, mantidas: antigas.length });
+      sales.push(...antigas);
+    }
+  } catch (e) {
+    log('WARN', 'import', 'conferir vendas já gravadas falhou', { tenantId, date, error: String(e) });
+    return { date, error: String((e as Error)?.message ?? e) };
   }
 
   // o resumo do dia é o da LOJA: venda no Mercado Livre entra no extrato, não na conta do dia

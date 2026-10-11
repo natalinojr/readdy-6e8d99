@@ -199,6 +199,24 @@ describe('resumir30d', () => {
     expect(resumir30d(lista.slice(0, 2)).tempoMedioMin).toBeNull();
   });
 
+  it('pedido do iFood entregue pelo motoboy da loja conta como entrega, mas não como venda/ticket/taxa', () => {
+    const comIfood = [
+      ...lista,
+      ped({ ifood_order_id: 'abc', total_amount: 200, delivery_fee: 10, motoboy_timeline: tl('20:00', '20:20') }),
+      ped({ ifood_order_id: 'def', total_amount: 300, delivery_fee: 12, delivery_source: 'ig' }),
+      ped({ ifood_order_id: 'ghi', status: 'cancelled', total_amount: 80 }),
+    ];
+    const r = resumir30d(comIfood);
+    expect(r.entregues).toBe(7); // as 5 de antes + 2 do iFood que o motoboy da loja entregou
+    expect(r.vendido).toBe(560);
+    expect(r.ticket).toBeCloseTo(560 / 6, 5);
+    expect(r.taxaMedia).toBeCloseTo(46 / 6, 5);
+    expect(r.cancelados).toBe(3); // cancelado do iFood é do canal iFood
+    expect(r.naoCancelados).toBe(6);
+    expect(r.doInstagram).toBe(2);
+    expect(r.tempoAmostra).toBe(4); // o tempo de entrega do motoboy continua contando
+  });
+
   it('sem pedidos: tudo zerado', () => {
     const r = resumir30d([]);
     expect(r).toMatchObject({ total: 0, entregues: 0, vendido: 0, ticket: 0, taxaMedia: 0, cancelados: 0, motivoTop: null, tempoMedioMin: null });

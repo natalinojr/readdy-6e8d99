@@ -7,6 +7,7 @@ import { fetchAllRows } from '@/lib/fetchAllRows';
 import { formatCurrency } from '@/lib/formatters';
 import type { CashFlowEntry } from '@/types/financeiro';
 import { ocorrenciasRecorrentes } from '@/lib/recorrencias';
+import { useContasEmAberto } from '@/hooks/useContasEmAberto';
 import { KpiCard, MonthNav, Segmented } from './dreUi';
 
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
@@ -99,6 +100,10 @@ export default function CalendarioFluxoCaixa() {
   const { entries, loading: loadingCF } = useCashFlow(activeBounds.startStr, activeBounds.endStr);
   const { bills, loading: loadingBills } = useBillsPayable();
   const { installments, loading: loadingRec } = useReceivableInstallments();
+  // Regra única de contas em aberto (fn_contas_em_aberto): compra "já paga por … na entrega" fica pendente
+  // até o extrato, mas não é dívida — antes entrava no calendário como saída a pagar. Se a regra falhar, segue sem o filtro.
+  const { contas: contasAbertas } = useContasEmAberto(user?.tenantId);
+  const jaPagasIds = useMemo(() => new Set((contasAbertas ?? []).filter((c) => c.ja_paga).map((c) => c.id)), [contasAbertas]);
 
   // "Hoje" pelo fuso de Brasília (helper canônico do projeto). Antes usava
   // `toISOString()`, que é UTC: das 21h à meia-noite o dia corrente era
@@ -203,6 +208,7 @@ export default function CalendarioFluxoCaixa() {
     // saldo devedor = amount − paid_amount.
     const billsByDate = new Map<string, { desc: string; amount: number; status: string }[]>();
     bills.forEach(b => {
+      if (jaPagasIds.has(b.id)) return; // já paga na entrega: não é dívida
       // Conta VENCIDA e ainda em aberto é empurrada para HOJE: ela continua
       // pressionando o caixa daqui pra frente. Deixá-la na data passada a
       // excluía da projeção (que só olha dias futuros) e o saldo projetado
@@ -340,7 +346,7 @@ export default function CalendarioFluxoCaixa() {
     }
 
     return { dias: result, abertura };
-  }, [entries, bills, installments, todayStr, saldoAbertura, saldoBanco, agenda]);
+  }, [entries, bills, jaPagasIds, installments, todayStr, saldoAbertura, saldoBanco, agenda]);
 
   const diasMensal = useMemo(
     () => buildDias(monthBounds.start, monthBounds.end, viewMonth, 'mes'),

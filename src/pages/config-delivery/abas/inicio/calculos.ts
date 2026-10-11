@@ -219,14 +219,17 @@ export interface PedidoMes {
   out_for_delivery_at: string | null;
   delivery_source: string | null;
   delivery_platform: string | null;
+  /** Preenchido = pedido do iFood (mesmo entregue pelo motoboy da loja): a venda é do canal iFood. */
+  ifood_order_id?: string | null;
   created_at: string;
 }
 
 export interface Resumo30d {
   /** Pedidos considerados (entrega própria, fora rascunho de Pix não pago). */
   total: number;
+  /** Entregas feitas pelo motoboy da loja (inclui pedido do iFood que ele entregou: é trabalho dele). */
   entregues: number;
-  /** Soma dos não cancelados. */
+  /** Soma dos não cancelados, sem pedido do iFood (esse é venda do canal iFood). */
   vendido: number;
   ticket: number;
   taxaMedia: number;
@@ -245,14 +248,19 @@ const instante = (v: unknown): number | null => { if (typeof v !== 'string' || !
 /** Entrega própria (o iFood e a retirada têm relatório e Gestor próprios). */
 export const ehEntregaPropria = (p: { delivery_platform: string | null }) => p.delivery_platform == null || p.delivery_platform === 'propria';
 
+/** Pedido do iFood (inclusive o entregue pelo motoboy da loja ou pago na loja): a venda é contada pelo canal iFood. */
+export const ehPedidoIfood = (p: { ifood_order_id?: string | null }) => !!p.ifood_order_id;
+
 export function resumir30d(pedidos: PedidoMes[]): Resumo30d {
   // Rascunho (Pix pelo app ainda não pago) não é venda: ou paga e vira pedido, ou é cancelado no fechamento.
   const base = pedidos.filter((p) => ehEntregaPropria(p) && p.status !== 'draft');
-  const cancelados = base.filter((p) => p.status === 'cancelled');
+  const cancelados = base.filter((p) => p.status === 'cancelled' && !ehPedidoIfood(p));
   const vivos = base.filter((p) => p.status !== 'cancelled');
+  // Entregas e tempo médio contam o iFood entregue pelo motoboy da loja (ele trabalhou); venda, ticket e taxa não.
+  const vendas = vivos.filter((p) => !ehPedidoIfood(p));
   const entregues = vivos.filter((p) => p.status === 'delivered');
-  const vendido = vivos.reduce((s, p) => s + num(p.total_amount), 0);
-  const taxas = vivos.reduce((s, p) => s + num(p.delivery_fee), 0);
+  const vendido = vendas.reduce((s, p) => s + num(p.total_amount), 0);
+  const taxas = vendas.reduce((s, p) => s + num(p.delivery_fee), 0);
 
   const porMotivo = new Map<string, number>();
   for (const p of cancelados) {
@@ -280,13 +288,13 @@ export function resumir30d(pedidos: PedidoMes[]): Resumo30d {
     total: base.length,
     entregues: entregues.length,
     vendido,
-    ticket: vivos.length ? vendido / vivos.length : 0,
-    taxaMedia: vivos.length ? taxas / vivos.length : 0,
+    ticket: vendas.length ? vendido / vendas.length : 0,
+    taxaMedia: vendas.length ? taxas / vendas.length : 0,
     cancelados: cancelados.length,
     motivoTop,
     entreguesSemMarca: entregues.filter((p) => !p.motoboy_status).length,
-    doInstagram: vivos.filter((p) => ['ig', 'instagram'].includes((p.delivery_source ?? '').trim().toLowerCase())).length,
-    naoCancelados: vivos.length,
+    doInstagram: vendas.filter((p) => ['ig', 'instagram'].includes((p.delivery_source ?? '').trim().toLowerCase())).length,
+    naoCancelados: vendas.length,
     tempoMedioMin: amostra >= 3 ? Math.round(soma / amostra) : null,
     tempoAmostra: amostra,
   };

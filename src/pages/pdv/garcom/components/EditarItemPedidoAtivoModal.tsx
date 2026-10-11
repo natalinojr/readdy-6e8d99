@@ -4,6 +4,7 @@ import { useObsPorItemId } from '@/hooks/useObsPorItemId';
 import { useOrderEditLock } from '@/hooks/useOrderEditLock';
 import { invokeWithAuth, supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAuditoria } from '@/contexts/AuditoriaContext';
 
 const fmt = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
@@ -16,6 +17,7 @@ interface Props {
 
 export default function EditarItemPedidoAtivoModal({ item, orderId, onSalvo, onClose }: Props) {
   const { user } = useAuth();
+  const { registrarEvento } = useAuditoria();
   const { lockOrder, unlockOrder } = useOrderEditLock();
 
   const [quantidade, setQuantidade] = useState(item.quantidade);
@@ -78,14 +80,34 @@ export default function EditarItemPedidoAtivoModal({ item, orderId, onSalvo, onC
 
     try {
       if (quantidade === 0) {
-        await invokeWithAuth('order-write', {
-          body: {
-            action: 'update_order_item_status',
-            order_id: orderId,
-            order_item_id: item.id,
-            status: 'cancelled',
-            tenant_id: user?.tenantId,
-          },
+        // Pedido já pago: tirar item muda o total sem devolver o dinheiro — vai pelo cancelamento do caixa (com estorno).
+        const { data: ped } = await supabase.from('orders').select('is_paid').eq('id', orderId).maybeSingle();
+        if (ped?.is_paid) throw new Error('Este pedido já foi pago. Para tirar um item, cancele pelo caixa (com estorno).');
+        // Cancelar item = RPC fn_cancel_order_item (a mesma do CancelamentoModal): marca o item, abate subtotal e total
+        // do pedido, estorna o estoque que já tinha baixado e, se não sobrar item, cancela o pedido. O
+        // update_order_item_status só trocava o status do item e o total continuava cobrando o que foi cancelado.
+        const { error: rpcError } = await supabase.rpc('fn_cancel_order_item', {
+          p_order_item_id: item.id,
+          p_user_id: user?.id,
+          p_reason: 'Item cancelado pelo garçom',
+        });
+        if (rpcError) throw rpcError;
+        // A RPC não refaz o status do pedido pelos itens que sobraram (ex.: o resto já entregue → pedido entregue).
+        // O order-write refaz; só quando ainda há item ativo (sem item, a RPC já cancelou o pedido).
+        const { data: depois } = await supabase.from('orders').select('status').eq('id', orderId).maybeSingle();
+        if (depois && depois.status !== 'cancelled') {
+          await invokeWithAuth('order-write', {
+            body: { action: 'update_order_item_status', order_id: orderId, order_item_id: item.id, status: 'cancelled', tenant_id: user?.tenantId },
+          }).catch(() => { /* status do pedido se ajusta no próximo movimento do KDS */ });
+        }
+        registrarEvento({
+          tipo: 'pedido_cancelado',
+          severidade: 'aviso',
+          usuario: user?.nome ?? 'Operador',
+          perfil: user?.perfil ?? 'garcom',
+          descricao: `Item "${item.nome}" cancelado do pedido pelo garçom.`,
+          entidade: 'Pedido',
+          entidadeId: orderId,
         });
         // Item cancelado: ainda precisa chamar unlock separado (cancel não tem finish_edit)
         await unlockOrder(orderId, true, `Item ${item.nome} cancelado`);

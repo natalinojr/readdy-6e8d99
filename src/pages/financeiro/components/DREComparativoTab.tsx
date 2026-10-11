@@ -30,6 +30,8 @@ interface DRESnapshot {
   receitaDelivery: number;
   receitaMesa: number;
   receitaAutoatendimento: number;
+  /** Entradas manuais do fluxo de caixa (origin manual) — só com a fonte "manual" ligada. Igual ao DRETab. */
+  receitaManual: number;
   /** Vendas em cartão liquidadas pela Stone (origin stone_sale). */
   receitaStone: number;
   /** Vendas em cartão por maquininha (sublinhas; soma = receitaStone). */
@@ -112,9 +114,11 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string, 
   const startTs = startDate + 'T00:00:00-03:00';
   const endDateTime = endDate + 'T23:59:59.999-03:00';
   const monthStr = startDate.slice(0, 7);
-  const [autoSaleRes, paymentsRes, payMethodsRes, receivablesReceivedRes, cancelledRes, descontosRes, billsRes, purchasesRes, payrollRes, cardFeeRes] = await Promise.all([
+  const [autoSaleRes, manualIncomeRes, paymentsRes, payMethodsRes, receivablesReceivedRes, cancelledRes, descontosRes, billsRes, purchasesRes, payrollRes, cardFeeRes] = await Promise.all([
     // Livro-razão: só o que virou caixa de fato. Serve de crivo para os payments abaixo.
     supabase.from('fin_cash_flow').select('reference_id').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'auto_sale').gte('date', startDate).lte('date', endDate),
+    // Entradas manuais de receita: o DRETab soma (fonte "manual"); sem elas o Comparativo ficava abaixo da DRE.
+    supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'manual').gte('date', startDate).lte('date', endDate),
     // A coluna Caixa contava TODO payment do período — inclusive cartão a prazo (dinheiro que
     // ainda não entrou) e pagamentos estornados. Faltavam os 3 filtros do DRETab:
     // is_refunded=false, days_to_receive=0 e cruzamento com auto_sale.
@@ -175,9 +179,11 @@ async function fetchCaixa(tenantId: string, startDate: string, endDate: string, 
   const { data: stoneSaleRows } = await supabase.from('fin_cash_flow').select('amount, description').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'stone_sale').gte('date', startDate).lte('date', endDate);
   const receitaStone = (stoneSaleRows ?? []).reduce((s, r) => s + Number(r.amount), 0);
   const cartaoPorMaquininha = somarDetalhe(stoneSaleRows ?? [], r => maquininhaDaVenda(r.description), r => Number(r.amount));
+  if (manualIncomeRes.error) console.error('[DRE-Comparativo] Manual income:', manualIncomeRes.error.message);
+  const receitaManual = (manualIncomeRes.data ?? []).reduce((s, m) => s + Number(m.amount), 0);
 
   return {
-    receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto, receitaStone, cartaoPorMaquininha,
+    receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto, receitaManual, receitaStone, cartaoPorMaquininha,
     receitaAReceber: 0, cancelamentos, descontos, cmvCompras, cmvComprasPendentes: 0, cmvTeorico,
     despesasPorCategoria, despesasAPagar: 0, custoPessoal, taxasMaquininha, taxasIfood,
   };
@@ -189,8 +195,10 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
   const startTs = startDate + 'T00:00:00-03:00';
   const endDateTime = endDate + 'T23:59:59.999-03:00';
   const monthStr = startDate.slice(0, 7);
-  const [autoSaleRes, paymentsRes, receivablesRes, cancelledRes, descontosRes, billsRes, purchasesRes, payrollRes, cardFeeRes] = await Promise.all([
+  const [autoSaleRes, manualIncomeRes, paymentsRes, receivablesRes, cancelledRes, descontosRes, billsRes, purchasesRes, payrollRes, cardFeeRes] = await Promise.all([
     supabase.from('fin_cash_flow').select('reference_id').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'auto_sale').gte('date', startDate).lte('date', endDate),
+    // Entradas manuais de receita (igual ao DRETab, mesmo filtro de datas nos dois regimes).
+    supabase.from('fin_cash_flow').select('amount').eq('tenant_id', tenantId).eq('type', 'income').eq('origin', 'manual').gte('date', startDate).lte('date', endDate),
     supabase.from('payments').select('id, amount, orders!inner(destination_type, status, is_training, is_draft)').eq('orders.tenant_id', tenantId).eq('orders.is_training', false).eq('orders.is_draft', false).not('orders.status', 'in', '("cancelled","draft")').eq('is_refunded', false).gte('created_at', startTs).lte('created_at', endDateTime),
     supabase.from('fin_receivable_installments').select('amount').eq('tenant_id', tenantId).eq('status', 'pending').gte('due_date', startDate).lte('due_date', endDate),
     supabase.from('orders').select('total_amount').eq('tenant_id', tenantId).eq('is_training', false).eq('is_draft', false).eq('ifood_repasse', false).eq('status', 'cancelled').gte('created_at', startTs).lte('created_at', endDateTime),
@@ -239,9 +247,11 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
     .filter((r) => !isStoneVendasLedger(r.description));
   const receitaStone = stoneLedger.reduce((s, r) => s + Number(r.amount), 0);
   const cartaoPorMaquininha = somarDetalhe(stoneLedger, r => maquininhaDaVenda(r.description), r => Number(r.amount));
+  if (manualIncomeRes.error) console.error('[DRE-Comparativo] Manual income:', manualIncomeRes.error.message);
+  const receitaManual = (manualIncomeRes.data ?? []).reduce((s, m) => s + Number(m.amount), 0);
 
   return {
-    receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto, receitaStone, cartaoPorMaquininha,
+    receitaBalcao: bucket.balcao, receitaDelivery: bucket.delivery, receitaMesa: bucket.mesa, receitaAutoatendimento: bucket.auto, receitaManual, receitaStone, cartaoPorMaquininha,
     receitaAReceber, cancelamentos, descontos, cmvCompras, cmvComprasPendentes, cmvTeorico,
     despesasPorCategoria, despesasAPagar, custoPessoal, taxasMaquininha, taxasIfood,
   };
@@ -252,7 +262,7 @@ async function fetchCompetencia(tenantId: string, startDate: string, endDate: st
  * custoPessoal/taxas* sobra só o que não tem categoria. `deducoes` = grupo Deduções.
  */
 function calcDRE(d: DRESnapshot, deducoes: number) {
-  const receitaRecebida = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento + (d.receitaStone ?? 0) + (d.receitaPix ?? 0) + (d.receitaIfood ?? 0) + (d.receitaDinheiro ?? 0);
+  const receitaRecebida = d.receitaBalcao + d.receitaDelivery + d.receitaMesa + d.receitaAutoatendimento + (d.receitaManual ?? 0) + (d.receitaStone ?? 0) + (d.receitaPix ?? 0) + (d.receitaIfood ?? 0) + (d.receitaDinheiro ?? 0);
   // BUG-41 (intencional, mesmo critério do DRETab): recebível pendente é SALDO, não receita
   // adicional. A venda a prazo já está no `payments`/`auto_sale`; somar `receitaAReceber` na
   // competência contava a mesma venda duas vezes. `receitaAReceber` segue exibido à parte.
@@ -623,6 +633,9 @@ export default function DREComparativoTab() {
               )}
               {(caixaData.receitaAutoatendimento > 0 || compData.receitaAutoatendimento > 0) && (
                 <CompRow label="Autoatendimento" caixaVal={caixaData.receitaAutoatendimento} compVal={compData.receitaAutoatendimento} {...rowBase} />
+              )}
+              {(caixaData.receitaManual > 0 || compData.receitaManual > 0) && (
+                <CompRow label="Entradas manuais (fluxo de caixa)" caixaVal={caixaData.receitaManual} compVal={compData.receitaManual} {...rowBase} />
               )}
               {(caixaData.receitaStone > 0 || compData.receitaStone > 0) && (
                 <CompRow label={`Vendas em cartão (${flowLabels.card})`} caixaVal={caixaData.receitaStone} compVal={compData.receitaStone} {...rowBase} />

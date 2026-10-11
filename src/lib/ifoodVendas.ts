@@ -26,13 +26,50 @@ export function portalBucket(e: PortalEntry) {
   return z;
 }
 
+/**
+ * Faturamento do iFood (decisão do dono, 2026-10-10): o que o Portal chama de "vendas" MENOS a promoção que a
+ * própria loja pagou — igual ao desconto do balcão e ao valor da nota (valorVendaIfood). A parte paga pelo
+ * iFood continua (ele repassa). Entrega grátis paga pela loja só sai quando é a loja que entrega (aí era receita
+ * de entrega dela); com entregador do iFood é custo do iFood, não desconto da venda.
+ * Ex.: itens R$ 49,90 com cupom de R$ 5 bancado pela loja → R$ 44,90.
+ */
+export interface FaturamentoPedido { vendas: number; promoLojaItens: number; promoLojaEntrega: number; entregaIfood: boolean }
+export const faturamentoIfood = (p: FaturamentoPedido) =>
+  p.vendas - p.promoLojaItens - (p.entregaIfood ? 0 : p.promoLojaEntrega);
+
+/** Soma uma linha da conciliação nas partes que o faturamento usa (mesmas regras de montarPedidos). */
+export function acumularFaturamento(acc: FaturamentoPedido, e: PortalEntry) {
+  const t = (e.tipo_lancamento ?? '').toLowerCase();
+  const d = (e.descricao ?? '').toLowerCase();
+  acc.vendas += portalBucket(e).vendas;
+  if (t.includes('subs') && /custeada pela loja/.test(d)) {
+    if (/delivery|entrega/.test(d)) acc.promoLojaEntrega += -e.valor; else acc.promoLojaItens += -e.valor;
+  }
+  if ((t.includes('reten') && /taxa entrega/.test(d)) || /entrega ifood|sob demanda|on_demand/.test(d)) acc.entregaIfood = true;
+  return acc;
+}
+
+/** Pedido ao vivo (ifood_orders): mesma conta do valorVendaIfood (supabase/functions/_shared/ifood-valores.ts). */
+export function faturamentoPedidoAoVivo(o: { order_type?: string | null; delivered_by?: string | null; total?: { subTotal?: number; deliveryFee?: number } | null; benefits?: unknown }) {
+  const entregaLoja = String(o.order_type ?? 'DELIVERY') === 'DELIVERY' && o.delivered_by === 'MERCHANT';
+  const taxaLoja = entregaLoja ? Number(o.total?.deliveryFee ?? 0) : 0;
+  let descLoja = 0;
+  for (const b of Array.isArray(o.benefits) ? o.benefits as Array<{ target?: string; sponsorshipValues?: Array<{ name?: string; value?: number }> }> : []) {
+    if (String(b?.target ?? '') === 'DELIVERY_FEE' && !(taxaLoja > 0)) continue;
+    for (const sp of b?.sponsorshipValues ?? []) if (/^(MERCHANT|CHAIN)$/.test(String(sp?.name ?? ''))) descLoja += Number(sp?.value ?? 0);
+  }
+  return Math.max(0, Number(o.total?.subTotal ?? 0) + taxaLoja - descLoja);
+}
+
 interface EntryRow extends PortalEntry { order_id: string | null; order_created_at: string | null }
 interface LiveRow {
   ifood_order_id: string;
   ordered_at: string | null;
   status: string;
   delivered_by: string | null;
+  order_type: string | null;
   total: { subTotal?: number; deliveryFee?: number } | null;
+  benefits: unknown;
 }
 
 export interface IfoodVendas {
@@ -64,17 +101,20 @@ export async function fetchIfoodVendas(tenantId: string, fromISO: string, toISO:
     .gte('order_created_at', fromISO)
     .lte('order_created_at', toISO)
     .order('order_created_at', { ascending: true })
+    .order('id', { ascending: true }) // desempate: linhas do mesmo pedido têm o mesmo horário (paginação estável)
     .range(from, to));
   const vazio: IfoodVendas = { porDia: {}, porHora: {}, total: 0, pedidos: 0, pedidosAoVivo: 0, lista: [], error: res.error?.message ?? null };
   if (res.error) return vazio;
 
   const porPedido = new Map<string, { at: string; valor: number; aoVivo?: boolean }>();
+  const partes = new Map<string, FaturamentoPedido & { at: string }>();
   for (const r of res.rows ?? []) {
     if (!r.order_id || !r.order_created_at) continue;
-    const p = porPedido.get(r.order_id) ?? { at: r.order_created_at, valor: 0 };
-    p.valor += portalBucket({ ...r, valor: Number(r.valor) }).vendas;
-    porPedido.set(r.order_id, p);
+    const p = partes.get(r.order_id) ?? { at: r.order_created_at, vendas: 0, promoLojaItens: 0, promoLojaEntrega: 0, entregaIfood: false };
+    acumularFaturamento(p, { ...r, valor: Number(r.valor) });
+    partes.set(r.order_id, p);
   }
+  for (const [id, p] of partes) porPedido.set(id, { at: p.at, valor: faturamentoIfood(p) });
 
   // A conciliação chega dias depois; sem complemento, "Hoje" e a sessão aberta ficam sem iFood.
   // 1) API de Vendas (fin_ifood_sales, sincronizada pela ifood-financial) — mesma tradução da aba iFood
@@ -85,16 +125,18 @@ export async function fetchIfoodVendas(tenantId: string, fromISO: string, toISO:
   for (const p of api) {
     if (p.cancelado) { canceladosApi.add(p.id); continue; }
     if (porPedido.has(p.id)) continue;
-    porPedido.set(p.id, { at: p.at.toISOString(), valor: p.vendas, aoVivo: true });
+    const promoEntrega = p.promoLojaEntrega ?? 0;
+    const valor = faturamentoIfood({ vendas: p.vendas, promoLojaItens: p.promoLoja - promoEntrega, promoLojaEntrega: promoEntrega, entregaIfood: p.logistica !== 'propria' });
+    porPedido.set(p.id, { at: p.at.toISOString(), valor, aoVivo: true });
     pedidosAoVivo += 1;
   }
 
   // 2) Pedidos ao vivo do módulo Pedidos do iFood (ifood_orders) que nem a API de Vendas trouxe ainda.
-  //    Valor das vendas ≈ itens (subTotal) + taxa de entrega só quando a própria loja entrega: é o que sobra
-  //    no Portal depois das retenções (entrega iFood, taxa de serviço) e somando os subsídios de promoção.
+  //    Valor = itens (subTotal) + taxa de entrega só quando a própria loja entrega − promoção paga pela loja
+  //    (mesma conta do valor da nota, valorVendaIfood).
   const vivos = await fetchAllRows<LiveRow>((from, to) => supabase
     .from('ifood_orders')
-    .select('ifood_order_id, ordered_at, status, delivered_by, total')
+    .select('ifood_order_id, ordered_at, status, delivered_by, order_type, total, benefits')
     .eq('tenant_id', tenantId)
     .not('ordered_at', 'is', null)
     .gte('ordered_at', fromISO)
@@ -103,7 +145,7 @@ export async function fetchIfoodVendas(tenantId: string, fromISO: string, toISO:
     .range(from, to));
   for (const o of vivos.rows ?? []) {
     if (!o.ordered_at || o.status === 'cancelled' || porPedido.has(o.ifood_order_id) || canceladosApi.has(o.ifood_order_id)) continue;
-    const valor = Number(o.total?.subTotal ?? 0) + (o.delivered_by === 'MERCHANT' ? Number(o.total?.deliveryFee ?? 0) : 0);
+    const valor = faturamentoPedidoAoVivo(o);
     porPedido.set(o.ifood_order_id, { at: o.ordered_at, valor, aoVivo: true });
     pedidosAoVivo += 1;
   }

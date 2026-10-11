@@ -384,10 +384,18 @@ async function repostImports(admin: Admin, tenantId: string, on: boolean, minCom
   if (error) throw new Error('Ler importações: ' + error.message);
   const tot = { imports: 0, rows: 0, receita: 0, taxas: 0 };
   for (const imp of imps ?? []) {
-    const { data: ents, error: eErr } = await admin.from('fin_ifood_entries')
-      .select('data_repasse, valor, tipo_lancamento, impacto_repasse, order_id, descricao, responsavel').eq('import_id', imp.id).limit(50000);
-    if (eErr) throw new Error('Ler linhas: ' + eErr.message);
-    const list = (ents ?? []).map((e: any) => ({ ...e, valor: Number(e.valor) }));
+    // Paginado: o PostgREST corta em 1000 linhas mesmo com .limit maior, e um mês movimentado passa
+    // disso (jul/2026 da Paranaguá: 942) — o razão sairia com parte do repasse.
+    const ents: any[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data: pag, error: eErr } = await admin.from('fin_ifood_entries')
+        .select('data_repasse, valor, tipo_lancamento, impacto_repasse, order_id, descricao, responsavel')
+        .eq('import_id', imp.id).order('id').range(from, from + 999);
+      if (eErr) throw new Error('Ler linhas: ' + eErr.message);
+      ents.push(...(pag ?? []));
+      if ((pag ?? []).length < 1000) break;
+    }
+    const list = ents.map((e: any) => ({ ...e, valor: Number(e.valor) }));
     const l = await postLedger(admin, tenantId, imp.id, on, list, pcts.get(imp.merchant_id)?.pct ?? 0);
     // Resumo da importação na mesma divisão do portal.
     const t = portalTotals(list);
@@ -630,12 +638,23 @@ async function syncSales(admin: Admin, cfg: any, from: string, to: string) {
     // vezes devolve o pedido sem saleGrossValue/billingSummary e o upsert zerava valor e taxas —
     // as ações rápidas mostravam o mesmo dia com totais diferentes a cada leitura.
     const MANTER = ['gross_bag', 'delivery_fee', 'service_fee', 'benefits_total', 'sale_balance', 'payment_methods', 'billing_entries'] as const;
+    // Também chega "zerado" (2026-10-10): pedido concluído com bag 0 e billingEntries vazio — 94 pedidos
+    // da Paranaguá perderam valor e o assistente mostrou R$ 143,53 no lugar de R$ 300,88. Pedido não
+    // cancelado sem valor nem lançamentos é resposta incompleta: fica o que já estava gravado (raw junto).
+    const incompleto = (r: Record<string, unknown>) => !Number(r.gross_bag ?? 0)
+      && !(Array.isArray(r.billing_entries) && r.billing_entries.length > 0)
+      && !/CANCEL/i.test(String(r.current_status ?? ''));
     if (rows.size) {
-      const { data: antes } = await admin.from('fin_ifood_sales').select(`sale_id, ${MANTER.join(', ')}`)
+      const { data: antes } = await admin.from('fin_ifood_sales').select(`sale_id, raw, ${MANTER.join(', ')}`)
         .eq('tenant_id', cfg.tenant_id).in('sale_id', [...rows.keys()]);
       for (const a of (antes ?? []) as unknown as Array<Record<string, unknown>>) {
         const novo = rows.get(String(a.sale_id));
         if (!novo) continue;
+        if (incompleto(novo) && Number(a.gross_bag ?? 0) > 0) {
+          for (const k of MANTER) novo[k] = a[k];
+          novo.raw = a.raw;
+          continue;
+        }
         for (const k of MANTER) if (novo[k] == null && a[k] != null) novo[k] = a[k];
       }
     }
@@ -713,6 +732,12 @@ async function syncAnticipations(admin: Admin, cfg: any, from: string, to: strin
     }
   }
   return await upsertRows(admin, 'fin_ifood_anticipations', rows, 'tenant_id,item_key');
+}
+
+/** 'AAAA-MM' menos n meses. */
+function competenciaMenos(comp: string, n: number) {
+  const d = new Date(`${comp}-15T12:00:00Z`); d.setUTCMonth(d.getUTCMonth() - n);
+  return d.toISOString().slice(0, 7);
 }
 
 function defaultCompetences() {
@@ -844,7 +869,11 @@ Deno.serve(async (req) => {
       if (!internal) return errResp('Unauthorized', 401);
       const { data: lojas } = await admin.from('fin_ifood_config').select('*').eq('is_active', true);
       const out = [];
-      const minComp = defaultCompetences()[0];
+      // Relança o razão desde 2 competências atrás: o repasse cai semanas depois do pedido, então a
+      // competência anterior ainda tem repasse vencendo depois do dia 15. Antes era defaultCompetences()[0]
+      // (do dia 16 em diante só o mês corrente) e esses repasses nunca entravam (set/2026: 16/09 e 23/09
+      // da Paranaguá ficaram fora da DRE). Relançar é idempotente (apaga e relança por importação).
+      const minComp = competenciaMenos(todayBR().slice(0, 7), 2);
       for (const cfg of (lojas ?? []).map(withSystemApp)) {
         const r: Record<string, unknown> = { tenant_id: cfg.tenant_id };
         try {

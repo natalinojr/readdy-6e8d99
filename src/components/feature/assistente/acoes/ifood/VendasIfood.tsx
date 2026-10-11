@@ -64,20 +64,20 @@ export default function VendasIfood({ onFechar, irPara }: AcaoProps) {
 
     painel(
       <Painel titulo={`iFood · ${dataBR(dia)}`} subtitulo={user?.loja || 'Loja ativa'}
-        rodape="Vendido = itens + entrega (só quando a entrega não é do iFood), dos pedidos não cancelados — igual ao Portal e aos Relatórios. Líquido = o que o iFood repassa (cai no repasse da semana). O iFood não entra no Vendas do dia do PDV.">
+        rodape="Vendido = itens + entrega (só quando a entrega não é do iFood), dos pedidos não cancelados — igual ao Portal e aos Relatórios. Cai no repasse = o que o iFood repassa (não inclui o que o cliente pagou direto à loja). O iFood não entra no Vendas do dia do PDV.">
         <Kpis
           principal={{ label: 'Vendido no iFood', valor: brl(r.vendido), extra: <Variacao atual={r.vendido} base={base(a?.vendido)} rotulo={`vs ${rotulo}`} /> }}
           outros={[
             { label: 'Pedidos', valor: String(r.pedidos), extra: <Variacao atual={r.pedidos} base={base(a?.pedidos)} rotulo={`vs ${rotulo}`} /> },
             { label: 'Ticket médio', valor: brl(ticket), extra: <Variacao atual={ticket} base={a && a.pedidos > 0 ? a.vendido / a.pedidos : null} rotulo={`vs ${rotulo}`} /> },
-            { label: 'Líquido', valor: brl(r.liquido) },
+            { label: 'Cai no repasse', valor: brl(r.liquido) },
           ]}
         />
         <Linhas titulo="Para onde vai o dinheiro" itens={[
           { label: 'Taxas do iFood', valor: brl(r.taxas), detalhe: `${pctTaxa}% do vendido`, status: 'alerta' },
           ...(r.promoLoja ? [{ label: 'Promoções pagas pela loja', valor: brl(r.promoLoja), status: 'alerta' as const }] : []),
           ...(r.promoIfood ? [{ label: 'Promoções pagas pelo iFood', valor: brl(r.promoIfood), status: 'neutro' as const }] : []),
-          { label: 'Líquido para a loja', valor: brl(r.liquido), status: 'ok' },
+          { label: 'Cai no repasse', valor: brl(r.liquido), status: 'ok' },
           ...(r.cancelados ? [{ label: `${r.cancelados} cancelado${r.cancelados === 1 ? '' : 's'}`, valor: brl(r.valorCancelado), status: 'perigo' as const }] : []),
         ]} />
         {pontos.length >= 2 && <GraficoLinha titulo="Vendido por hora" pontos={pontos} rotuloBase={rotulo} />}

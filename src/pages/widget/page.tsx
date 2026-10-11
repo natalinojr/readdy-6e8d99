@@ -10,7 +10,7 @@ import { usePermissoes } from '@/hooks/usePermissoes';
 import { useModuleAccess } from '@/hooks/useModuleAccess';
 import { useDashboardMetrics } from '@/hooks/useDashboardMetrics';
 import { useDashboardPainel } from '@/hooks/useDashboardPainel';
-import { useIfoodVendas } from '@/hooks/useIfoodVendas';
+import { useIfoodDiaLoja } from '@/hooks/useIfoodDiaLoja';
 import { desktop } from '@/lib/desktop';
 import { todayBrasilia } from '@/lib/dateUtils';
 import type { TaskNotificacao, TaskRow } from '@/pages/tarefas/hooks/useTarefas';
@@ -304,14 +304,19 @@ function LinhaTarefa({ t, onAbrir, onConcluir, onAdiar }: {
 
 /** Vendas de hoje × meta: a mesma conta do Dashboard (pedidos pagos + iFood) e da tela Hoje. */
 function VendasLinha({ onAbrir }: { onAbrir: () => void }) {
+  const { user } = useAuth();
   const { data: m, reload } = useDashboardMetrics();
-  const { data: painel } = useDashboardPainel(null);
+  const { data: painel, reload: reloadPainel } = useDashboardPainel(null);
   const [k, setK] = useState(0);
-  const { data: ifDia } = useIfoodVendas('Hoje', null, k);
+  // iFood do dia da loja (soma das sessões abertas hoje), como no Dashboard e na tela Hoje — o de calendário
+  // jogava na venda de hoje o pedido do iFood de uma sessão que passou da meia-noite.
+  const { data: ifDia } = useIfoodDiaLoja(user?.tenantId, painel?.dia, painel?.janelas, null, k);
   const recarregar = useRef(reload);
   recarregar.current = reload;
+  const recarregarPainel = useRef(reloadPainel);
+  recarregarPainel.current = reloadPainel;
   useEffect(() => {
-    const t = setInterval(() => { recarregar.current(); setK((x) => x + 1); }, 5 * 60 * 1000);
+    const t = setInterval(() => { recarregar.current(); recarregarPainel.current(true); setK((x) => x + 1); }, 5 * 60 * 1000);
     return () => clearInterval(t);
   }, []);
   const valor = (m?.faturamento_hoje ?? 0) + (ifDia?.total ?? 0);
@@ -319,7 +324,10 @@ function VendasLinha({ onAbrir }: { onAbrir: () => void }) {
   const meta = (painel?.metas ?? []).find((x) => x.dia_semana === diaSemana && x.faturamento > 0) ?? null;
   const pct = meta ? valor / meta.faturamento : null;
   const esperado = (painel?.ritmo_dias ?? 0) < 2 ? null : painel?.ritmo_esperado ?? null;
-  const atras = pct !== null && esperado !== null && pct < 1 && pct + 0.03 < esperado;
+  // Mesma régua do cartão do Dashboard (FaturamentoHero): o ritmo só vale depois que ~3% do dia costuma ter entrado,
+  // "no ritmo" vai até −5 pts, "um pouco abaixo" (âmbar) até −15 e o vermelho ("Abaixo do ritmo") só além disso.
+  const dif = pct !== null && esperado !== null && esperado >= 0.03 && pct < 1 ? (pct - esperado) * 100 : null;
+  const atras = dif !== null && dif < -15;
   return (
     <button onClick={onAbrir} className="block w-full cursor-pointer rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-left hover:border-amber-300">
       <div className="flex items-baseline justify-between">
@@ -330,11 +338,11 @@ function VendasLinha({ onAbrir }: { onAbrir: () => void }) {
         <>
           <div className="relative mt-1.5 h-1.5 rounded-full bg-zinc-100">
             <div className={`h-1.5 rounded-full ${pct >= 1 ? 'bg-emerald-500' : atras ? 'bg-red-400' : 'bg-amber-400'}`} style={{ width: `${Math.min(pct * 100, 100)}%` }} />
-            {esperado !== null && <div className="absolute -top-0.5 h-2.5 w-0.5 bg-zinc-700" style={{ left: `${Math.min(esperado * 100, 100)}%` }} />}
+            {dif !== null && <div className="absolute -top-0.5 h-2.5 w-0.5 bg-zinc-700" style={{ left: `${Math.min(esperado! * 100, 100)}%` }} />}
           </div>
           <p className="mt-1 text-[11px] text-zinc-500">
             {(pct * 100).toFixed(0)}% da meta de {brl(meta!.faturamento)}
-            {esperado !== null && pct < 1 && ` · esperado agora ${(esperado * 100).toFixed(0)}%`}
+            {dif !== null && ` · esperado agora ${(esperado! * 100).toFixed(0)}%`}
           </p>
         </>
       )}

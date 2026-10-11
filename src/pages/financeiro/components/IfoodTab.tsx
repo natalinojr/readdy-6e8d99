@@ -154,7 +154,11 @@ export default function IfoodTab() {
     // `|| 0` evita o "-R$ 0,00" (zero negativo) quando não há promoção.
     const promoLoja = -entries.filter((e) => /custeada pela loja/i.test(e.descricao ?? '')).reduce((s, e) => s + e.valor, 0) || 0;
     const promoIfood = entries.filter((e) => /custeada pelo ifood|custeada pela ind[uú]stria/i.test(e.descricao ?? '')).reduce((s, e) => s + e.valor, 0) || 0;
-    const pedidos = new Set(entries.filter((e) => e.fato_gerador === 'Venda' && e.order_id).map((e) => e.order_id)).size;
+    // Pedido cancelado tem a linha Venda e o Cancelamento Total que a anula: só conta como pedido quem fecha com vendas > 0
+    // (igual a Relatórios › iFood; set/2026 Paranaguá: 214 linhas Venda, 209 pedidos).
+    const vendasPedido = new Map<string, number>();
+    for (const e of entries) if (e.order_id) vendasPedido.set(e.order_id, (vendasPedido.get(e.order_id) ?? 0) + portalBucket(e).vendas);
+    const pedidos = new Set(entries.filter((e) => e.fato_gerador === 'Venda' && e.order_id && (vendasPedido.get(e.order_id) ?? 0) > 0.005).map((e) => e.order_id)).size;
     const cancelados = new Set(entries.filter((e) => /cancelamento/i.test(e.fato_gerador ?? '') && e.order_id).map((e) => e.order_id)).size;
     return {
       ...z, faturamento, liquido: faturamento - z.loja, custoTotal: z.taxas + z.servicos - z.ajustes,

@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatCurrency } from '@/lib/formatters';
 import type { PurchaseItem } from '@/types/financeiro';
+import { todayBrasilia } from '@/lib/dateUtils';
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -206,7 +207,8 @@ interface NovaCompraModalProps {
 const emptyForm = {
   supplier: '',
   invoice_number: '',
-  purchase_date: new Date().toISOString().split('T')[0],
+  // Preenchida ao abrir (useState abaixo): aqui ficava a data UTC do carregamento da página.
+  purchase_date: '',
   payment_method: 'Dinheiro',
   payment_status: 'paid' as const,
   due_date: '',
@@ -237,7 +239,7 @@ export default function NovaCompraModal({ onClose, insumoPreSelecionado, onSaved
   const { accounts: bankAccounts } = useBankAccounts();
   const { suppliers } = useSuppliers();
 
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState(() => ({ ...emptyForm, purchase_date: todayBrasilia() }));
   const [items, setItems] = useState<PurchaseItemLocal[]>([makeEmptyItem()]);
   const [ingredients, setIngredients] = useState<IngredientOption[]>([]);
   const [ingredientsLoading, setIngredientsLoading] = useState(false);

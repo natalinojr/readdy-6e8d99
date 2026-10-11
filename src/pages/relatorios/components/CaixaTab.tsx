@@ -5,43 +5,33 @@ import {
 import { useCaixaReport } from '../../../hooks/useCaixaReport';
 import type { CashSession, PorFormaPagamento, CashRegisterInfo, CaixaFiltros, CashTransaction } from '../../../hooks/useCaixaReport';
 import { formatDate, formatTime } from '@/lib/formatters';
+import { todayBrasilia, somarDias } from '@/lib/dateUtils';
+import { resumoCaixasDaSessao } from '@/lib/caixaSessao';
 
 // ── Helpers de data ───────────────────────────────────────────────────────────
 function getPresetRange(preset: string): { start: string; end: string } {
-  const today = new Date();
-  const fmt = (d: Date) => d.toISOString().split('T')[0];
-  const startOf = (d: Date) => { d.setHours(0, 0, 0, 0); return d; };
+  // Datas de Brasília: toISOString() é UTC e, depois das 21h locais, "hoje" virava o dia seguinte.
+  const hoje = todayBrasilia();
+  const primeiroDoMes = `${hoje.slice(0, 8)}01`;
 
   switch (preset) {
-    case 'hoje': {
-      const s = fmt(startOf(new Date(today)));
-      return { start: s, end: s };
-    }
+    case 'hoje':
+      return { start: hoje, end: hoje };
     case 'ontem': {
-      const d = new Date(today); d.setDate(d.getDate() - 1);
-      const s = fmt(startOf(d));
-      return { start: s, end: s };
+      const d = somarDias(hoje, -1);
+      return { start: d, end: d };
     }
-    case '7d': {
-      const d = new Date(today); d.setDate(d.getDate() - 6);
-      return { start: fmt(startOf(d)), end: fmt(today) };
-    }
-    case '30d': {
-      const d = new Date(today); d.setDate(d.getDate() - 29);
-      return { start: fmt(startOf(d)), end: fmt(today) };
-    }
-    case '60d': {
-      const d60 = new Date(today); d60.setDate(d60.getDate() - 59);
-      return { start: fmt(startOf(d60)), end: fmt(today) };
-    }
-    case 'mes': {
-      const d = new Date(today.getFullYear(), today.getMonth(), 1);
-      return { start: fmt(d), end: fmt(today) };
-    }
+    case '7d':
+      return { start: somarDias(hoje, -6), end: hoje };
+    case '30d':
+      return { start: somarDias(hoje, -29), end: hoje };
+    case '60d':
+      return { start: somarDias(hoje, -59), end: hoje };
+    case 'mes':
+      return { start: primeiroDoMes, end: hoje };
     case 'mes_ant': {
-      const d = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-      const e = new Date(today.getFullYear(), today.getMonth(), 0);
-      return { start: fmt(d), end: fmt(e) };
+      const ultimo = somarDias(primeiroDoMes, -1);
+      return { start: `${ultimo.slice(0, 8)}01`, end: ultimo };
     }
     default:
       return { start: '', end: '' };
@@ -154,10 +144,12 @@ function FormasPagamentoSection({ formas, total }: { formas: PorFormaPagamento[]
 // ── Card de sessão na lista lateral ──────────────────────────────────────────
 function SessaoCard({ s, selected, onClick }: { s: CashSession; selected: boolean; onClick: () => void }) {
   const isOpen = s.status === 'open';
-  const diff = s.cash_register?.closing_difference;
-  const hasDiff = diff !== null && diff !== undefined && diff !== 0;
+  // Diferença da sessão = soma de TODOS os caixas (não só o último).
+  const resumoCx = resumoCaixasDaSessao(s);
+  const diff = resumoCx.diferenca;
+  const hasDiff = diff !== null && Math.abs(diff) >= 0.01;
 
-  const closedAt = s.status !== 'open' ? (s.closed_at ?? s.cash_register?.closed_at ?? null) : null;
+  const closedAt = s.status !== 'open' ? (s.closed_at ?? resumoCx.ultimoFechamento) : null;
   const openedDate = formatDate(s.opened_at);
   const closedDate = closedAt ? formatDate(closedAt) : null;
   const diffDay = closedDate && closedDate !== openedDate;
@@ -183,7 +175,7 @@ function SessaoCard({ s, selected, onClick }: { s: CashSession; selected: boolea
             {diff! > 0 ? '+' : ''}{fmt(diff!)}
           </span>
         )}
-        {!hasDiff && diff === 0 && (
+        {!hasDiff && diff !== null && (
           <i className="ri-checkbox-circle-fill text-emerald-500 text-xs" title="Conferido" />
         )}
       </div>
@@ -788,7 +780,7 @@ function FiltrosPeriodo({
 
 // ── Componente principal ──────────────────────────────────────────────────────
 export default function CaixaTab() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayBrasilia();
   const [preset, setPreset] = useState<Preset>('30d');
   const [customStart, setCustomStart] = useState(today);
   const [customEnd, setCustomEnd] = useState(today);
@@ -823,18 +815,18 @@ export default function CaixaTab() {
     const totalPedidos = sessions.reduce((s, sess) => s + sess.num_pedidos, 0);
     const totalCancelados = sessions.reduce((s, sess) => s + sess.num_cancelados, 0);
     const totalDescontos = sessions.reduce((s, sess) => s + sess.total_descontos, 0);
-    const sessoesComDif = sessions.filter(sess =>
-      sess.cash_register?.closing_difference !== null &&
-      sess.cash_register?.closing_difference !== undefined &&
-      Math.abs(sess.cash_register.closing_difference) >= 0.01
-    );
-    const totalDiferenca = sessoesComDif.reduce((s, sess) => s + (sess.cash_register?.closing_difference ?? 0), 0);
+    // Diferença de cada sessão = soma de todos os caixas dela
+    const difs = sessions.map((sess) => resumoCaixasDaSessao(sess).diferenca);
+    const sessoesComDif = difs.filter((d): d is number => d !== null && Math.abs(d) >= 0.01);
+    const totalDiferenca = sessoesComDif.reduce((s, d) => s + d, 0);
     return { totalFaturamento, totalPedidos, totalCancelados, totalDescontos, sessoesComDif: sessoesComDif.length, totalDiferenca };
   }, [sessions]);
 
   const totalFormas = sessao?.por_forma_pagamento.reduce((s, f) => s + f.total, 0) ?? 0;
-  const duracao = sessao ? formatDuration(sessao.opened_at, sessao.status !== 'open' ? (sessao.closed_at ?? sessao.cash_register?.closed_at) : null) : '—';
-  const sessaoFechamentoTs = sessao?.status !== 'open' ? (sessao?.closed_at ?? sessao?.cash_register?.closed_at ?? null) : null;
+  // Fundo, esperado, contado e diferença: soma de todos os caixas da sessão (a RPC devolve o array `cash_registers`)
+  const caixa = useMemo(() => (sessao ? resumoCaixasDaSessao(sessao) : null), [sessao]);
+  const duracao = sessao ? formatDuration(sessao.opened_at, sessao.status !== 'open' ? (sessao.closed_at ?? caixa?.ultimoFechamento ?? null) : null) : '—';
+  const sessaoFechamentoTs = sessao?.status !== 'open' ? (sessao?.closed_at ?? caixa?.ultimoFechamento ?? null) : null;
 
   return (
     <div className="flex flex-col gap-4 h-full min-h-0">
@@ -1040,7 +1032,7 @@ export default function CaixaTab() {
               },
               {
                 label: 'Fundo Inicial',
-                value: fmt(sessao.cash_register?.opening_value ?? sessao.opening_amount ?? 0),
+                value: fmt(caixa?.fundoInicial ?? sessao.opening_amount ?? 0),
                 icon: 'ri-safe-2-line',
                 color: 'bg-zinc-100 text-zinc-600',
               },
@@ -1048,7 +1040,7 @@ export default function CaixaTab() {
                 label: 'Valor Esperado no Caixa',
                 value: (() => {
                   const isOpen = sessao.status === 'open';
-                  const openingValue = sessao.cash_register?.opening_value ?? sessao.opening_amount ?? 0;
+                  const openingValue = caixa?.fundoInicial ?? sessao.opening_amount ?? 0;
                   const cashPayments = sessao.por_forma_pagamento
                     .filter(f => f.tipo === 'cash')
                     .reduce((s, f) => s + f.total, 0);
@@ -1060,8 +1052,8 @@ export default function CaixaTab() {
                   if (isOpen) {
                     return fmt(expected);
                   }
-                  // Sessão fechada: usa o valor esperado do fechamento
-                  const closedExpected = sessao.cash_register?.closing_value_expected;
+                  // Sessão fechada: soma do valor esperado no fechamento de cada caixa
+                  const closedExpected = caixa?.valorEsperado;
                   return closedExpected !== null && closedExpected !== undefined ? fmt(closedExpected) : '—';
                 })(),
                 icon: sessao.status === 'open' ? 'ri-calculator-line' : 'ri-checkbox-circle-line',
@@ -1071,12 +1063,12 @@ export default function CaixaTab() {
               },
               {
                 label: 'Diferença Caixa',
-                value: sessao.cash_register?.closing_difference !== null && sessao.cash_register?.closing_difference !== undefined
-                  ? (Math.abs(sessao.cash_register.closing_difference) < 0.01 ? 'Conferido' : `${sessao.cash_register.closing_difference > 0 ? '+' : ''}${fmt(sessao.cash_register.closing_difference)}`)
+                value: caixa?.diferenca !== null && caixa?.diferenca !== undefined
+                  ? (Math.abs(caixa.diferenca) < 0.01 ? 'Conferido' : `${caixa.diferenca > 0 ? '+' : ''}${fmt(caixa.diferenca)}`)
                   : '—',
-                icon: Math.abs(sessao.cash_register?.closing_difference ?? 1) < 0.01 ? 'ri-checkbox-circle-fill' : 'ri-scales-line',
-                color: sessao.cash_register?.closing_difference !== null && sessao.cash_register?.closing_difference !== undefined
-                  ? Math.abs(sessao.cash_register.closing_difference) < 0.01
+                icon: Math.abs(caixa?.diferenca ?? 1) < 0.01 ? 'ri-checkbox-circle-fill' : 'ri-scales-line',
+                color: caixa?.diferenca !== null && caixa?.diferenca !== undefined
+                  ? Math.abs(caixa.diferenca) < 0.01
                     ? 'bg-emerald-50 text-emerald-600'
                     : 'bg-red-50 text-red-600'
                   : 'bg-zinc-100 text-zinc-400',
@@ -1143,7 +1135,7 @@ export default function CaixaTab() {
                   <div className="flex justify-between text-xs pt-2 border-t border-zinc-100">
                     <span className="text-zinc-500">Fundo inicial</span>
                     <span className="text-sm font-black text-emerald-600">
-                      {fmt(sessao.cash_register?.opening_value ?? sessao.opening_amount ?? 0)}
+                      {fmt(caixa?.fundoInicial ?? sessao.opening_amount ?? 0)}
                     </span>
                   </div>
                 </div>
@@ -1234,48 +1226,51 @@ export default function CaixaTab() {
                       </span>
                     </div>
                     {/* Se o caixa foi fechado em horário diferente da sessão, mostra como detalhe */}
-                    {sessao.cash_register?.closed_at && sessao.cash_register.closed_at !== sessaoFechamentoTs && (
+                    {caixa?.ultimoFechamento && caixa.ultimoFechamento !== sessaoFechamentoTs && (
                       <div className="flex justify-between text-xs gap-2">
                         <span className="text-zinc-400 flex-shrink-0">Fechamento do caixa</span>
                         <span className="font-semibold text-zinc-500 text-right">
-                          {formatDate(sessao.cash_register.closed_at) !== formatDate(sessao.opened_at) && (
-                            <span className="text-amber-600">{formatDate(sessao.cash_register.closed_at)} </span>
+                          {formatDate(caixa.ultimoFechamento) !== formatDate(sessao.opened_at) && (
+                            <span className="text-amber-600">{formatDate(caixa.ultimoFechamento)} </span>
                           )}
-                          {formatTime(sessao.cash_register.closed_at)}
+                          {formatTime(caixa.ultimoFechamento)}
                         </span>
                       </div>
                     )}
+                    {(caixa?.caixas.length ?? 0) > 1 && (
+                      <p className="text-[10px] text-zinc-400">Soma dos {caixa!.caixas.length} caixas da sessão (detalhe na aba Caixas).</p>
+                    )}
                     <div className="flex justify-between text-xs">
                       <span className="text-zinc-500">Valor contado</span>
-                      <span className="font-semibold text-zinc-800">{fmt(sessao.cash_register?.closing_value_actual ?? 0)}</span>
+                      <span className="font-semibold text-zinc-800">{fmt(caixa?.valorContado ?? 0)}</span>
                     </div>
-                    {sessao.cash_register?.closing_value_expected !== null && sessao.cash_register?.closing_value_expected !== undefined && (
+                    {caixa?.valorEsperado !== null && caixa?.valorEsperado !== undefined && (
                       <div className="flex justify-between text-xs">
                         <span className="text-zinc-500">Valor esperado</span>
-                        <span className="font-semibold text-zinc-800">{fmt(sessao.cash_register.closing_value_expected)}</span>
+                        <span className="font-semibold text-zinc-800">{fmt(caixa.valorEsperado)}</span>
                       </div>
                     )}
                     <div className="flex justify-between text-xs pt-2 border-t border-zinc-100">
                       <span className="font-semibold text-zinc-700">Diferença</span>
-                      <DifBadge valor={sessao.cash_register?.closing_difference} />
+                      <DifBadge valor={caixa?.diferenca ?? null} />
                     </div>
-                    {sessao.cash_register?.closing_notes && (
-                      <div className="mt-2 px-3 py-2 rounded-lg text-[10px] font-semibold bg-zinc-50 text-zinc-600 flex items-start gap-1.5">
+                    {caixa?.notas.map((nota, i) => (
+                      <div key={i} className="mt-2 px-3 py-2 rounded-lg text-[10px] font-semibold bg-zinc-50 text-zinc-600 flex items-start gap-1.5">
                         <i className="ri-chat-1-line mt-0.5 flex-shrink-0" />
-                        <span>Justificativa: {sessao.cash_register.closing_notes}</span>
+                        <span>Justificativa: {nota}</span>
                       </div>
-                    )}
-                    {sessao.cash_register?.closing_difference !== null && sessao.cash_register?.closing_difference !== undefined && Math.abs(sessao.cash_register.closing_difference) < 0.01 && (
+                    ))}
+                    {caixa?.diferenca !== null && caixa?.diferenca !== undefined && Math.abs(caixa.diferenca) < 0.01 && (
                       <div className="mt-2 px-3 py-2 rounded-lg text-[10px] font-semibold bg-emerald-50 text-emerald-600 flex items-center gap-1.5">
                         <i className="ri-checkbox-circle-fill" />Caixa conferido sem diferenças
                       </div>
                     )}
-                    {sessao.cash_register?.closing_difference !== null && sessao.cash_register?.closing_difference !== undefined && Math.abs(sessao.cash_register.closing_difference) >= 0.01 && (
+                    {caixa?.diferenca !== null && caixa?.diferenca !== undefined && Math.abs(caixa.diferenca) >= 0.01 && (
                       <div className={`mt-2 px-3 py-2 rounded-lg text-[10px] font-semibold flex items-center gap-1.5 ${
-                        sessao.cash_register.closing_difference < 0 ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'
+                        caixa.diferenca < 0 ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'
                       }`}>
-                        <i className={sessao.cash_register.closing_difference < 0 ? 'ri-arrow-down-line' : 'ri-arrow-up-line'} />
-                        {sessao.cash_register.closing_difference < 0 ? 'Falta no caixa' : 'Sobra no caixa'}
+                        <i className={caixa.diferenca < 0 ? 'ri-arrow-down-line' : 'ri-arrow-up-line'} />
+                        {caixa.diferenca < 0 ? 'Falta no caixa' : 'Sobra no caixa'}
                       </div>
                     )}
                   </div>

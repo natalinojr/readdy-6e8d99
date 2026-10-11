@@ -5,6 +5,7 @@ import { usePaymentMethods } from '@/hooks/usePaymentMethods';
 import { formatCurrency } from '@/lib/formatters';
 import { useAuth } from '@/contexts/AuthContext';
 import { empresaTemPdv } from '@/lib/tipoEmpresa';
+import { todayBrasilia } from '@/lib/dateUtils';
 
 const ACCOUNT_TYPE_LABEL: Record<string, string> = {
   checking: 'Conta Corrente',
@@ -100,7 +101,7 @@ function TransactionHistory({ account, onClose }: { account: BankAccount; onClos
     type: 'debit' as 'credit' | 'debit',
     amount: '',
     description: '',
-    transaction_date: new Date().toISOString().split('T')[0],
+    transaction_date: todayBrasilia(),
   });
   const [saving, setSaving] = useState(false);
 
@@ -117,7 +118,7 @@ function TransactionHistory({ account, onClose }: { account: BankAccount; onClos
     });
     setSaving(false);
     setShowManual(false);
-    setManualForm({ type: 'debit', amount: '', description: '', transaction_date: new Date().toISOString().split('T')[0] });
+    setManualForm({ type: 'debit', amount: '', description: '', transaction_date: todayBrasilia() });
   };
 
   return (
@@ -481,7 +482,7 @@ export default function BancosContasTab() {
             <i className="ri-bank-line text-amber-600 text-lg" />
           </div>
           <div>
-            <p className="text-xs text-zinc-500">Saldo Total</p>
+            <p className="text-xs text-zinc-500" title="Soma o saldo que o banco informa nas contas integradas e, nas demais, o saldo do sistema (a mesma conta do Painel e da Hoje).">Saldo Total</p>
             <p className="text-base font-bold text-zinc-900">{formatCurrency(totalBalance)}</p>
           </div>
         </div>

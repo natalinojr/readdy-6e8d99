@@ -26,7 +26,8 @@ const MAX_PAGINAS = 5;
 /**
  * Pedidos de delivery próprio dos últimos 30 dias (Brasília) — a base das contas de "Área e taxa" (quantos
  * pedidos em cada faixa, pontos no mapa) e de "Mínimo e retirada" (simulação da entrega grátis).
- * Retirada (`delivery_platform = 'retirada'`) e apps de fora (iFood etc.) ficam de fora.
+ * Retirada (`delivery_platform = 'retirada'`) e apps de fora (iFood etc.) ficam de fora — inclusive o pedido do iFood
+ * entregue pelo motoboy da loja (`ifood_order_id`): não usa a tabela de faixas/taxa daqui e inflava a simulação.
  */
 export function usePedidos30d(tenantId: string): { pedidos: PedidoMes[]; carregando: boolean; erro: string } {
   const [pedidos, setPedidos] = useState<PedidoMes[]>([]);
@@ -50,6 +51,7 @@ export function usePedidos30d(tenantId: string): { pedidos: PedidoMes[]; carrega
             .eq('is_training', false)
             .eq('is_draft', false)
             .or('delivery_platform.is.null,delivery_platform.eq.propria')
+            .is('ifood_order_id', null) // iFood entregue pelo motoboy da loja é 'propria' no banco, mas a taxa/faixa não é da loja
             .gte('created_at', desde)
             .order('created_at', { ascending: false })
             .range(p * PAGINA, p * PAGINA + PAGINA - 1);
