@@ -48,9 +48,9 @@ const PAGE_SIZE = 15;
 const VIEWS = [
   {
     id: 'projecao' as const,
-    label: 'Projeção',
+    label: 'Agenda',
     icon: 'ri-line-chart-line',
-    hint: 'Saldo de hoje + recebíveis já vendidos − contas a pagar (inclusive vencidas) e folha. Mostra o dia em que o caixa fica negativo.',
+    hint: 'Saldo de hoje + recebíveis já vendidos − contas a pagar (inclusive vencidas) e folha, sem as vendas dos próximos dias. A projeção com vendas previstas é a da tela Contas.',
   },
   {
     id: 'calendario' as const,

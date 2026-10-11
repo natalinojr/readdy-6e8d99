@@ -864,10 +864,22 @@ export default function PrevisaoCaixaTab() {
 
   return (
     <div className="p-4 md:p-6 space-y-5 max-w-[1400px] mx-auto w-full">
+      {/* A projeção oficial (regra do dono, 2026-10-08) é a de Financeiro › Contas, que soma as vendas previstas.
+          Esta tela só soma o que já tem data (recebíveis já vendidos e contas): por isso o número é diferente. */}
+      <div className="flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2.5 text-xs text-sky-900">
+        <i className="ri-information-line mt-0.5" />
+        <p className="flex-1">
+          Aqui entram só o que já tem data: o que já foi vendido e ainda vai cair, e as contas. As vendas dos próximos dias
+          não entram. A projeção com as vendas previstas é a da tela <b>Contas</b> (coluna Projetado).
+        </p>
+        <button onClick={() => navigate('/financeiro?tab=pagar')} className="shrink-0 font-semibold text-sky-700 hover:underline cursor-pointer">
+          Abrir Contas
+        </button>
+      </div>
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="min-w-0 flex-1 basis-80">
-          <h2 className="text-sm font-bold text-zinc-800">Fluxo de Caixa Projetado</h2>
+          <h2 className="text-sm font-bold text-zinc-800">Agenda do caixa (só o que já tem data)</h2>
           <p className="text-xs text-zinc-400">
             Saldo de hoje + o que já vendeu a receber (cartão D+N) − contas a pagar, folha
             e boletos de notas de entrada ainda não lançadas. O que já venceu entra se você marcar a caixinha. Vendas futuras não entram.
