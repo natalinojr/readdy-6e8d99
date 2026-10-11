@@ -26,7 +26,7 @@ BEGIN
   SELECT jsonb_agg(
     jsonb_build_object(
       'id', o.id,
-      'pedido', '#' || LPAD(o.number::text, 4, '0'),
+      'pedido', '#' || o.number::text,
       'mesa', COALESCE(o.destination_name, '—'),
       'motivo', COALESCE(o.cancel_reason, 'Não informado'),
       'valor', o.total_amount,
@@ -50,7 +50,7 @@ BEGIN
     jsonb_build_object(
       'id', p.id,
       'order_id', o.id,
-      'pedido', '#' || LPAD(o.number::text, 4, '0'),
+      'pedido', '#' || o.number::text,
       'cliente', COALESCE(o.destination_name, 'Consumidor'),
       'motivo', COALESCE(p.refund_reason, 'Não informado'),
       'valor', p.amount,
@@ -69,7 +69,7 @@ BEGIN
   SELECT jsonb_agg(
     jsonb_build_object(
       'id', o.id,
-      'pedido', '#' || LPAD(o.number::text, 4, '0'),
+      'pedido', '#' || o.number::text,
       'mesa', COALESCE(o.destination_name, '—'),
       'valor', o.discount_amount,
       'pct', CASE WHEN o.subtotal > 0
